@@ -1,0 +1,156 @@
+<mujoco model="museum_shell">
+  <compiler angle="degree" coordinate="local"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <default>
+    <!-- Collision defaults (good stable starting point) -->
+    <geom contype="1" conaffinity="1" friction="1 0.005 0.0001"
+          solref="0.02 1" solimp="0.9 0.95 0.001"/>
+  </default>
+
+  <worldbody>
+    <!-- A camera so you immediately see something -->
+    <camera name="cam_overview" pos="0 -18 7" xyaxes="1 0 0 0 0.6 0.8"/>
+
+    <!-- ============ FLOOR ============ -->
+    <!-- size = half-size. This plane is effectively infinite visually;
+         size mainly affects texture scaling; keep it large. -->
+    <geom name="floor" type="plane" pos="0 0 0" size="30 30 0.1" rgba="0.95 0.93 0.9 1"/>
+
+    <!-- ============ CORRIDOR ============ -->
+    <!-- Corridor: width ~4.5 m, length 20 m, wall thickness 0.15 m, height 3 m -->
+    <!-- Put corridor along +y direction, centered at x=0 -->
+    <!-- Walls are boxes: size = (half-length-x, half-length-y, half-height-z) -->
+
+    <!-- Left wall of corridor -->
+    <geom name="corridor_wall_left" type="box"
+          pos="-2.25 0 1.5" size="0.15 10 1.5" rgba="0.85 0.85 0.85 1"/>
+    <!-- Right wall of corridor -->
+    <geom name="corridor_wall_right" type="box"
+          pos=" 2.25 0 1.5" size="0.15 10 1.5" rgba="0.85 0.85 0.85 1"/>
+
+    <!-- Optional: a back wall at corridor start (makes it feel like a real corridor) -->
+    <geom name="corridor_back_wall" type="box"
+          pos="0 -10 1.5" size="2.25 0.15 1.5" rgba="0.85 0.85 0.85 1"/>
+
+    <!-- ============ ROOM (10 x 10) attached at corridor end ============ -->
+    <!-- Place room center at y=12.5 so its bottom edge touches corridor end at y=10 -->
+    <!-- Room interior: 10m x 10m. Walls thickness 0.15m, height 3m -->
+    <!-- Room bounds: x in [-5, 5], y in [7.5, 17.5] -->
+
+    <!-- Room back wall (far end) -->
+    <geom name="room_wall_back" type="box"
+          pos="0 20 1.5" size="5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+    <!-- Room left wall -->
+    <geom name="room_wall_left" type="box"
+          pos="-5 15 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+    <!-- Room right wall -->
+    <geom name="room_wall_right" type="box"
+          pos=" 5 15 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+
+    <!-- Room front wall WITH an opening where it connects to corridor -->
+    <!-- We create an opening by splitting the front wall into 2 pieces. -->
+    <!-- The opening will be centered at x=0, width about 3.0m (enough for robot/humans). -->
+    <geom name="room_wall_front_left" type="box"
+          pos="-3.7 10 1.5" size="1.3 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+    <geom name="room_wall_front_right" type="box"
+          pos=" 3.7 10 1.5" size="1.3 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+
+    <!-- ============ DISPLAY CASES ============ -->
+    <!-- Cases: 0.6x0.6 and 0.6x1.2 (meters). We'll make them 0.9m tall. -->
+    <!-- Box size is half-size: (0.3, 0.3, 0.45) for 0.6x0.6x0.9 -->
+    <!-- and (0.3, 0.6, 0.45) for 0.6x1.2x0.9 -->
+
+    <!-- Wall cases along the room's left wall (slightly away from wall to avoid intersection) -->
+    <geom name="case_left_1" type="box"
+          pos="-4.2 12.5 0.45" size="0.3 0.3 0.45" rgba="0.75 0.78 0.82 1"/>
+    <geom name="case_left_2" type="box"
+          pos="-4.2 16.5 0.45" size="0.3 0.6 0.45" rgba="0.75 0.78 0.82 1"/>
+
+    <!-- Wall cases along the room's right wall -->
+    <geom name="case_right_1" type="box"
+          pos="4.2 12.5 0.45" size="0.3 0.3 0.45" rgba="0.75 0.78 0.82 1"/>
+    <geom name="case_right_2" type="box"
+          pos="4.2 16.5 0.45" size="0.3 0.6 0.45" rgba="0.75 0.78 0.82 1"/>
+
+    <!-- Island cases in the middle of the room -->
+    <geom name="island_case_1" type="box"
+          pos="0 14.5 0.45" size="0.3 0.6 0.45" rgba="0.70 0.72 0.75 1"/>
+    <geom name="island_case_2" type="box"
+          pos="0 17.5 0.45" size="0.3 0.3 0.45" rgba="0.70 0.72 0.75 1"/>
+
+    <!-- Some lights so it looks nice -->
+    <light name="light_corridor" pos="0 0 3.0" dir="0 0 -1" cutoff="60" exponent="10"
+           diffuse="1 1 1" specular="0.2 0.2 0.2"/>
+    <light name="light_room" pos="0 13 3.0" dir="0 0 -1" cutoff="60" exponent="10"
+           diffuse="1 1 1" specular="0.2 0.2 0.2"/>
+    
+    <!-- ============ ROBOT (triangle-ish base, planar joints) ============ -->
+    <body name="robot" pos="0 0 0.06">
+      <!-- Planar movement: x, y, yaw -->
+      <joint name="robot_x" type="slide" axis="1 0 0" damping="2"/>
+      <joint name="robot_y" type="slide" axis="0 1 0" damping="2"/>
+      <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="1"/>
+
+      <!-- Main footprint: use a cylinder for stable collision (fast + robust).
+           Radius ~0.20m (40cm diameter). Height 0.12m. -->
+      <geom name="robot_base" type="cylinder" size="0.20 0.06"
+            rgba="0.2 0.3 0.9 1"/>
+
+      <!-- Nose: small box in front to show orientation (front/back) -->
+      <geom name="robot_nose" type="box" pos="0 0.18 0.03" size="0.03 0.06 0.03"
+            rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
+
+      <!-- Optional: a site for easy tracking (goal distances, etc.) -->
+      <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
+    </body>
+
+    <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
+    <body name="person1" pos="0.8 -1.0 0.125">
+      <!-- Planar movement: x, y, yaw -->
+      <joint name="person1_x" type="slide" axis="1 0 0" damping="3"/>
+      <joint name="person1_y" type="slide" axis="0 1 0" damping="3"/>
+      <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="2"/>
+
+      <!-- Torso as a capsule.
+           shoulders: 0.45m, chest: 0.25m.
+           Capsule 'size' = radius, half-length (along its axis).
+           Align the capsule along Y to represent shoulder width approx 0.45:
+             - radius ~0.125
+             - half-length ~0.10
+           Height: ~0.18m (stands above floor a little). -->
+      <geom name="person1_torso" type="capsule"
+            pos="0 0 0.125" size="0.125 0.10"
+            euler="0 0 90" rgba="0.25 0.75 0.35 1"/>
+
+      <!-- Head -->
+      <geom name="person1_head" type="sphere"
+            pos="0 0 0.36" size="0.09"
+            rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+
+      <!-- Nose: small marker to show front direction (person faces +y in its local frame) -->
+      <geom name="person1_nose" type="box"
+            pos="0 0.18 0.32" size="0.02 0.03 0.02"
+            rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+
+      <!-- Tracking site -->
+      <site name="person1_site" pos="0 0 0.09" size="0.02" rgba="0 1 0 1"/>
+    </body>
+
+  </worldbody>
+
+  <actuator>
+    <!-- Control x/y slides and yaw hinge.
+         For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
+         But for (v, w) you usually set vy_cmd=0 in your policy. -->
+    <motor name="motor_x" joint="robot_x" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="motor_y" joint="robot_y" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="motor_yaw" joint="robot_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+
+    <!-- Person controls (same style as robot) -->
+    <motor name="person1_motor_x" joint="person1_x" ctrlrange="-1.2 1.2" gear="1"/>
+    <motor name="person1_motor_y" joint="person1_y" ctrlrange="-1.2 1.2" gear="1"/>
+    <motor name="person1_motor_yaw" joint="person1_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+  </actuator>
+
+</mujoco>
