@@ -130,11 +130,11 @@
 
       <!-- Nose: small marker to show front direction (person faces +y in its local frame) -->
       <geom name="person1_nose" type="box"
-            pos="0 0.18 0.32" size="0.02 0.03 0.02"
+            pos="0 0.18 0.36" size="0.02 0.03 0.02"
             rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
 
       <!-- Tracking site -->
-      <site name="person1_site" pos="0 0 0.09" size="0.02" rgba="0 1 0 1"/>
+      <site name="person1_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
     </body>
 
   </worldbody>
