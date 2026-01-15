@@ -20,6 +20,19 @@ p_yaw = aid("person1_motor_yaw")
 
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
+
+    # cam_id = mujoco.mj_name2id(
+    #     model, mujoco.mjtObj.mjOBJ_CAMERA, "cam_overview"
+    # )
+    # viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+    # viewer.cam.fixedcamid = cam_id
+
+    # ---- Fix camera ----
+    viewer.cam.lookat[:] = [6.0, -5.0, 1.5]   # center of your layout
+    viewer.cam.distance = 30.0                # zoom out
+    viewer.cam.elevation = -30.0              # look downward
+    viewer.cam.azimuth = 90.0                 # rotate around z-axis    
+
     while viewer.is_running():
         # Robot: forward + slight turn
         data.ctrl[r_x] = 0.0
