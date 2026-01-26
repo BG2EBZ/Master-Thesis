@@ -9,13 +9,11 @@ viewer = mujoco.viewer.launch_passive(model, data)
 
 print("Actuators:", model.nu)
 
-# HARD-CODE control
 data.ctrl[:] = 0.0
-data.ctrl[0] = 1.0   # x velocity
-data.ctrl[1] = 0.0
-data.ctrl[2] = 0.0
-
+data.ctrl[0] = 1.0
 for i in range(3000):
     mujoco.mj_step(model, data)
+    if i % 500 == 0:
+        print(f"Step {i}: robot_x = {data.qpos[0]:.3f}")
     viewer.sync()
     time.sleep(0.01)
