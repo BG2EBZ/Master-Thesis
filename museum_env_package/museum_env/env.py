@@ -3,6 +3,8 @@ from gymnasium import spaces
 import numpy as np
 import mujoco
 import mujoco.viewer
+import os
+from importlib import resources 
 
 
 class MuseumEnv(gym.Env):
@@ -12,9 +14,13 @@ class MuseumEnv(gym.Env):
 
     metadata = {"render_modes": ["human"], "render_fps": 60}
 
-    def __init__(self, xml_path="museum_scene.xml", render_mode=None):
+    def __init__(self, xml_path=None, render_mode=None):
         super().__init__()
 
+        if xml_path is None:
+            with resources.path("museum_env.assets", "museum_scene.xml") as xml_file:
+                xml_path = str(xml_file)
+        
         # Load MuJoCo model
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)

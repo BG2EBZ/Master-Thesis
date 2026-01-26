@@ -1,0 +1,10 @@
+setup.py
+museum_env/__init__.py
+museum_env/env.py
+museum_env/register_env.py
+museum_env.egg-info/PKG-INFO
+museum_env.egg-info/SOURCES.txt
+museum_env.egg-info/dependency_links.txt
+museum_env.egg-info/requires.txt
+museum_env.egg-info/top_level.txt
+museum_env/assets/museum_scene.xml

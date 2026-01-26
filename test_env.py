@@ -1,7 +1,7 @@
 import gymnasium as gym
 import numpy as np
 import time
-import register_env
+import museum_env.register_env
 
 env = gym.make("MuseumEnv-v0", render_mode="human")
 
