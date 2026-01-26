@@ -1,14 +1,15 @@
-from museum_env import MuseumEnv
+import gymnasium as gym
 import numpy as np
 import time
+import register_env
 
-env = MuseumEnv("museum_scene.xml", render_mode="human")
+env = gym.make("MuseumEnv-v0", render_mode="human")
 
 obs, _ = env.reset()
 print("Initial obs:", obs)
 
 action = np.zeros(env.action_space.shape, dtype=np.float32)
-action[0] = 10.0  # command full speed forward on X axis
+action[0] = 20.0  # command full speed forward on X axis
 
 for _ in range(3000):
     obs, reward, terminated, truncated, info = env.step(action)
