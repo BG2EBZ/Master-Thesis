@@ -1,6 +1,6 @@
 <mujoco model="museum_shell">
   <compiler angle="degree" coordinate="local"/>
-  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <option timestep="0.002" gravity="0 0 0"/>
 
   <default>
     <!-- Collision defaults (good stable starting point) -->
@@ -76,14 +76,14 @@
     <!-- ============ ROBOT (triangle-ish base, planar joints) ============ -->
     <body name="robot" pos="5 5 0.06">
       <!-- Planar movement: x, y, yaw -->
-      <joint name="robot_x" type="slide" axis="1 0 0" damping="2"/>
-      <joint name="robot_y" type="slide" axis="0 1 0" damping="2"/>
-      <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="1"/>
+      <joint name="robot_x" type="slide" axis="1 0 0" damping="0"/>
+      <joint name="robot_y" type="slide" axis="0 1 0" damping="0"/>
+      <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
 
       <!-- Main footprint: use a cylinder for stable collision (fast + robust).
            Radius ~0.20m (40cm diameter). Height 0.12m. -->
-      <geom name="robot_base" type="cylinder" size="0.20 0.06"
-            rgba="0.2 0.3 0.9 1"/>
+      <geom name="robot_base" type="cylinder" size="0.20 0.06" 
+            mass="20" friction="0.2 0.01 0.001" rgba="0.2 0.3 0.9 1"/>
 
       <!-- Nose: small box in front to show orientation (front/back) -->
       <geom name="robot_nose" type="box" pos="0 0.18 0.03" size="0.03 0.06 0.03"
@@ -173,9 +173,9 @@
     <!-- Control x/y slides and yaw hinge.
          For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
          But for (v, w) you usually set vy_cmd=0 in your policy. -->
-    <motor name="motor_x" joint="robot_x" ctrlrange="-1.5 1.5" gear="1"/>
-    <motor name="motor_y" joint="robot_y" ctrlrange="-1.5 1.5" gear="1"/>
-    <motor name="motor_yaw" joint="robot_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+    <velocity name="motor_x" joint="robot_x" kv="50" ctrlrange="-1.5 1.5"/>
+    <velocity name="motor_y" joint="robot_y" kv="50" ctrlrange="-1.5 1.5"/>
+    <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-2.0 2.0"/>
 
     <!-- Person controls (same style as robot) -->
     <motor name="person1_motor_x" joint="person1_x" ctrlrange="-1.2 1.2" gear="1"/>
