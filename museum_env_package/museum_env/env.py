@@ -25,9 +25,11 @@ class MuseumEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
 
+        self.render_mode = render_mode
+        self.viewer = None
 
         # --- Action space ---
-        # Assume N actuators (e.g. wheel velocities)
+        # Assume N actuators (3 for robot)
         self.nu = self.model.nu
         self.action_space = spaces.Box(
             low=-1.0,
@@ -36,17 +38,14 @@ class MuseumEnv(gym.Env):
             dtype=np.float32,
         )
 
-        print("=== Actuator order ===")
-        for i in range(self.model.nu):
-            print(i, self.model.actuator(i).name)
-        print("======================")
-
-        self.render_mode = render_mode
-        self.viewer = None
+        # print("=== Actuator order ===")
+        # for i in range(self.model.nu):
+        #     print(i, self.model.actuator(i).name)
+        # print("======================")
 
         # --- Observation space ---
         # Minimal: robot x, y, orientation (theta)
-        # We read these from qpos
+        # Read these from qpos
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,

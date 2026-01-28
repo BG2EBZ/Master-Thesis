@@ -1,207 +1,190 @@
 <mujoco model="museum_shell">
-  <compiler angle="degree" coordinate="local"/>
-  <option timestep="0.002" gravity="0 0 0"/>
+      <compiler angle="degree" coordinate="local"/>
+      <option timestep="0.002" gravity="0 0 0"/>
 
-  <default>
-    <!-- Collision defaults (good stable starting point) -->
-    <geom contype="1" conaffinity="1" friction="1 0.005 0.0001"
-          solref="0.02 1" solimp="0.9 0.95 0.001"/>
-  </default>
+      <default>
+            <!-- Collision defaults (good stable starting point) -->
+            <geom contype="1" conaffinity="1" friction="1 0.005 0.0001" solref="0.02 1" solimp="0.9 0.95 0.001"/>
+      </default>
 
-  <worldbody>
-    <!-- A camera so you immediately see something -->
-    <camera name="cam_overview" pos="6 -22 10" xyaxes="1 0 0 0 0.55 0.83"/>
+      <worldbody>
+            <!-- A camera so you immediately see something -->
+            <camera name="cam_overview" pos="6 -22 10" xyaxes="1 0 0 0 0.55 0.83"/>
 
-    <!-- ============ FLOOR ============ -->
-    <!-- size = half-size. This plane is effectively infinite visually;
+            <!-- ============ FLOOR ============ -->
+            <!-- size = half-size. This plane is effectively infinite visually;
          size mainly affects texture scaling; keep it large. -->
-    <geom name="floor" type="plane" pos="0 0 0" size="30 30 0.1" rgba="0.95 0.93 0.9 1"/>
+            <geom name="floor" type="plane" pos="0 0 0" size="30 30 0.1" rgba="0.95 0.93 0.9 1"/>
 
-    <!-- ============ CORRIDOR ============ -->
-    <!-- CORRIDOR: inner x[7,10], y[-10,0] (width 3m, length 10m) -->
-    <!-- Left corridor wall at x=7 -->
+            <!-- ============ CORRIDOR ============ -->
+            <!-- CORRIDOR: inner x[7,10], y[-10,0] (width 3m, length 10m) -->
+            <!-- Left corridor wall at x=7 -->
 
-    <!-- Left wall of corridor -->
-    <geom name="corridor_wall_left" type="box"
-          pos="7 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
+            <!-- Left wall of corridor -->
+            <geom name="corridor_wall_left" type="box" pos="7 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
 
-    <!-- Right corridor wall at x=10 -->
-    <geom name="corridor_wall_right" type="box"
-          pos="10 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
+            <!-- Right corridor wall at x=10 -->
+            <geom name="corridor_wall_right" type="box" pos="10 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
 
 
-    <!-- ROOM A (10x10): x[0,10], y[0,10] -->
-    <!-- Top wall y=10 -->
-    <geom name="roomA_wall_top" type="box"
-          pos="5 10 1.5" size="5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- ROOM A (10x10): x[0,10], y[0,10] -->
+            <!-- Top wall y=10 -->
+            <geom name="roomA_wall_top" type="box" pos="5 10 1.5" size="5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Left wall x=0 -->
-    <geom name="roomA_wall_left" type="box"
-          pos="0 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Left wall x=0 -->
+            <geom name="roomA_wall_left" type="box" pos="0 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Right wall x=10 -->
-    <geom name="roomA_wall_right" type="box"
-          pos="10 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Right wall x=10 -->
+            <geom name="roomA_wall_right" type="box" pos="10 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Bottom wall y=0, leave a 3m opening at the RIGHT side: x in [7,10] -->
-    <geom name="roomA_wall_bottom_left" type="box"
-          pos="3.5 0 1.5" size="3.5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Bottom wall y=0, leave a 3m opening at the RIGHT side: x in [7,10] -->
+            <geom name="roomA_wall_bottom_left" type="box" pos="3.5 0 1.5" size="3.5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
 
-    <!-- ROOM B: x[7,12], y[-15,-10] (5x5) -->
-    <!-- Left wall x=7 -->
-    <geom name="roomB_wall_left" type="box"
-          pos="7 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- ROOM B: x[7,12], y[-15,-10] (5x5) -->
+            <!-- Left wall x=7 -->
+            <geom name="roomB_wall_left" type="box" pos="7 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Right wall x=12 -->
-    <geom name="roomB_wall_right" type="box"
-          pos="12 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Right wall x=12 -->
+            <geom name="roomB_wall_right" type="box" pos="12 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Bottom wall y=-15 -->
-    <geom name="roomB_wall_bottom" type="box"
-          pos="9.5 -15 1.5" size="2.5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Bottom wall y=-15 -->
+            <geom name="roomB_wall_bottom" type="box" pos="9.5 -15 1.5" size="2.5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
-    <!-- Top wall y=-10, leave a 3m opening at the LEFT side: x in [7,10] to connect corridor -->
-    <geom name="roomB_wall_top_right" type="box"
-          pos="11 -10 1.5" size="1 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Top wall y=-10, leave a 3m opening at the LEFT side: x in [7,10] to connect corridor -->
+            <geom name="roomB_wall_top_right" type="box" pos="11 -10 1.5" size="1 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
 
 
-    <!-- ============ DISPLAY CASES ============ -->
-    <!-- Cases: 0.6x0.6 and 0.6x1.2 (meters). We'll make them 0.9m tall. -->
-    <!-- Box size is half-size: (0.3, 0.3, 0.45) for 0.6x0.6x0.9 -->
-    <!-- and (0.3, 0.6, 0.45) for 0.6x1.2x0.9 -->
+            <!-- ============ DISPLAY CASES ============ -->
+            <!-- Cases: 0.6x0.6 and 0.6x1.2 (meters). We'll make them 0.9m tall. -->
+            <!-- Box size is half-size: (0.3, 0.3, 0.45) for 0.6x0.6x0.9 -->
+            <!-- and (0.3, 0.6, 0.45) for 0.6x1.2x0.9 -->
 
-    
-    <!-- ============ ROBOT (triangle-ish base, planar joints) ============ -->
-    <body name="robot" pos="5 5 0.06">
-      <!-- Planar movement: x, y, yaw -->
-      <joint name="robot_x" type="slide" axis="1 0 0" damping="0"/>
-      <joint name="robot_y" type="slide" axis="0 1 0" damping="0"/>
-      <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+            <!-- ============ ROBOT (triangle-ish base, planar joints) ============ -->
+            <body name="robot" pos="5 5 0.06">
+                  <!-- Planar movement: x, y, yaw -->
+                  <joint name="robot_x" type="slide" axis="1 0 0" damping="0"/>
+                  <joint name="robot_y" type="slide" axis="0 1 0" damping="0"/>
+                  <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
 
-      <!-- Main footprint: use a cylinder for stable collision (fast + robust).
+                  <!-- Main footprint: use a cylinder for stable collision (fast + robust).
            Radius ~0.20m (40cm diameter). Height 0.12m. -->
-      <geom name="robot_base" type="cylinder" size="0.20 0.06" 
-            mass="20" friction="0.2 0.01 0.001" rgba="0.2 0.3 0.9 1"/>
+                  <geom name="robot_base" type="cylinder" size="0.20 0.06" mass="20" friction="0.2 0.01 0.001" rgba="0.2 0.3 0.9 1"/>
 
-      <!-- Nose: small box in front to show orientation (front/back) -->
-      <geom name="robot_nose" type="box" pos="0 0.18 0.03" size="0.03 0.06 0.03"
-            rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
+                  <!-- Nose: small box in front to show orientation (front/back) -->
+                  <geom name="robot_nose" type="box" pos="0 0.18 0.03" size="0.03 0.06 0.03" rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
 
-      <!-- Optional: a site for easy tracking (goal distances, etc.) -->
-      <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
-    </body>
+                  <!-- Optional: a site for easy tracking (goal distances, etc.) -->
+                  <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
+            </body>
 
-    <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
-    <body name="person1" pos="6 5 0.125">
-      <!-- Planar movement: x, y, yaw -->
-      <joint name="person1_x" type="slide" axis="1 0 0" damping="3"/>
-      <joint name="person1_y" type="slide" axis="0 1 0" damping="3"/>
-      <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="2"/>
+            <!-- Goal site for reference -->
+            <site name="goal_site" pos="8 8 0.05" size="0.08" rgba="1 0 0 1"/>
 
-      <!-- Torso as a capsule.
+            <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
+            <body name="person1" pos="6 5 0.125">
+                  <!-- Planar movement: x, y, yaw -->
+                  <joint name="person1_x" type="slide" axis="1 0 0" damping="3"/>
+                  <joint name="person1_y" type="slide" axis="0 1 0" damping="3"/>
+                  <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="2"/>
+
+                  <!-- Torso as a capsule.
            shoulders: 0.45m, chest: 0.25m.
            Capsule 'size' = radius, half-length (along its axis).
            Align the capsule along Y to represent shoulder width approx 0.45:
              - radius ~0.125
              - half-length ~0.10
            Height: ~0.18m (stands above floor a little). -->
-      <geom name="person1_torso" type="capsule"
-            pos="0 0 0.125" size="0.125 0.10"
-            euler="0 0 90" rgba="0.25 0.75 0.35 1"/>
+                  <geom name="person1_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.25 0.75 0.35 1"/>
 
-      <!-- Head -->
-      <geom name="person1_head" type="sphere"
-            pos="0 0 0.36" size="0.09"
-            rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+                  <!-- Head -->
+                  <geom name="person1_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
 
-      <!-- Nose: small marker to show front direction (person faces +y in its local frame) -->
-      <geom name="person1_nose" type="box"
-            pos="0 0.18 0.36" size="0.02 0.03 0.02"
-            rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <!-- Nose: small marker to show front direction (person faces +y in its local frame) -->
+                  <geom name="person1_nose" type="box" pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
 
-      <!-- Tracking site -->
-      <site name="person1_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
-    </body>
+                  <!-- Tracking site -->
+                  <site name="person1_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+            </body>
 
-    <!-- More people -->
-    <body name="person2" pos="2.0 2.0 0.125">
-      <joint name="person2_x" type="slide" axis="1 0 0" damping="3"/>
-      <joint name="person2_y" type="slide" axis="0 1 0" damping="3"/>
-      <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="2"/>
-      <geom name="person2_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.20 0.70 0.30 1"/>
-      <geom name="person2_head"  type="sphere"  pos="0 0 0.36"  size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
-      <geom name="person2_nose"  type="box"     pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
-      <site name="person2_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
-    </body>
+            <!-- More people -->
+            <body name="person2" pos="2.0 2.0 0.125">
+                  <joint name="person2_x" type="slide" axis="1 0 0" damping="3"/>
+                  <joint name="person2_y" type="slide" axis="0 1 0" damping="3"/>
+                  <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="2"/>
+                  <geom name="person2_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.20 0.70 0.30 1"/>
+                  <geom name="person2_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+                  <geom name="person2_nose" type="box" pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <site name="person2_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+            </body>
 
-    <body name="person3" pos="8.0 2.0 0.125">
-      <joint name="person3_x" type="slide" axis="1 0 0" damping="3"/>
-      <joint name="person3_y" type="slide" axis="0 1 0" damping="3"/>
-      <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="2"/>
-      <geom name="person3_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.22 0.72 0.33 1"/>
-      <geom name="person3_head"  type="sphere"  pos="0 0 0.36"  size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
-      <geom name="person3_nose"  type="box"     pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
-      <site name="person3_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
-    </body>
+            <body name="person3" pos="8.0 2.0 0.125">
+                  <joint name="person3_x" type="slide" axis="1 0 0" damping="3"/>
+                  <joint name="person3_y" type="slide" axis="0 1 0" damping="3"/>
+                  <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="2"/>
+                  <geom name="person3_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.22 0.72 0.33 1"/>
+                  <geom name="person3_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+                  <geom name="person3_nose" type="box" pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <site name="person3_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+            </body>
 
-    <body name="person4" pos="2.0 8.0 0.125">
-      <joint name="person4_x" type="slide" axis="1 0 0" damping="3"/>
-      <joint name="person4_y" type="slide" axis="0 1 0" damping="3"/>
-      <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="2"/>
-      <geom name="person4_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.24 0.74 0.35 1"/>
-      <geom name="person4_head"  type="sphere"  pos="0 0 0.36"  size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
-      <geom name="person4_nose"  type="box"     pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
-      <site name="person4_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
-    </body>
+            <body name="person4" pos="2.0 8.0 0.125">
+                  <joint name="person4_x" type="slide" axis="1 0 0" damping="3"/>
+                  <joint name="person4_y" type="slide" axis="0 1 0" damping="3"/>
+                  <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="2"/>
+                  <geom name="person4_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.24 0.74 0.35 1"/>
+                  <geom name="person4_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+                  <geom name="person4_nose" type="box" pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <site name="person4_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+            </body>
 
-    <body name="person5" pos="8.0 8.0 0.125">
-      <joint name="person5_x" type="slide" axis="1 0 0" damping="3"/>
-      <joint name="person5_y" type="slide" axis="0 1 0" damping="3"/>
-      <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="2"/>
-      <geom name="person5_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.26 0.76 0.37 1"/>
-      <geom name="person5_head"  type="sphere"  pos="0 0 0.36"  size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
-      <geom name="person5_nose"  type="box"     pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
-      <site name="person5_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
-    </body>
+            <body name="person5" pos="8.0 8.0 0.125">
+                  <joint name="person5_x" type="slide" axis="1 0 0" damping="3"/>
+                  <joint name="person5_y" type="slide" axis="0 1 0" damping="3"/>
+                  <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="2"/>
+                  <geom name="person5_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.26 0.76 0.37 1"/>
+                  <geom name="person5_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
+                  <geom name="person5_nose" type="box" pos="0 0.18 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <site name="person5_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+            </body>
 
 
-  </worldbody>
+      </worldbody>
 
-  <actuator>
-    <!-- Control x/y slides and yaw hinge.
+      <actuator>
+            <!-- Control x/y slides and yaw hinge.
          For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
          But for (v, w) you usually set vy_cmd=0 in your policy. -->
-    <velocity name="motor_x" joint="robot_x" kv="50" ctrlrange="-1.5 1.5"/>
-    <velocity name="motor_y" joint="robot_y" kv="50" ctrlrange="-1.5 1.5"/>
-    <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-2.0 2.0"/>
+            <velocity name="motor_x" joint="robot_x" kv="50" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_y" joint="robot_y" kv="50" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-2.0 2.0"/>
 
-    <!-- Person controls (same style as robot) -->
-    <motor name="person1_motor_x" joint="person1_x" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person1_motor_y" joint="person1_y" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person1_motor_yaw" joint="person1_yaw" ctrlrange="-2.0 2.0" gear="1"/>
-    
-    <!-- Person2 controls -->
-    <motor name="person2_motor_x" joint="person2_x" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person2_motor_y" joint="person2_y" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person2_motor_yaw" joint="person2_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+            <!-- Person controls (same style as robot) -->
+            <motor name="person1_motor_x" joint="person1_x" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person1_motor_y" joint="person1_y" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person1_motor_yaw" joint="person1_yaw" ctrlrange="-2.0 2.0" gear="1"/>
 
-    <!-- Person3 controls -->
-    <motor name="person3_motor_x" joint="person3_x" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person3_motor_y" joint="person3_y" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person3_motor_yaw" joint="person3_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+            <!-- Person2 controls -->
+            <motor name="person2_motor_x" joint="person2_x" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person2_motor_y" joint="person2_y" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person2_motor_yaw" joint="person2_yaw" ctrlrange="-2.0 2.0" gear="1"/>
 
-    <!-- Person4 controls -->
-    <motor name="person4_motor_x" joint="person4_x" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person4_motor_y" joint="person4_y" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person4_motor_yaw" joint="person4_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+            <!-- Person3 controls -->
+            <motor name="person3_motor_x" joint="person3_x" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person3_motor_y" joint="person3_y" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person3_motor_yaw" joint="person3_yaw" ctrlrange="-2.0 2.0" gear="1"/>
 
-    <!-- Person5 controls -->
-    <motor name="person5_motor_x" joint="person5_x" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person5_motor_y" joint="person5_y" ctrlrange="-1.2 1.2" gear="1"/>
-    <motor name="person5_motor_yaw" joint="person5_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+            <!-- Person4 controls -->
+            <motor name="person4_motor_x" joint="person4_x" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person4_motor_y" joint="person4_y" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person4_motor_yaw" joint="person4_yaw" ctrlrange="-2.0 2.0" gear="1"/>
 
-  </actuator>
+            <!-- Person5 controls -->
+            <motor name="person5_motor_x" joint="person5_x" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person5_motor_y" joint="person5_y" ctrlrange="-1.2 1.2" gear="1"/>
+            <motor name="person5_motor_yaw" joint="person5_yaw" ctrlrange="-2.0 2.0" gear="1"/>
+
+      </actuator>
 
 </mujoco>
