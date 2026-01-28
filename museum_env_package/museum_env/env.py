@@ -57,6 +57,16 @@ class MuseumEnv(gym.Env):
         self.max_steps = 1000
         self.step_count = 0
 
+        # Waypoints: room A → corridor → room B
+        self.waypoints = [
+            (0.0, 0.0),      # Start in room A
+            (3.5, -4.0),      # Move toward corridor entrance
+            (3.5, -5.0),      # Reach corridor entrance
+            (3.5, -15.0),     # Traverse corridor
+            (4.5, -17.5),    # Stop in room B
+        ]
+        self.current_waypoint_idx = 0        
+
     def _wrap_to_pi(self, ang: float) -> float:
         return (ang + np.pi) % (2 * np.pi) - np.pi
 
@@ -74,25 +84,34 @@ class MuseumEnv(gym.Env):
 
     def _rule_based_action(self):
         """
-        Minimal go-to-goal controller.
-        Returns action = [vx, vy, yaw_rate] in actuator units (m/s, m/s, rad/s).
+        Waypoint-following controller.
+        Navigates through predefined waypoints from room A to room B.
         """
         x, y, yaw = self._get_robot_pose()
-        gx, gy = self._get_goal_xy()
-
-        dx = gx - x
-        dy = gy - y
+        # Get current target waypoint
+        wx, wy = self.waypoints[self.current_waypoint_idx]
+ 
+        dx = wx - x
+        dy = wy - y
         dist = np.hypot(dx, dy) + 1e-8
+
+        # Switch to next waypoint if close enough (threshold: 0.3m)
+        if dist < 0.3 and self.current_waypoint_idx < len(self.waypoints) - 1:
+            self.current_waypoint_idx += 1
+            wx, wy = self.waypoints[self.current_waypoint_idx]
+            dx = wx - x
+            dy = wy - y
+            dist = np.hypot(dx, dy) + 1e-8
 
         # Tunable gains
         k_v = 100.0      # translation gain
         k_yaw = 10.0    # heading gain
 
-        # Desired heading toward goal
+        # Desired heading toward current waypoint
         desired_yaw = np.arctan2(dy, dx)
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
-        # Move toward goal in world frame (since your actuators control x/y slides)
+        # Move toward waypoint
         vx = k_v * dx
         vy = k_v * dy
 
@@ -104,7 +123,7 @@ class MuseumEnv(gym.Env):
 
         yaw_rate = k_yaw * yaw_err
 
-        # --- Clip to actuator limits (match your XML ctrlrange) ---
+        # Clip to actuator limits (match XML ctrlrange)
         vx = np.clip(vx, -5, 5)
         vy = np.clip(vy, -5, 5)
         yaw_rate = np.clip(yaw_rate, -2.0, 2.0)
@@ -142,9 +161,8 @@ class MuseumEnv(gym.Env):
         # Reward is optional for rule-based baseline, but keep it consistent
         reward = -dist
 
-        terminated = dist < 0.3
-
-        terminated = False
+        # Terminate when robot reaches the final waypoint
+        terminated = (dist < 0.3 and self.current_waypoint_idx == len(self.waypoints) - 1)
         truncated = self.step_count >= self.max_steps
 
         info = {"dist_to_goal": dist}

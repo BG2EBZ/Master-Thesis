@@ -80,7 +80,7 @@
             </body>
 
             <!-- Goal site for reference -->
-            <site name="goal_site" pos="9.5 -12.5 0.05" size="0.08" rgba="1 0 0 1"/>
+            <site name="goal_site" pos="5.0 -17.5 0.05" size="0.08" rgba="1 0 0 1"/>
 
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
             <body name="person1" pos="6 5 0.125">
@@ -90,12 +90,12 @@
                   <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="2"/>
 
                   <!-- Torso as a capsule.
-           shoulders: 0.45m, chest: 0.25m.
-           Capsule 'size' = radius, half-length (along its axis).
-           Align the capsule along Y to represent shoulder width approx 0.45:
-             - radius ~0.125
-             - half-length ~0.10
-           Height: ~0.18m (stands above floor a little). -->
+                  shoulders: 0.45m, chest: 0.25m.
+                  Capsule 'size' = radius, half-length (along its axis).
+                  Align the capsule along Y to represent shoulder width approx 0.45:
+                        - radius ~0.125
+                        - half-length ~0.10
+                  Height: ~0.18m (stands above floor a little). -->
                   <geom name="person1_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" euler="0 0 90" rgba="0.25 0.75 0.35 1"/>
 
                   <!-- Head -->
@@ -154,8 +154,8 @@
 
       <actuator>
             <!-- Control x/y slides and yaw hinge.
-         For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
-         But for (v, w) you usually set vy_cmd=0 in your policy. -->
+            For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
+            But for (v, w) you usually set vy_cmd=0 in your policy. -->
             <velocity name="motor_x" joint="robot_x" kv="50" ctrlrange="-5 5"/>
             <velocity name="motor_y" joint="robot_y" kv="50" ctrlrange="-5 5"/>
             <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-2.0 2.0"/>

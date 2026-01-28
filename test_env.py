@@ -25,5 +25,9 @@ for step in range(30000):
             f"robot=({x:.2f}, {y:.2f}) "
             f"goal=({gx:.2f}, {gy:.2f})"
         )
+    
+    if terminated:
+        print(f"Robot reached goal at step {step}!")
+        break
 
 env.close()
