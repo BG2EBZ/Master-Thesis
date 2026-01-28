@@ -84,9 +84,9 @@ class MuseumEnv(gym.Env):
         dy = gy - y
         dist = np.hypot(dx, dy) + 1e-8
 
-        # --- Tunable gains (start with these) ---
-        k_v = 5.0      # translation gain
-        k_yaw = 2.0    # heading gain
+        # Tunable gains
+        k_v = 100.0      # translation gain
+        k_yaw = 10.0    # heading gain
 
         # Desired heading toward goal
         desired_yaw = np.arctan2(dy, dx)
@@ -105,8 +105,8 @@ class MuseumEnv(gym.Env):
         yaw_rate = k_yaw * yaw_err
 
         # --- Clip to actuator limits (match your XML ctrlrange) ---
-        vx = np.clip(vx, -1.5, 1.5)
-        vy = np.clip(vy, -1.5, 1.5)
+        vx = np.clip(vx, -5, 5)
+        vy = np.clip(vy, -5, 5)
         yaw_rate = np.clip(yaw_rate, -2.0, 2.0)
 
         return np.array([vx, vy, yaw_rate], dtype=np.float32), dist
