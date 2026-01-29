@@ -5,6 +5,7 @@ import mujoco
 import mujoco.viewer
 import os
 from importlib import resources 
+from .human import Human
 
 
 class MuseumEnv(gym.Env):
@@ -65,7 +66,19 @@ class MuseumEnv(gym.Env):
             (3.5, -15.0),     # Traverse corridor
             (4.5, -17.5),    # Stop in room B
         ]
-        self.current_waypoint_idx = 0        
+        self.current_waypoint_idx = 0
+        
+        # --- Initialize humans ---
+        # 5 people in XML at positions in qpos
+        # Robot: qpos[0:3] = [x, y, yaw]
+        # Person1: qpos[3:6], Person2: qpos[6:9], Person3: qpos[9:12], Person4: qpos[12:15], Person5: qpos[15:18]
+        self.humans = [
+            Human("person1", "person1", qpos_idx=3),
+            Human("person2", "person2", qpos_idx=6),
+            Human("person3", "person3", qpos_idx=9),
+            Human("person4", "person4", qpos_idx=12),
+            Human("person5", "person5", qpos_idx=15),
+        ]
 
     def _wrap_to_pi(self, ang: float) -> float:
         return (ang + np.pi) % (2 * np.pi) - np.pi
@@ -135,6 +148,11 @@ class MuseumEnv(gym.Env):
 
         mujoco.mj_resetData(self.model, self.data)
         self.step_count = 0
+        
+        # Reset humans
+        for human in self.humans:
+            human.step_count = 0
+            human.current_waypoint = human._random_waypoint()
 
         obs = self._get_obs()
         info = {}
@@ -143,15 +161,22 @@ class MuseumEnv(gym.Env):
 
     def step(self, action=None):
         """
-        Rule-based navigation step now.
+        Rule-based navigation step + human random walking.
         """
         self.step_count += 1
 
         rb_action, dist = self._rule_based_action()
 
-        # Apply to robot actuators only
+        # Apply robot action
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = rb_action
+        
+        # Update humans
+        for i, human in enumerate(self.humans):
+            human_action = human.update(self.data.qpos, self.timestep)
+            # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
+            ctrl_idx = 3 + i * 3
+            self.data.ctrl[ctrl_idx:ctrl_idx+3] = human_action
 
         # Step simulation
         mujoco.mj_step(self.model, self.data)
@@ -171,8 +196,7 @@ class MuseumEnv(gym.Env):
 
     def _get_obs(self):
         """
-        Minimal observation:
-        [x, y, theta]
+        Minimal observation: [x, y, goal_dx, goal_dy]
         """
         # Assumes robot pose is in qpos[0:3]
         x, y, yaw = self._get_robot_pose()
