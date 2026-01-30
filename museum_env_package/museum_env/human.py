@@ -30,18 +30,21 @@ class Human:
         # Room A: x[0,10], y[0,10]
         # Corridor: x[7,10], y[-10,0]
         # Room B: x[7,12], y[-15,-10]
+
+        wx = np.random.uniform(1, 9)
+        wy = np.random.uniform(1, 9)        
         
-        room_choice = np.random.randint(0, 3)
+        # room_choice = np.random.randint(0, 3)
         
-        if room_choice == 0:  # Room A
-            wx = np.random.uniform(1, 9)
-            wy = np.random.uniform(1, 9)
-        elif room_choice == 1:  # Corridor
-            wx = np.random.uniform(7.5, 9.5)
-            wy = np.random.uniform(-9, -1)
-        else:  # Room B
-            wx = np.random.uniform(7.5, 11.5)
-            wy = np.random.uniform(-14, -11)
+        # if room_choice == 0:  # Room A
+        #     wx = np.random.uniform(1, 9)
+        #     wy = np.random.uniform(1, 9)
+        # elif room_choice == 1:  # Corridor
+        #     wx = np.random.uniform(7.5, 9.5)
+        #     wy = np.random.uniform(-9, -1)
+        # else:  # Room B
+        #     wx = np.random.uniform(7.5, 11.5)
+        #     wy = np.random.uniform(-14, -11)
         
         return np.array([wx, wy], dtype=np.float32)
     
