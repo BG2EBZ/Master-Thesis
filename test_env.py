@@ -17,15 +17,26 @@ for step in range(30000):
     time.sleep(0.02)
 
     if step % 500 == 0:
-        x, y, dx, dy = obs
-        gx = x + dx
-        gy = y + dy
-        print(
-            f"[step {step}] "
-            f"robot=({x:.2f}, {y:.2f}) "
-            f"goal=({gx:.2f}, {gy:.2f})"
-        )
+        rx, ry = info["robot_xy"]
+        gx, gy = info["robot_goal_xy"]
+        human_xy = info["human_xy"]
+        human_goals = info["human_goals"]
+
+        print(f"\n[step {step}]")
+        print(f"  robot pos : ({rx:.2f}, {ry:.2f})")
+        print(f"  robot goal: ({gx:.2f}, {gy:.2f})")
+
+        for i, ((hx, hy), (hgx, hgy)) in enumerate(zip(human_xy, human_goals)):
+            print(
+                f"  person{i+1}: "
+                f"pos=({hx:.2f}, {hy:.2f}) "
+                f"goal=({hgx:.2f}, {hgy:.2f})"
+            )
     
+    if info["human_reached_goal"]:
+        for i in info["human_reached_goal"]:
+            print(f"  >>> person{i+1} reached their goal!")
+
     if terminated:
         print(f"Robot reached goal at step {step}!")
         break

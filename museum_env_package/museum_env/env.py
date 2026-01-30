@@ -200,11 +200,21 @@ class MuseumEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
 
         # ---- DEBUG: human positions ----
-        if self.step_count % 100 == 0:   # avoid spamming
-            human_xy = self._get_human_poses()
-            print(f"[step {self.step_count}] Humans:", human_xy)
+        # if self.step_count % 100 == 0:   # avoid spamming
+        #     human_xy = self._get_human_poses()
+        #     print(f"[step {self.step_count}] Humans:", human_xy)
         # --------------------------------
-        
+
+        rx, ry, _ = self._get_robot_pose()
+        gx, gy = self._get_goal_xy()
+        human_xy = self._get_human_poses()
+        dists = np.linalg.norm(human_xy - np.array([rx, ry]), axis=1)
+        human_goals = np.array(
+            [h.current_waypoint for h in self.humans],
+            dtype=np.float32
+        )
+        min_dist = float(np.min(dists))
+
         obs = self._get_obs()
 
         # Reward is optional for rule-based baseline, but keep it consistent
@@ -214,7 +224,14 @@ class MuseumEnv(gym.Env):
         terminated = (dist < 0.3 and self.current_waypoint_idx == len(self.waypoints) - 1)
         truncated = self.step_count >= self.max_steps
 
-        info = {"dist_to_goal": dist}
+        info = {
+            "dist_to_goal": dist,
+            "robot_xy": np.array([rx, ry], dtype=np.float32),
+            "robot_goal_xy": np.array([gx, gy], dtype=np.float32),
+            "human_xy": human_xy,          # (N, 2)
+            "human_goals": human_goals,    # (N, 2)
+            # "min_human_dist": min_dist,
+        }
 
         return obs, reward, terminated, truncated, info
 
