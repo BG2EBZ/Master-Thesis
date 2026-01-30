@@ -84,9 +84,11 @@ class MuseumEnv(gym.Env):
         return (ang + np.pi) % (2 * np.pi) - np.pi
 
     def _get_robot_pose(self):
-        # Use qpos[0:3] for robot x,y,yaw now
-        x = float(self.data.qpos[0])
-        y = float(self.data.qpos[1])
+        # Use body xpos (world coordinates) instead of qpos (joint values)
+        robot_body_id = self.model.body("robot").id
+        x = float(self.data.xpos[robot_body_id, 0])
+        y = float(self.data.xpos[robot_body_id, 1])
+        # Get yaw from qpos (rotation around z-axis)
         yaw = float(self.data.qpos[2])
         return x, y, yaw
 
