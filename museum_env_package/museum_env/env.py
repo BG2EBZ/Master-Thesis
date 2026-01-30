@@ -91,6 +91,19 @@ class MuseumEnv(gym.Env):
         yaw = float(self.data.qpos[2])
         return x, y, yaw
 
+    def _get_human_poses(self):
+        """
+        Returns:
+            humans_xy: (N, 2) array of human positions in world frame
+        """
+        humans_xy = []
+        for human in self.humans:
+            human_body_id = self.model.body(human.body_name).id
+            x = float(self.data.xpos[human_body_id, 0])
+            y = float(self.data.xpos[human_body_id, 1])
+            humans_xy.append([x, y])
+        return np.array(humans_xy, dtype=np.float32)
+
     def _get_goal_xy(self):
         # Requires <site name="goal_site" .../> in XML
         goal_xy = self.data.site("goal_site").xpos[:2]
@@ -150,7 +163,7 @@ class MuseumEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
 
         mujoco.mj_forward(self.model, self.data)
-        
+
         self.current_waypoint_idx = 0
         self.step_count = 0
         
@@ -178,7 +191,7 @@ class MuseumEnv(gym.Env):
         
         # Update humans
         for i, human in enumerate(self.humans):
-            human_action = human.update(self.data.qpos, self.timestep)
+            human_action = human.update(self.model, self.data, self.timestep)
             # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx+3] = human_action
@@ -186,6 +199,12 @@ class MuseumEnv(gym.Env):
         # Step simulation
         mujoco.mj_step(self.model, self.data)
 
+        # ---- DEBUG: human positions ----
+        if self.step_count % 100 == 0:   # avoid spamming
+            human_xy = self._get_human_poses()
+            print(f"[step {self.step_count}] Humans:", human_xy)
+        # --------------------------------
+        
         obs = self._get_obs()
 
         # Reward is optional for rule-based baseline, but keep it consistent

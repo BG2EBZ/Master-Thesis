@@ -21,6 +21,9 @@ class Human:
         self.max_speed = max_speed
         self.waypoint_threshold = waypoint_threshold
         
+        # Store body_id (will be set when we have access to model)
+        self.body_id = None
+        
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
         self.step_count = 0
@@ -39,20 +42,25 @@ class Human:
     def _wrap_to_pi(self, ang):
         return (ang + np.pi) % (2 * np.pi) - np.pi
     
-    def update(self, qpos, timestep):
+    def update(self, model, data, timestep):
         """
         Update human motion toward current waypoint.
         
         Args:
-            qpos: MuJoCo qpos array (read/write)
+            model: MuJoCo model (for body ID lookup)
+            data: MuJoCo data (for state and control)
             timestep: Simulation timestep
         """
         self.step_count += 1
         
-        # Current pose
-        x = qpos[self.qpos_idx]
-        y = qpos[self.qpos_idx + 1]
-        yaw = qpos[self.qpos_idx + 2]
+        # Get body ID on first call
+        if self.body_id is None:
+            self.body_id = model.body(self.body_name).id
+        
+        # Current pose using world coordinates (xpos) instead of qpos
+        x = float(data.xpos[self.body_id, 0])
+        y = float(data.xpos[self.body_id, 1])
+        yaw = float(data.qpos[self.qpos_idx + 2])  # Only yaw from qpos
         
         # Vector to waypoint
         dx = self.current_waypoint[0] - x
