@@ -50,7 +50,7 @@ class MuseumEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(3,),
+            shape=(4,),
             dtype=np.float32,
         )
 
@@ -60,11 +60,10 @@ class MuseumEnv(gym.Env):
 
         # Waypoints: room A → corridor → room B
         self.waypoints = [
-            (0.0, 0.0),      # Start in room A
-            (3.5, -4.0),      # Move toward corridor entrance
-            (3.5, -5.0),      # Reach corridor entrance
-            (3.5, -15.0),     # Traverse corridor
-            (4.5, -17.5),    # Stop in room B
+            (5, 5),      # Start in room A
+            (8.5, 0.0),      # Reach corridor entrance
+            (8.5, -10.0),     # Traverse corridor
+            (10, -12.5),    # Stop in room B
         ]
         self.current_waypoint_idx = 0
         
@@ -149,6 +148,10 @@ class MuseumEnv(gym.Env):
         super().reset(seed=seed)
 
         mujoco.mj_resetData(self.model, self.data)
+
+        mujoco.mj_forward(self.model, self.data)
+        
+        self.current_waypoint_idx = 0
         self.step_count = 0
         
         # Reset humans
