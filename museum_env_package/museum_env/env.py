@@ -185,6 +185,8 @@ class MuseumEnv(gym.Env):
 
         rb_action, dist = self._rule_based_action()
 
+        human_goal_threshold = 0.5
+
         # Apply robot action
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = rb_action
@@ -213,6 +215,13 @@ class MuseumEnv(gym.Env):
             [h.current_waypoint for h in self.humans],
             dtype=np.float32
         )
+        human_reached_goal = []
+
+        for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
+            dist_to_goal = np.linalg.norm(pos - goal)
+            if dist_to_goal < human_goal_threshold:
+                human_reached_goal.append(i)
+
         min_dist = float(np.min(dists))
 
         obs = self._get_obs()
@@ -230,6 +239,7 @@ class MuseumEnv(gym.Env):
             "robot_goal_xy": np.array([gx, gy], dtype=np.float32),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
+            "human_reached_goal": human_reached_goal,
             # "min_human_dist": min_dist,
         }
 

@@ -33,9 +33,10 @@ for step in range(30000):
                 f"goal=({hgx:.2f}, {hgy:.2f})"
             )
     
+    # ---- event-based print: any human reaches goal ----
     if info["human_reached_goal"]:
         for i in info["human_reached_goal"]:
-            print(f"  >>> person{i+1} reached their goal!")
+            print(f"[step {step}] >>> person{i+1} reached their goal!")
 
     if terminated:
         print(f"Robot reached goal at step {step}!")
