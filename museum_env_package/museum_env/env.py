@@ -132,7 +132,7 @@ class MuseumEnv(gym.Env):
 
         # Tunable gains
         k_v = 100.0      # translation gain
-        k_yaw = 10.0    # heading gain
+        k_yaw = 100.0    # heading gain
 
         # Desired heading toward current waypoint
         desired_yaw = np.arctan2(dy, dx)
@@ -151,9 +151,10 @@ class MuseumEnv(gym.Env):
         yaw_rate = k_yaw * yaw_err
 
         # Clip to actuator limits (match XML ctrlrange)
-        vx = np.clip(vx, -5, 5)
-        vy = np.clip(vy, -5, 5)
-        yaw_rate = np.clip(yaw_rate, -2.0, 2.0)
+        v = np.clip(k_v * dist, 0, 50.0)
+        vx = v * np.cos(yaw)
+        vy = v * np.sin(yaw)
+        yaw_rate = np.clip(k_yaw * yaw_err, -50.0, 50.0)
 
         return np.array([vx, vy, yaw_rate], dtype=np.float32), dist
     
@@ -237,6 +238,9 @@ class MuseumEnv(gym.Env):
             "dist_to_goal": dist,
             "robot_xy": np.array([rx, ry], dtype=np.float32),
             "robot_goal_xy": np.array([gx, gy], dtype=np.float32),
+            "robot_vx": float(rb_action[0]),
+            "robot_vy": float(rb_action[1]),
+            "robot_v_yaw": float(rb_action[2]),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
             "human_reached_goal": human_reached_goal,

@@ -158,7 +158,7 @@
             But for (v, w) you usually set vy_cmd=0 in your policy. -->
             <velocity name="motor_x" joint="robot_x" kv="50" ctrlrange="-5 5"/>
             <velocity name="motor_y" joint="robot_y" kv="50" ctrlrange="-5 5"/>
-            <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-2.0 2.0"/>
+            <velocity name="motor_yaw" joint="robot_yaw" kv="50" ctrlrange="-10.0 10.0"/>
 
             <!-- Person controls (change from motor to velocity) -->
             <velocity name="person1_motor_x" joint="person1_x" kv="50" ctrlrange="-1.2 1.2"/>

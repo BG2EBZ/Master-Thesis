@@ -16,6 +16,12 @@ for step in range(30000):
     env.render()
     time.sleep(0.02)
 
+    if step % 50 == 0:
+        vx = info["robot_vx"]
+        vy = info["robot_vy"]
+        v_yaw = info["robot_v_yaw"]
+        print(f"[step {step}] robot velocity: vx={vx:.4f}, vy={vy:.4f}, v_yaw={v_yaw:.4f}")
+
     if step % 500 == 0:
         rx, ry = info["robot_xy"]
         gx, gy = info["robot_goal_xy"]
