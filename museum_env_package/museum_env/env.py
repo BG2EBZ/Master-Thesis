@@ -156,7 +156,7 @@ class MuseumEnv(gym.Env):
         vy = v * np.sin(yaw)
         yaw_rate = np.clip(k_yaw * yaw_err, -50.0, 50.0)
 
-        return np.array([vx, vy, yaw_rate], dtype=np.float32), dist
+        return np.array([vx, vy, yaw_rate], dtype=np.float32), dist, desired_yaw, yaw
     
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -184,7 +184,7 @@ class MuseumEnv(gym.Env):
         """
         self.step_count += 1
 
-        rb_action, dist = self._rule_based_action()
+        rb_action, dist, desired_yaw, actual_yaw = self._rule_based_action()
 
         human_goal_threshold = 0.5
 
@@ -241,6 +241,8 @@ class MuseumEnv(gym.Env):
             "robot_vx": float(rb_action[0]),
             "robot_vy": float(rb_action[1]),
             "robot_v_yaw": float(rb_action[2]),
+            "desired_yaw": float(desired_yaw),
+            "actual_yaw": float(actual_yaw),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
             "human_reached_goal": human_reached_goal,
