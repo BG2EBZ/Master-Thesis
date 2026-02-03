@@ -73,7 +73,7 @@
                   <geom name="robot_base" type="cylinder" size="0.20 0.06" mass="20" friction="0.2 0.01 0.001" rgba="0.2 0.3 0.9 1"/>
 
                   <!-- Nose: small box in front to show orientation (front/back) -->
-                  <geom name="robot_nose" type="box" pos="0 0.18 0.03" size="0.03 0.06 0.03" rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
+                  <geom name="robot_nose" type="box" pos="0.18 0 0.03" size="0.03 0.06 0.03" rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
 
                   <!-- Optional: a site for easy tracking (goal distances, etc.) -->
                   <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
