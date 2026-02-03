@@ -104,6 +104,17 @@ class MuseumEnv(gym.Env):
             humans_xy.append([x, y])
         return np.array(humans_xy, dtype=np.float32)
 
+    def _get_human_yaws(self):
+        """
+        Returns:
+            humans_yaw: (N,) array of human yaw angles (rad)
+        """
+        humans_yaw = []
+        for human in self.humans:
+            yaw = float(self.data.qpos[human.qpos_idx + 2])
+            humans_yaw.append(yaw)
+        return np.array(humans_yaw, dtype=np.float32)
+
     def _get_goal_xy(self):
         # Requires <site name="goal_site" .../> in XML
         goal_xy = self.data.site("goal_site").xpos[:2]
@@ -193,8 +204,10 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[0:3] = rb_action
         
         # Update humans
+        human_actions = []
         for i, human in enumerate(self.humans):
             human_action = human.update(self.model, self.data, self.timestep)
+            human_actions.append(human_action)
             # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx+3] = human_action
@@ -211,11 +224,17 @@ class MuseumEnv(gym.Env):
         rx, ry, _ = self._get_robot_pose()
         gx, gy = self._get_goal_xy()
         human_xy = self._get_human_poses()
+        human_actual_yaw = self._get_human_yaws()
         dists = np.linalg.norm(human_xy - np.array([rx, ry]), axis=1)
         human_goals = np.array(
             [h.current_waypoint for h in self.humans],
             dtype=np.float32
         )
+        human_desired_yaw = np.arctan2(
+            human_goals[:, 1] - human_xy[:, 1],
+            human_goals[:, 0] - human_xy[:, 0],
+        ).astype(np.float32)
+        human_actions = np.array(human_actions, dtype=np.float32) if human_actions else np.zeros((0, 3), dtype=np.float32)
         human_reached_goal = []
 
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
@@ -245,6 +264,11 @@ class MuseumEnv(gym.Env):
             "actual_yaw": float(actual_yaw),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
+            "human_desired_yaw": human_desired_yaw,  # (N,)
+            "human_actual_yaw": human_actual_yaw,    # (N,)
+            "human_vx": human_actions[:, 0],         # (N,)
+            "human_vy": human_actions[:, 1],         # (N,)
+            "human_v_yaw": human_actions[:, 2],      # (N,)
             "human_reached_goal": human_reached_goal,
             # "min_human_dist": min_dist,
         }

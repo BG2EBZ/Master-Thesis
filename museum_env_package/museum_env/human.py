@@ -6,7 +6,7 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed=1.2, waypoint_threshold=0.5):
+    def __init__(self, name, body_name, qpos_idx, max_speed=2, waypoint_threshold=0.5):
         """
         Args:
             name: Human identifier (e.g., "person1")
@@ -81,12 +81,12 @@ class Human:
         # Velocity commands
         vx = self.max_speed * (dx / dist) if dist > 1e-6 else 0.0
         vy = self.max_speed * (dy / dist) if dist > 1e-6 else 0.0
-        yaw_rate = 2.0 * yaw_err  # Heading gain
+        yaw_rate = 50.0 * yaw_err  # Heading gain
         
         # Clip to actuator limits
         vx = np.clip(vx, -self.max_speed, self.max_speed)
         vy = np.clip(vy, -self.max_speed, self.max_speed)
-        yaw_rate = np.clip(yaw_rate, -2.0, 2.0)
+        yaw_rate = np.clip(yaw_rate, -50.0, 50.0)
         
         # Return control commands [vx, vy, yaw_rate]
         return np.array([vx, vy, yaw_rate], dtype=np.float32)

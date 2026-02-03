@@ -24,23 +24,34 @@ for step in range(30000):
         actual_yaw = info["actual_yaw"]
         print(f"[step {step}] robot velocity: vx={vx:.4f}, vy={vy:.4f}, v_yaw={v_yaw:.4f}")
         print(f"           robot yaw: desired={desired_yaw:.4f}, actual={actual_yaw:.4f}")
-
-    if step % 500 == 0:
-        rx, ry = info["robot_xy"]
-        gx, gy = info["robot_goal_xy"]
-        human_xy = info["human_xy"]
-        human_goals = info["human_goals"]
-
-        print(f"\n[step {step}]")
-        print(f"  robot pos : ({rx:.2f}, {ry:.2f})")
-        print(f"  robot goal: ({gx:.2f}, {gy:.2f})")
-
-        for i, ((hx, hy), (hgx, hgy)) in enumerate(zip(human_xy, human_goals)):
+        human_desired_yaw = info["human_desired_yaw"]
+        human_actual_yaw = info["human_actual_yaw"]
+        human_vx = info["human_vx"]
+        human_vy = info["human_vy"]
+        human_v_yaw = info["human_v_yaw"]
+        for i, (dyaw, ayaw) in enumerate(zip(human_desired_yaw, human_actual_yaw)):
             print(
-                f"  person{i+1}: "
-                f"pos=({hx:.2f}, {hy:.2f}) "
-                f"goal=({hgx:.2f}, {hgy:.2f})"
+                f"           person{i+1} velocity: "
+                f"vx={human_vx[i]:.4f}, vy={human_vy[i]:.4f}, v_yaw={human_v_yaw[i]:.4f}"
             )
+            print(f"           person{i+1} yaw: desired={dyaw:.4f}, actual={ayaw:.4f}")
+
+    # if step % 500 == 0:
+    #     rx, ry = info["robot_xy"]
+    #     gx, gy = info["robot_goal_xy"]
+    #     human_xy = info["human_xy"]
+    #     human_goals = info["human_goals"]
+
+    #     print(f"\n[step {step}]")
+    #     print(f"  robot pos : ({rx:.2f}, {ry:.2f})")
+    #     print(f"  robot goal: ({gx:.2f}, {gy:.2f})")
+
+    #     for i, ((hx, hy), (hgx, hgy)) in enumerate(zip(human_xy, human_goals)):
+    #         print(
+    #             f"  person{i+1}: "
+    #             f"pos=({hx:.2f}, {hy:.2f}) "
+    #             f"goal=({hgx:.2f}, {hgy:.2f})"
+    #         )
     
     # # ---- event-based print: any human reaches goal ----
     # if info["human_reached_goal"]:
