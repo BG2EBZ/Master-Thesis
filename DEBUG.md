@@ -1,9 +1,15 @@
-How shall I set a proper dumpling?
+Human behaviors: 
+  walking (towards the robot)
+  wandering (randomly)
+  standing (in front of one display with the robot)
+  
+  Add more behaviors before learning
 
-```
-    <body name="robot" pos="0 0 0.06">
-      <!-- Planar movement: x, y, yaw -->
-      <joint name="robot_x" type="slide" axis="1 0 0" damping="2"/>
-      <joint name="robot_y" type="slide" axis="0 1 0" damping="2"/>
-      <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="1"/>
-```
+
+
+Robot behaviors:
+  Move (To next display)
+  Slow (Reduce speed)
+  Stop (Explain this display)
+  
+  Add more behaviors before learning

@@ -199,6 +199,27 @@ class MuseumEnv(gym.Env):
 
         human_goal_threshold = 0.5
 
+        # Slow down / stop if a human is too close in front (±60 deg)
+        human_xy = self._get_human_poses()
+        rx, ry, ryaw = self._get_robot_pose()
+        rel = human_xy - np.array([rx, ry], dtype=np.float32)
+        dists = np.linalg.norm(rel, axis=1)
+        if dists.size:
+            angles = np.arctan2(rel[:, 1], rel[:, 0])
+            angle_err = np.array([self._wrap_to_pi(a - ryaw) for a in angles], dtype=np.float32)
+            in_front = np.abs(angle_err) <= (np.pi / 3.0)
+            front_dists = dists[in_front]
+            min_dist = float(np.min(front_dists)) if front_dists.size else float("inf")
+        else:
+            min_dist = float("inf")
+        if min_dist < 1.0:
+            rb_action[0:2] = 0.0
+            rb_action[2] = 0.0
+        elif min_dist < 2.0:
+            scale = (min_dist - 1.0) / 1.0
+            rb_action[0:2] *= scale
+            rb_action[2] *= scale
+
         # Apply robot action
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = rb_action
@@ -223,9 +244,7 @@ class MuseumEnv(gym.Env):
 
         rx, ry, _ = self._get_robot_pose()
         gx, gy = self._get_goal_xy()
-        human_xy = self._get_human_poses()
         human_actual_yaw = self._get_human_yaws()
-        dists = np.linalg.norm(human_xy - np.array([rx, ry]), axis=1)
         human_goals = np.array(
             [h.current_waypoint for h in self.humans],
             dtype=np.float32
