@@ -109,26 +109,16 @@ class MuseumEnv(gym.Env):
     def _get_human_poses(self):
         """
         Returns:
-            humans_xy: (N, 2) array of human positions in world frame
+            humans_xyz: (N, 3) array of human [x, y, yaw] in world frame
         """
-        humans_xy = []
+        humans_xyz = []
         for human in self.humans:
             human_body_id = self.model.body(human.body_name).id
             x = float(self.data.xpos[human_body_id, 0])
             y = float(self.data.xpos[human_body_id, 1])
-            humans_xy.append([x, y])
-        return np.array(humans_xy, dtype=np.float32)
-
-    def _get_human_yaws(self):
-        """
-        Returns:
-            humans_yaw: (N,) array of human yaw angles (rad)
-        """
-        humans_yaw = []
-        for human in self.humans:
             yaw = float(self.data.qpos[human.qpos_idx + 2])
-            humans_yaw.append(yaw)
-        return np.array(humans_yaw, dtype=np.float32)
+            humans_xyz.append([x, y, yaw])
+        return np.array(humans_xyz, dtype=np.float32)
 
     def _get_goal_xy(self):
         # Requires <site name="goal_site" .../> in XML
@@ -222,13 +212,13 @@ class MuseumEnv(gym.Env):
 
         # stop after reaching the display and turn to face people
         rx, ry, ryaw = self._get_robot_pose()
-        if dist < 0.3:
+        if dist < 0.2:
             if self.turn_target_yaw is None:
                 # Face the crowd: use the mean human position as target
-                human_xy_turn = self._get_human_poses()
-                if human_xy_turn.size:
-                    mean_hx = float(np.mean(human_xy_turn[:, 0]))
-                    mean_hy = float(np.mean(human_xy_turn[:, 1]))
+                human_xyz_turn = self._get_human_poses()
+                if human_xyz_turn.size:
+                    mean_hx = float(np.mean(human_xyz_turn[:, 0]))
+                    mean_hy = float(np.mean(human_xyz_turn[:, 1]))
                     dx = mean_hx - rx
                     dy = mean_hy - ry
                     if abs(dx) < 1e-6 and abs(dy) < 1e-6:
@@ -250,7 +240,9 @@ class MuseumEnv(gym.Env):
         human_goal_threshold = 0.5
 
         # Slow down / stop if a human is too close in front (±60 deg)
-        human_xy = self._get_human_poses()
+        human_xyz = self._get_human_poses()
+        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+        human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
         rx, ry, ryaw = self._get_robot_pose()
         rel = human_xy - np.array([rx, ry], dtype=np.float32)
         dists = np.linalg.norm(rel, axis=1)
@@ -326,13 +318,12 @@ class MuseumEnv(gym.Env):
 
         # ---- DEBUG: human positions ----
         # if self.step_count % 100 == 0:   # avoid spamming
-        #     human_xy = self._get_human_poses()
+        #     human_xyz = self._get_human_poses()
         #     print(f"[step {self.step_count}] Humans:", human_xy)
         # --------------------------------
 
         rx, ry, _ = self._get_robot_pose()
         gx, gy = self._get_goal_xy()
-        human_actual_yaw = self._get_human_yaws()
         human_goals = np.array(
             [h.current_waypoint for h in self.humans],
             dtype=np.float32
