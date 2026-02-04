@@ -20,6 +20,8 @@ class Human:
         self.qpos_idx = qpos_idx  # qpos[qpos_idx:qpos_idx+3] = [x, y, yaw]
         self.max_speed = max_speed
         self.waypoint_threshold = waypoint_threshold
+        # If True, current_waypoint is managed externally (e.g., follow robot)
+        self.external_waypoint = False
         
         # Store body_id (will be set when we have access to model)
         self.body_id = None
@@ -41,6 +43,30 @@ class Human:
     
     def _wrap_to_pi(self, ang):
         return (ang + np.pi) % (2 * np.pi) - np.pi
+    
+    def update_behavior(self, robot_xy, display_xy, dt):
+        hx, hy = self.get_xy()
+        rx, ry = robot_xy
+
+        dist_to_robot = np.linalg.norm([hx - rx, hy - ry])
+        dist_to_display = np.linalg.norm([hx - display_xy[0], hy - display_xy[1]])
+
+        # standing → wandering (after some time)
+        if self.behavior == "standing":
+            self.stand_timer -= dt
+            if self.stand_timer <= 0:
+                self.behavior = "wandering"
+
+        # wandering → walking (robot nearby)
+        elif self.behavior == "wandering":
+            if dist_to_robot < 2.0:
+                self.behavior = "walking"
+
+        # walking → standing (reach display)
+        elif self.behavior == "walking":
+            if dist_to_display < 0.8:
+                self.behavior = "standing"
+                self.stand_timer = np.random.uniform(3, 6)
     
     def update(self, model, data, timestep):
         """
@@ -69,10 +95,11 @@ class Human:
         
         # Pick new waypoint if reached current one
         if dist < self.waypoint_threshold:
-            self.current_waypoint = self._random_waypoint()
-            dx = self.current_waypoint[0] - x
-            dy = self.current_waypoint[1] - y
-            dist = np.hypot(dx, dy) + 1e-8
+            if not self.external_waypoint:
+                self.current_waypoint = self._random_waypoint()
+                dx = self.current_waypoint[0] - x
+                dy = self.current_waypoint[1] - y
+                dist = np.hypot(dx, dy) + 1e-8
         
         # Simple proportional controller toward waypoint
         desired_yaw = np.arctan2(dy, dx)

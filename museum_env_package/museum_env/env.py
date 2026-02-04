@@ -57,13 +57,22 @@ class MuseumEnv(gym.Env):
         self.step_count = 0
 
         # Waypoints: room A → corridor → room B
-        self.waypoints = [
-            (5, 5),      # Start in room A
-            (8.5, 0.0),      # Reach corridor entrance
-            (8.5, -10.0),     # Traverse corridor
-            (10, -12.5),    # Stop in room B
-        ]
+        # self.waypoints = [
+        #     (5, 5),      # Start in room A
+        #     (8.5, 0.0),      # Reach corridor entrance
+        #     (8.5, -10.0),     # Traverse corridor
+        #     (10, -12.5),    # Stop in room B
+        # ]
+
+        # Single target: middle position on the left wall (assume a display here).
+        self.display_xy = (1.0, 5.0)
+        self.waypoints = [self.display_xy]
         self.current_waypoint_idx = 0
+
+        # Human follow switch (start with random walking)
+        self.follow_humans = False
+        self.robot_start_xy = None
+        self.human_follow_distance = 0.5
         
         # --- Initialize humans ---
         # 5 people in XML at positions in qpos
@@ -76,6 +85,8 @@ class MuseumEnv(gym.Env):
             Human("person4", "person4", qpos_idx=12),
             Human("person5", "person5", qpos_idx=15),
         ]
+        for human in self.humans:
+            human.external_waypoint = False
 
     def _wrap_to_pi(self, ang: float) -> float:
         return (ang + np.pi) % (2 * np.pi) - np.pi
@@ -176,10 +187,16 @@ class MuseumEnv(gym.Env):
 
         self.current_waypoint_idx = 0
         self.step_count = 0
+
+        # Store robot start position (for follow trigger)
+        rx, ry, _ = self._get_robot_pose()
+        self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
+        self.follow_humans = False
         
         # Reset humans
         for human in self.humans:
             human.step_count = 0
+            human.external_waypoint = False
             human.current_waypoint = human._random_waypoint()
 
         obs = self._get_obs()
@@ -195,6 +212,11 @@ class MuseumEnv(gym.Env):
 
         rb_action, dist, desired_yaw, actual_yaw = self._rule_based_action()
 
+        # stop after reaching the display
+        if dist < 0.3:
+            rb_action[0:2] = 0.0
+            rb_action[2] = 0.0
+
         human_goal_threshold = 0.5
 
         # Slow down / stop if a human is too close in front (±60 deg)
@@ -202,21 +224,21 @@ class MuseumEnv(gym.Env):
         rx, ry, ryaw = self._get_robot_pose()
         rel = human_xy - np.array([rx, ry], dtype=np.float32)
         dists = np.linalg.norm(rel, axis=1)
-        if dists.size:
-            angles = np.arctan2(rel[:, 1], rel[:, 0])
-            angle_err = np.array([self._wrap_to_pi(a - ryaw) for a in angles], dtype=np.float32)
-            in_front = np.abs(angle_err) <= (np.pi / 3.0)
-            front_dists = dists[in_front]
-            min_dist = float(np.min(front_dists)) if front_dists.size else float("inf")
-        else:
-            min_dist = float("inf")
-        if min_dist < 1.0:
-            rb_action[0:2] = 0.0
-            rb_action[2] = 0.0
-        elif min_dist < 2.0:
-            scale = (min_dist - 1.0) / 1.0
-            rb_action[0:2] *= scale
-            rb_action[2] *= scale
+        # if dists.size:
+        #     angles = np.arctan2(rel[:, 1], rel[:, 0])
+        #     angle_err = np.array([self._wrap_to_pi(a - ryaw) for a in angles], dtype=np.float32)
+        #     in_front = np.abs(angle_err) <= (np.pi / 3.0)
+        #     front_dists = dists[in_front]
+        #     min_dist = float(np.min(front_dists)) if front_dists.size else float("inf")
+        # else:
+        #     min_dist = float("inf")
+        # if min_dist < 1.0:
+        #     rb_action[0:2] = 0.0
+        #     rb_action[2] = 0.0
+        # elif min_dist < 2.0:
+        #     scale = (min_dist - 1.0) / 1.0
+        #     rb_action[0:2] *= scale
+        #     rb_action[2] *= scale
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -224,7 +246,26 @@ class MuseumEnv(gym.Env):
         
         # Update humans
         human_actions = []
+
+        # Switch to follow once the robot has started moving toward the display
+        rx, ry, _ = self._get_robot_pose()
+        if not self.follow_humans:
+            moved_dist = float(np.hypot(rx - self.robot_start_xy[0], ry - self.robot_start_xy[1]))
+            if moved_dist >= self.human_follow_distance:
+                self.follow_humans = True
+
+        # If following, set external waypoints around the robot
+        n_humans = len(self.humans)
+        follow_radius = 0.6
         for i, human in enumerate(self.humans):
+            human.external_waypoint = self.follow_humans
+            if self.follow_humans:
+                angle = (2.0 * np.pi / max(n_humans, 1)) * i
+                offset = np.array(
+                    [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
+                    dtype=np.float32,
+                )
+                human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
             human_action = human.update(self.model, self.data, self.timestep)
             human_actions.append(human_action)
             # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
