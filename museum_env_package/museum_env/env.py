@@ -73,6 +73,9 @@ class MuseumEnv(gym.Env):
         self.follow_humans = False
         self.robot_start_xy = None
         self.human_follow_distance = 0.5
+        # Social distance (repulsion) parameters
+        self.social_distance = 0.8
+        self.repulsion_gain = 1.0
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
@@ -281,6 +284,24 @@ class MuseumEnv(gym.Env):
             if moved_dist >= self.human_follow_distance:
                 self.follow_humans = True
 
+        # Compute repulsion vectors for social distance
+        repulsion_vectors = []
+        if human_xy.size:
+            for i in range(human_xy.shape[0]):
+                pos = human_xy[i]
+                diff = pos - human_xy
+                neighbor_dist = np.linalg.norm(diff, axis=1)
+                mask = (neighbor_dist > 1e-6) & (neighbor_dist < self.social_distance)
+                if np.any(mask):
+                    directions = diff[mask] / neighbor_dist[mask][:, None]
+                    strengths = (self.social_distance - neighbor_dist[mask]) / self.social_distance
+                    repulsion = (directions * strengths[:, None]).sum(axis=0)
+                else:
+                    repulsion = np.zeros(2, dtype=np.float32)
+                repulsion_vectors.append(self.repulsion_gain * repulsion)
+        else:
+            repulsion_vectors = [np.zeros(2, dtype=np.float32) for _ in self.humans]
+
         # If following, set external waypoints around the robot
         n_humans = len(self.humans)
         follow_radius = 0.6
@@ -293,7 +314,8 @@ class MuseumEnv(gym.Env):
                     dtype=np.float32,
                 )
                 human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
-            human_action = human.update(self.model, self.data, self.timestep)
+            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
+            human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
             human_actions.append(human_action)
             # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
             ctrl_idx = 3 + i * 3

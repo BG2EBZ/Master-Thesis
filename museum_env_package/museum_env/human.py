@@ -68,14 +68,15 @@ class Human:
                 self.behavior = "standing"
                 self.stand_timer = np.random.uniform(3, 6)
     
-    def update(self, model, data, timestep):
+    def update(self, model, data, timestep, repulsion_vec=None):
         """
-        Update human motion toward current waypoint.
+        Update human motion toward current waypoint with optional repulsion.
         
         Args:
             model: MuJoCo model (for body ID lookup)
             data: MuJoCo data (for state and control)
             timestep: Simulation timestep
+            repulsion_vec: Optional 2D velocity vector pushing away from other humans
         """
         self.step_count += 1
         
@@ -88,7 +89,7 @@ class Human:
         y = float(data.xpos[self.body_id, 1])
         yaw = float(data.qpos[self.qpos_idx + 2])  # Only yaw from qpos
         
-        # Vector to waypoint
+        # Vector to waypoint (follow component)
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
         dist = np.hypot(dx, dy)
@@ -101,13 +102,34 @@ class Human:
                 dy = self.current_waypoint[1] - y
                 dist = np.hypot(dx, dy) + 1e-8
         
-        # Simple proportional controller toward waypoint
-        desired_yaw = np.arctan2(dy, dx)
+        if repulsion_vec is None:
+            repulsion_vec = np.zeros(2, dtype=np.float32)
+
+        # v_follow: move toward waypoint
+        if dist > 1e-6:
+            v_follow = self.max_speed * np.array([dx, dy], dtype=np.float32) / dist
+        else:
+            v_follow = np.zeros(2, dtype=np.float32)
+
+        # v_repulsion: push away from nearby humans
+        v_repulsion = np.array(repulsion_vec, dtype=np.float32)
+
+        # Total desired velocity
+        v_total = v_follow + v_repulsion
+        speed = float(np.linalg.norm(v_total))
+        if speed > self.max_speed and speed > 1e-6:
+            v_total = v_total / speed * self.max_speed
+            speed = self.max_speed
+
+        # Desired yaw based on total velocity
+        if speed > 1e-6:
+            desired_yaw = float(np.arctan2(v_total[1], v_total[0]))
+        else:
+            desired_yaw = yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-        
-        # Velocity commands
-        vx = self.max_speed * (dx / dist) if dist > 1e-6 else 0.0
-        vy = self.max_speed * (dy / dist) if dist > 1e-6 else 0.0
+
+        vx = float(v_total[0])
+        vy = float(v_total[1])
         yaw_rate = 50.0 * yaw_err  # Heading gain
         
         # Clip to actuator limits
