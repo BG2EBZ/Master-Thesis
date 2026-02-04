@@ -73,6 +73,9 @@ class MuseumEnv(gym.Env):
         self.follow_humans = False
         self.robot_start_xy = None
         self.human_follow_distance = 0.5
+        # Turn to face people after reaching the display
+        self.turn_target_yaw = None
+        self.turn_done = False
         
         # --- Initialize humans ---
         # 5 people in XML at positions in qpos
@@ -192,6 +195,8 @@ class MuseumEnv(gym.Env):
         rx, ry, _ = self._get_robot_pose()
         self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
         self.follow_humans = False
+        self.turn_target_yaw = None
+        self.turn_done = False
         
         # Reset humans
         for human in self.humans:
@@ -212,10 +217,32 @@ class MuseumEnv(gym.Env):
 
         rb_action, dist, desired_yaw, actual_yaw = self._rule_based_action()
 
-        # stop after reaching the display
+        # stop after reaching the display and turn to face people
+        rx, ry, ryaw = self._get_robot_pose()
         if dist < 0.3:
+            if self.turn_target_yaw is None:
+                # Face the crowd: use the mean human position as target
+                human_xy_turn = self._get_human_poses()
+                if human_xy_turn.size:
+                    mean_hx = float(np.mean(human_xy_turn[:, 0]))
+                    mean_hy = float(np.mean(human_xy_turn[:, 1]))
+                    dx = mean_hx - rx
+                    dy = mean_hy - ry
+                    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                        self.turn_target_yaw = self._wrap_to_pi(ryaw + np.pi)
+                    else:
+                        self.turn_target_yaw = np.arctan2(dy, dx)
+                else:
+                    # Fallback if no humans are detected
+                    self.turn_target_yaw = self._wrap_to_pi(ryaw + np.pi)
+            yaw_err = self._wrap_to_pi(self.turn_target_yaw - ryaw)
             rb_action[0:2] = 0.0
-            rb_action[2] = 0.0
+            if abs(yaw_err) < 0.05:
+                rb_action[2] = 0.0
+                self.turn_done = True
+            else:
+                k_turn = 50.0
+                rb_action[2] = np.clip(k_turn * yaw_err, -50.0, 50.0)
 
         human_goal_threshold = 0.5
 
