@@ -16,7 +16,7 @@ for step in range(30000):
     env.render()
     time.sleep(0.02)
 
-    if step % 50 == 0:
+    if step % 100 == 0:
         vx = info["robot_vx"]
         vy = info["robot_vy"]
         v_yaw = info["robot_v_yaw"]
@@ -58,8 +58,8 @@ for step in range(30000):
     #     for i in info["human_reached_goal"]:
     #         print(f"[step {step}] >>> person{i+1} reached their goal!")
 
-    if terminated:
-        print(f"Robot reached goal at step {step}!")
-        break
+    # if terminated:
+    #     print(f"Robot reached goal at step {step}!")
+    #     break
 
 env.close()

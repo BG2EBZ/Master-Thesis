@@ -45,8 +45,6 @@ class MuseumEnv(gym.Env):
         # print("======================")
 
         # --- Observation space ---
-        # Minimal: robot x, y, orientation (theta)
-        # Read these from qpos
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
