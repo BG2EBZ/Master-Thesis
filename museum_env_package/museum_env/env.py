@@ -294,13 +294,21 @@ class MuseumEnv(gym.Env):
         else:
             repulsion_vectors = [np.zeros(2, dtype=np.float32) for _ in self.humans]
 
-        # If following, set external waypoints around the robot
+        # If following, set external waypoints behind the robot in a 120-degree fan
         n_humans = len(self.humans)
-        follow_radius = 0.6
+        follow_radius = 0.8
+        fan_angle = 120.0 * (np.pi / 180.0)
         for i, human in enumerate(self.humans):
             human.external_waypoint = self.follow_humans
             if self.follow_humans:
-                angle = (2.0 * np.pi / max(n_humans, 1)) * i
+                # 120-degree fan behind the robot (centered at yaw + pi)
+                if n_humans > 1:
+                    relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
+                else:
+                    relative_angle = 0.0
+
+                angle = ryaw + np.pi + relative_angle
+                
                 offset = np.array(
                     [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
                     dtype=np.float32,
