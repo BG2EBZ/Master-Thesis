@@ -76,6 +76,11 @@ class MuseumEnv(gym.Env):
         # Social distance (repulsion) parameters
         self.social_distance = 0.8
         self.repulsion_gain = 1.0
+        # Listening formation (fan around robot after it stops)
+        self.listen_mode = False
+        self.listen_fan_half_angle = np.deg2rad(60.0)  # 120-degree fan
+        self.listen_fan_radius = 1.6
+        self.listen_stand_threshold = 0.2
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
@@ -190,6 +195,7 @@ class MuseumEnv(gym.Env):
         self.follow_humans = False
         self.turn_target_yaw = None
         self.turn_done = False
+        self.listen_mode = False
         
         # Reset humans
         for human in self.humans:
@@ -210,15 +216,19 @@ class MuseumEnv(gym.Env):
 
         rb_action, dist, desired_yaw, actual_yaw = self._rule_based_action()
 
+        # Get human poses once per step
+        human_xyz = self._get_human_poses()
+        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+        human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
+
         # stop after reaching the display and turn to face people
         rx, ry, ryaw = self._get_robot_pose()
         if dist < 0.2:
             if self.turn_target_yaw is None:
                 # Face the crowd: use the mean human position as target
-                human_xyz_turn = self._get_human_poses()
-                if human_xyz_turn.size:
-                    mean_hx = float(np.mean(human_xyz_turn[:, 0]))
-                    mean_hy = float(np.mean(human_xyz_turn[:, 1]))
+                if human_xyz.size:
+                    mean_hx = float(np.mean(human_xyz[:, 0]))
+                    mean_hy = float(np.mean(human_xyz[:, 1]))
                     dx = mean_hx - rx
                     dy = mean_hy - ry
                     if abs(dx) < 1e-6 and abs(dy) < 1e-6:
@@ -237,30 +247,9 @@ class MuseumEnv(gym.Env):
                 k_turn = 50.0
                 rb_action[2] = np.clip(k_turn * yaw_err, -50.0, 50.0)
 
-        human_goal_threshold = 0.5
-
-        # Slow down / stop if a human is too close in front (±60 deg)
-        human_xyz = self._get_human_poses()
-        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
-        human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
-        rx, ry, ryaw = self._get_robot_pose()
-        rel = human_xy - np.array([rx, ry], dtype=np.float32)
-        dists = np.linalg.norm(rel, axis=1)
-        # if dists.size:
-        #     angles = np.arctan2(rel[:, 1], rel[:, 0])
-        #     angle_err = np.array([self._wrap_to_pi(a - ryaw) for a in angles], dtype=np.float32)
-        #     in_front = np.abs(angle_err) <= (np.pi / 3.0)
-        #     front_dists = dists[in_front]
-        #     min_dist = float(np.min(front_dists)) if front_dists.size else float("inf")
-        # else:
-        #     min_dist = float("inf")
-        # if min_dist < 1.0:
-        #     rb_action[0:2] = 0.0
-        #     rb_action[2] = 0.0
-        # elif min_dist < 2.0:
-        #     scale = (min_dist - 1.0) / 1.0
-        #     rb_action[0:2] *= scale
-        #     rb_action[2] *= scale
+        # Enter listening mode after turning is done at the display
+        if dist < 0.2 and self.turn_done:
+            self.listen_mode = True
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -270,11 +259,11 @@ class MuseumEnv(gym.Env):
         human_actions = []
 
         # Switch to follow once the robot has started moving toward the display
-        rx, ry, _ = self._get_robot_pose()
-        if not self.follow_humans:
-            moved_dist = float(np.hypot(rx - self.robot_start_xy[0], ry - self.robot_start_xy[1]))
-            if moved_dist >= self.human_follow_distance:
-                self.follow_humans = True
+        if not self.listen_mode:
+            if not self.follow_humans:
+                moved_dist = float(np.hypot(rx - self.robot_start_xy[0], ry - self.robot_start_xy[1]))
+                if moved_dist >= self.human_follow_distance:
+                    self.follow_humans = True
 
         # Compute repulsion vectors for social distance
         repulsion_vectors = []
@@ -294,28 +283,50 @@ class MuseumEnv(gym.Env):
         else:
             repulsion_vectors = [np.zeros(2, dtype=np.float32) for _ in self.humans]
 
-        # If following, set external waypoints behind the robot in a 120-degree fan
+        # If listening, form a 120-degree fan in front of the robot and stand
         n_humans = len(self.humans)
-        follow_radius = 0.8
-        fan_angle = 120.0 * (np.pi / 180.0)
+        follow_radius = 1.0
+        fan_angle = 2.0 * self.listen_fan_half_angle
         for i, human in enumerate(self.humans):
-            human.external_waypoint = self.follow_humans
-            if self.follow_humans:
-                # 120-degree fan behind the robot (centered at yaw + pi)
+            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
+            if self.listen_mode:
+                human.external_waypoint = True
                 if n_humans > 1:
                     relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
                 else:
                     relative_angle = 0.0
-
-                angle = ryaw + np.pi + relative_angle
-                
-                offset = np.array(
-                    [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
+                angle = ryaw + relative_angle
+                target = np.array(
+                    [
+                        rx + self.listen_fan_radius * np.cos(angle),
+                        ry + self.listen_fan_radius * np.sin(angle),
+                    ],
                     dtype=np.float32,
                 )
-                human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
-            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
+                human.current_waypoint = target
+                if human_xy.size:
+                    dist_to_target = float(np.linalg.norm(human_xy[i] - target))
+                else:
+                    dist_to_target = float("inf")
+                if dist_to_target < self.listen_stand_threshold:
+                    human_action = np.zeros(3, dtype=np.float32)
+                else:
+                    human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
+            else:
+                human.external_waypoint = self.follow_humans
+                if self.follow_humans:
+                    # 120-degree fan behind the robot (centered at yaw + pi)
+                    if n_humans > 1:
+                        relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
+                    else:
+                        relative_angle = 0.0
+                    angle = ryaw + np.pi + relative_angle
+                    offset = np.array(
+                        [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
+                        dtype=np.float32,
+                    )
+                    human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
+                human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
             human_actions.append(human_action)
             # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
             ctrl_idx = 3 + i * 3
@@ -324,13 +335,12 @@ class MuseumEnv(gym.Env):
         # Step simulation
         mujoco.mj_step(self.model, self.data)
 
-        # ---- DEBUG: human positions ----
-        # if self.step_count % 100 == 0:   # avoid spamming
-        #     human_xyz = self._get_human_poses()
-        #     print(f"[step {self.step_count}] Humans:", human_xy)
-        # --------------------------------
+        # Refresh poses after the step for reporting
+        rx, ry, ryaw = self._get_robot_pose()
+        human_xyz = self._get_human_poses()
+        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+        human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
 
-        rx, ry, _ = self._get_robot_pose()
         gx, gy = self._get_goal_xy()
         human_goals = np.array(
             [h.current_waypoint for h in self.humans],
@@ -341,14 +351,13 @@ class MuseumEnv(gym.Env):
             human_goals[:, 0] - human_xy[:, 0],
         ).astype(np.float32)
         human_actions = np.array(human_actions, dtype=np.float32) if human_actions else np.zeros((0, 3), dtype=np.float32)
+        human_goal_threshold = 0.5
         human_reached_goal = []
 
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
             dist_to_goal = np.linalg.norm(pos - goal)
             if dist_to_goal < human_goal_threshold:
                 human_reached_goal.append(i)
-
-        min_dist = float(np.min(dists))
 
         obs = self._get_obs()
 
@@ -368,6 +377,7 @@ class MuseumEnv(gym.Env):
             "robot_v_yaw": float(rb_action[2]),
             "desired_yaw": float(desired_yaw),
             "actual_yaw": float(actual_yaw),
+            "listen_mode": bool(self.listen_mode),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
             "human_desired_yaw": human_desired_yaw,  # (N,)
@@ -376,7 +386,6 @@ class MuseumEnv(gym.Env):
             "human_vy": human_actions[:, 1],         # (N,)
             "human_v_yaw": human_actions[:, 2],      # (N,)
             "human_reached_goal": human_reached_goal,
-            # "min_human_dist": min_dist,
         }
 
         return obs, reward, terminated, truncated, info
