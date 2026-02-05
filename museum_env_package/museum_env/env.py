@@ -74,12 +74,12 @@ class MuseumEnv(gym.Env):
         self.robot_start_xy = None
         self.human_follow_distance = 0.5
         # Social distance (repulsion) parameters
-        self.social_distance = 0.8
+        self.social_distance = 1.0
         self.repulsion_gain = 1.0
         # Listening formation (fan around robot after it stops)
         self.listen_mode = False
-        self.listen_fan_half_angle = np.deg2rad(60.0)  # 120-degree fan
-        self.listen_fan_radius = 1.6
+        self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
+        self.listen_fan_radius = 0.5
         self.listen_stand_threshold = 0.2
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
@@ -283,14 +283,16 @@ class MuseumEnv(gym.Env):
         else:
             repulsion_vectors = [np.zeros(2, dtype=np.float32) for _ in self.humans]
 
-        # If listening, form a 120-degree fan in front of the robot and stand
+        
         n_humans = len(self.humans)
         follow_radius = 1.0
         fan_angle = 2.0 * self.listen_fan_half_angle
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
+            # If listening, form a 120-degree fan in front of the robot and stand
             if self.listen_mode:
                 human.external_waypoint = True
+                # Distribute waypoints for each human in the fan
                 if n_humans > 1:
                     relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
                 else:
@@ -304,6 +306,7 @@ class MuseumEnv(gym.Env):
                     dtype=np.float32,
                 )
                 human.current_waypoint = target
+                # If close enough to target, stand still
                 if human_xy.size:
                     dist_to_target = float(np.linalg.norm(human_xy[i] - target))
                 else:
@@ -312,8 +315,10 @@ class MuseumEnv(gym.Env):
                     human_action = np.zeros(3, dtype=np.float32)
                 else:
                     human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
+            
             else:
                 human.external_waypoint = self.follow_humans
+                # Human following the robot
                 if self.follow_humans:
                     # 120-degree fan behind the robot (centered at yaw + pi)
                     if n_humans > 1:
