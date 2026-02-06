@@ -128,14 +128,33 @@ class Human:
             desired_yaw = yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
-        vx = float(v_total[0])
-        vy = float(v_total[1])
-        yaw_rate = 50.0 * yaw_err  # Heading gain
+        # Desired yaw based on total velocity
+        if speed > 1e-6:
+            desired_yaw = float(np.arctan2(v_total[1], v_total[0]))
+        else:
+            desired_yaw = yaw
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+
+        # Turn-only mode if yaw error is large to prevent moving in wrong direction
+        turn_only_threshold = np.deg2rad(10)  
+        if abs(yaw_err) > turn_only_threshold:
+            vx = 0.0
+            vy = 0.0
+            data.qvel[self.qpos_idx:self.qpos_idx + 2] = 0.0
+            yaw_rate = 20.0 * yaw_err
+        else:
+            vx = float(v_total[0])
+            vy = float(v_total[1])
+            yaw_rate = 20.0 * yaw_err        
+
+        # vx = float(v_total[0])
+        # vy = float(v_total[1])
+        # yaw_rate = 50.0 * yaw_err  # Heading gain
         
         # Clip to actuator limits
         vx = np.clip(vx, -self.max_speed, self.max_speed)
         vy = np.clip(vy, -self.max_speed, self.max_speed)
-        yaw_rate = np.clip(yaw_rate, -50.0, 50.0)
+        yaw_rate = np.clip(yaw_rate, -20.0, 20.0)
         
         # Return control commands [vx, vy, yaw_rate]
         return np.array([vx, vy, yaw_rate], dtype=np.float32)
