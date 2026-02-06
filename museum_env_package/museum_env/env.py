@@ -84,8 +84,8 @@ class MuseumEnv(gym.Env):
         # Listening formation (fan around robot after it stops)
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
-        self.listen_fan_radius = 0.5
-        self.listen_stand_threshold = 0.2
+        self.listen_fan_radius = 0.6
+        self.listen_stand_threshold = 0.6
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
@@ -159,8 +159,8 @@ class MuseumEnv(gym.Env):
             dist = np.hypot(dx, dy) + 1e-8
 
         # Tunable gains
-        k_v = 100.0      # translation gain
-        k_yaw = 100.0    # heading gain
+        k_v = 20.0      # translation gain
+        k_yaw = 20.0    # heading gain
 
         # Desired heading toward current waypoint
         desired_yaw = np.arctan2(dy, dx)
@@ -233,7 +233,7 @@ class MuseumEnv(gym.Env):
         # stop after reaching the display and turn to face people
         rx, ry, ryaw = self._get_robot_pose()
         self.robot_mode = RobotMode.MOVE
-        if dist < 0.1:
+        if dist < 0.2:
             self.robot_mode = RobotMode.STOP
             if self.turn_target_yaw is None:
                 # Face the crowd: use the mean human position as target
@@ -259,8 +259,9 @@ class MuseumEnv(gym.Env):
                 rb_action[2] = np.clip(k_turn * yaw_err, -50.0, 50.0)
 
         # Enter listening mode after turning is done at the display
-        if dist < 0.2 and self.turn_done:
+        if dist < 0.2 and self.turn_done and not self.listen_mode:
             self.listen_mode = True
+            print(">>> Robot entering LISTEN mode.")
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
