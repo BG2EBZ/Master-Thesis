@@ -8,6 +8,11 @@ from importlib import resources
 from .human import Human, HumanMode
 
 
+class RobotMode:
+    MOVE = "move"
+    STOP = "stop"
+
+
 class MuseumEnv(gym.Env):
     """
     Minimal runnable Gymnasium environment for a MuJoCo museum scene.
@@ -84,6 +89,7 @@ class MuseumEnv(gym.Env):
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
+        self.robot_mode = RobotMode.MOVE
         
         # --- Initialize humans ---
         # 5 people in XML at positions in qpos
@@ -197,6 +203,7 @@ class MuseumEnv(gym.Env):
         self.turn_target_yaw = None
         self.turn_done = False
         self.listen_mode = False
+        self.robot_mode = RobotMode.MOVE
         
         # Reset humans
         for human in self.humans:
@@ -225,7 +232,9 @@ class MuseumEnv(gym.Env):
 
         # stop after reaching the display and turn to face people
         rx, ry, ryaw = self._get_robot_pose()
-        if dist < 0.2:
+        self.robot_mode = RobotMode.MOVE
+        if dist < 0.1:
+            self.robot_mode = RobotMode.STOP
             if self.turn_target_yaw is None:
                 # Face the crowd: use the mean human position as target
                 if human_xyz.size:
@@ -386,6 +395,7 @@ class MuseumEnv(gym.Env):
             "robot_v_yaw": float(rb_action[2]),
             "desired_yaw": float(desired_yaw),
             "actual_yaw": float(actual_yaw),
+            "robot_mode": str(self.robot_mode),
             "listen_mode": bool(self.listen_mode),
             "human_xy": human_xy,          # (N, 2)
             "human_goals": human_goals,    # (N, 2)
