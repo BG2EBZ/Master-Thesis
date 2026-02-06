@@ -35,6 +35,9 @@ for step in range(30000):
                 f"vx={human_vx[i]:.4f}, vy={human_vy[i]:.4f}, v_yaw={human_v_yaw[i]:.4f}"
             )
             print(f"           person{i+1} yaw: desired={dyaw:.4f}, actual={ayaw:.4f}")
+        human_goals = info["human_goals"]
+        for i, (gx, gy) in enumerate(human_goals):
+            print(f"           person{i+1} goal: x={gx:.4f}, y={gy:.4f}")
 
     # if step % 500 == 0:
     #     rx, ry = info["robot_xy"]
