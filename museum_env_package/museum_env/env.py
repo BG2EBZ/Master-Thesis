@@ -5,7 +5,7 @@ import mujoco
 import mujoco.viewer
 import os
 from importlib import resources 
-from .human import Human
+from .human import Human, HumanMode
 
 
 class MuseumEnv(gym.Env):
@@ -98,6 +98,7 @@ class MuseumEnv(gym.Env):
         ]
         for human in self.humans:
             human.external_waypoint = False
+            human.set_mode(HumanMode.WANDERING)
 
     def _wrap_to_pi(self, ang: float) -> float:
         return (ang + np.pi) % (2 * np.pi) - np.pi
@@ -202,6 +203,7 @@ class MuseumEnv(gym.Env):
             human.step_count = 0
             human.external_waypoint = False
             human.current_waypoint = human._random_waypoint()
+            human.set_mode(HumanMode.WANDERING)
 
         obs = self._get_obs()
         info = {}
@@ -291,6 +293,7 @@ class MuseumEnv(gym.Env):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
             # If listening, form a 120-degree fan in front of the robot and stand
             if self.listen_mode:
+                human.set_mode(HumanMode.LISTEN)
                 human.external_waypoint = True
                 # Distribute waypoints for each human in the fan
                 if n_humans > 1:
@@ -317,6 +320,7 @@ class MuseumEnv(gym.Env):
                     human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
             
             else:
+                human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
                 human.external_waypoint = self.follow_humans
                 # Human following the robot
                 if self.follow_humans:

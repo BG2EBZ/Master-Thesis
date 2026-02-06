@@ -1,6 +1,12 @@
 import numpy as np
 
 
+class HumanMode:
+    WANDERING = "wandering"
+    FOLLOWING = "following"
+    LISTEN = "listen"
+
+
 class Human:
     """
     Minimal human behavior: random walking in the museum.
@@ -22,6 +28,9 @@ class Human:
         self.waypoint_threshold = waypoint_threshold
         # If True, current_waypoint is managed externally (e.g., follow robot)
         self.external_waypoint = False
+
+        # Human mode: wandering / following / listen (standing)
+        self.mode = HumanMode.WANDERING
         
         # Store body_id (will be set when we have access to model)
         self.body_id = None
@@ -29,6 +38,11 @@ class Human:
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
         self.step_count = 0
+
+    def set_mode(self, mode: str):
+        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTEN):
+            raise ValueError(f"Unknown human mode: {mode}")
+        self.mode = mode
     
     def _random_waypoint(self):
         """Generate random waypoint within museum bounds"""
@@ -45,28 +59,14 @@ class Human:
         return (ang + np.pi) % (2 * np.pi) - np.pi
     
     def update_behavior(self, robot_xy, display_xy, dt):
-        hx, hy = self.get_xy()
-        rx, ry = robot_xy
-
-        dist_to_robot = np.linalg.norm([hx - rx, hy - ry])
-        dist_to_display = np.linalg.norm([hx - display_xy[0], hy - display_xy[1]])
-
-        # standing → wandering (after some time)
-        if self.behavior == "standing":
-            self.stand_timer -= dt
-            if self.stand_timer <= 0:
-                self.behavior = "wandering"
-
-        # wandering → walking (robot nearby)
-        elif self.behavior == "wandering":
-            if dist_to_robot < 2.0:
-                self.behavior = "walking"
-
-        # walking → standing (reach display)
-        elif self.behavior == "walking":
-            if dist_to_display < 0.8:
-                self.behavior = "standing"
-                self.stand_timer = np.random.uniform(3, 6)
+        """
+        Placeholder for a mode transition policy.
+        Current architecture uses three modes:
+        - wandering: random walking
+        - following: follow robot
+        - listen: stand in formation
+        """
+        _ = robot_xy, display_xy, dt
     
     def update(self, model, data, timestep, repulsion_vec=None):
         """
