@@ -12,7 +12,7 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed=2, waypoint_threshold=0.4):
+    def __init__(self, name, body_name, qpos_idx, max_speed=2.5, waypoint_threshold=0.2):
         """
         Args:
             name: Human identifier (e.g., "person1")
@@ -28,8 +28,6 @@ class Human:
         self.waypoint_threshold = waypoint_threshold
         # If True, current_waypoint is managed externally (e.g., follow robot)
         self.external_waypoint = False
-
-        # Human mode: wandering / following / listen (standing)
         self.mode = HumanMode.WANDERING
         
         # Store body_id (will be set when we have access to model)
@@ -46,7 +44,115 @@ class Human:
         if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTEN):
             raise ValueError(f"Unknown human mode: {mode}")
         self.mode = mode
+
+    def step(self, model, data, ctx):
+        """
+        ctx: dict provided by env, e.g.
+        {
+            "dt": timestep,
+            "robot_xy": np.array([x, y]),
+            "robot_yaw": yaw,
+            "repulsion": np.array([rx, ry]),
+        }
+        """
+        if self.body_id is None:
+            self.body_id = model.body(self.body_name).id
+
+        if self.mode == HumanMode.WANDERING:
+            return self._step_wandering(data, ctx)
+
+        elif self.mode == HumanMode.FOLLOWING:
+            return self._step_following(data, ctx)
+
+        elif self.mode == HumanMode.LISTEN:
+            return self._step_listening(data, ctx)
+
+        else:
+            raise ValueError(f"Unknown human mode {self.mode}")
+
+
+    def _step_wandering(self, data, ctx):
+        x, y, yaw = self._get_pose(data)
+
+        dx = self.current_waypoint[0] - x
+        dy = self.current_waypoint[1] - y
+        dist = np.hypot(dx, dy)
+
+        if dist < self.waypoint_threshold:
+            self.current_waypoint = self._random_waypoint()
+            dx = self.current_waypoint[0] - x
+            dy = self.current_waypoint[1] - y
+
+        return self._move(dx, dy, yaw, ctx)
+
+    def _step_following(self, data, ctx):
+        robot_xy = ctx["robot_xy"]
+        robot_yaw = ctx["robot_yaw"]
+
+        follow_radius = ctx.get("follow_radius", 1.0)
+        angle_offset = ctx.get("angle_offset", 0.0)
+
+        target = robot_xy + follow_radius * np.array([
+            np.cos(robot_yaw + np.pi + angle_offset),
+            np.sin(robot_yaw + np.pi + angle_offset),
+        ])
+
+        self.current_waypoint = target
+        x, y, yaw = self._get_pose(data)
+        dx = target[0] - x
+        dy = target[1] - y
+
+        return self._move(dx, dy, yaw, ctx)
     
+    def _step_listening(self, data, ctx):
+        x, y, yaw = self._get_pose(data)
+        dx = self.current_waypoint[0] - x
+        dy = self.current_waypoint[1] - y
+        dist = np.hypot(dx, dy)
+
+        if dist < ctx.get("stand_threshold", 0.4):
+            return np.zeros(3)
+
+        return self._move(dx, dy, yaw, ctx)
+
+    def _move(self, dx, dy, yaw, ctx):
+        repulsion = ctx.get("repulsion", np.zeros(2))
+
+        dist = np.hypot(dx, dy)
+        if dist > 1e-6:
+            v_follow = self.max_speed * np.array([dx, dy]) / dist
+        else:
+            v_follow = np.zeros(2)
+
+        v_repulsion = np.array(repulsion, dtype=np.float32)
+
+        self.last_v_follow = v_follow.copy()
+        self.last_v_repulsion = v_repulsion.copy()
+
+        v_total = v_follow + v_repulsion
+        speed = np.linalg.norm(v_total)
+
+        if speed > self.max_speed:
+            v_total = v_total / speed * self.max_speed
+
+        desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > 1e-6 else yaw
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+
+        if abs(yaw_err) > np.deg2rad(5):
+            return np.array([0.0, 0.0, 20.0 * yaw_err])
+
+        return np.array([v_total[0], v_total[1], 20.0 * yaw_err])
+    
+    # -------------------------
+    # Helpers
+    # -------------------------
+
+    def _get_pose(self, data):
+        x = float(data.xpos[self.body_id, 0])
+        y = float(data.xpos[self.body_id, 1])
+        yaw = float(data.qpos[self.qpos_idx + 2])
+        return x, y, yaw
+
     def _random_waypoint(self):
         """Generate random waypoint within museum bounds"""
         # Room A: x[0,10], y[0,10]
@@ -61,105 +167,3 @@ class Human:
     def _wrap_to_pi(self, ang):
         return (ang + np.pi) % (2 * np.pi) - np.pi
     
-    def update_behavior(self, robot_xy, display_xy, dt):
-        """
-        Placeholder for a mode transition policy.
-        Current architecture uses three modes:
-        - wandering: random walking
-        - following: follow robot
-        - listen: stand in formation
-        """
-        _ = robot_xy, display_xy, dt
-    
-    def update(self, model, data, timestep, repulsion_vec=None):
-        """
-        Update human motion toward current waypoint with optional repulsion.
-        
-        Args:
-            model: MuJoCo model (for body ID lookup)
-            data: MuJoCo data (for state and control)
-            timestep: Simulation timestep
-            repulsion_vec: Optional 2D velocity vector pushing away from other humans
-        """
-        self.step_count += 1
-        
-        # Get body ID on first call
-        if self.body_id is None:
-            self.body_id = model.body(self.body_name).id
-        
-        # Current pose using world coordinates (xpos) instead of qpos
-        x = float(data.xpos[self.body_id, 0])
-        y = float(data.xpos[self.body_id, 1])
-        yaw = float(data.qpos[self.qpos_idx + 2])  # Only yaw from qpos
-        
-        # Vector to waypoint (follow component)
-        dx = self.current_waypoint[0] - x
-        dy = self.current_waypoint[1] - y
-        dist = np.hypot(dx, dy)
-        
-        # Pick new waypoint if reached current one
-        if dist < self.waypoint_threshold:
-            if not self.external_waypoint:
-                self.current_waypoint = self._random_waypoint()
-                dx = self.current_waypoint[0] - x
-                dy = self.current_waypoint[1] - y
-                dist = np.hypot(dx, dy) + 1e-8
-        
-        if repulsion_vec is None:
-            repulsion_vec = np.zeros(2, dtype=np.float32)
-
-        # v_follow: move toward waypoint
-        if dist > 1e-6:
-            v_follow = self.max_speed * np.array([dx, dy], dtype=np.float32) / dist
-        else:
-            v_follow = np.zeros(2, dtype=np.float32)
-
-        # v_repulsion: push away from nearby humans
-        v_repulsion = np.array(repulsion_vec, dtype=np.float32)
-        self.last_v_follow = v_follow.astype(np.float32, copy=True)
-        self.last_v_repulsion = v_repulsion.astype(np.float32, copy=True)
-
-        # Total desired velocity
-        v_total = v_follow + v_repulsion
-        speed = float(np.linalg.norm(v_total))
-        if speed > self.max_speed and speed > 1e-6:
-            v_total = v_total / speed * self.max_speed
-            speed = self.max_speed
-
-        # Desired yaw based on total velocity
-        if speed > 1e-6:
-            desired_yaw = float(np.arctan2(v_total[1], v_total[0]))
-        else:
-            desired_yaw = yaw
-        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-
-        # Desired yaw based on total velocity
-        if speed > 1e-6:
-            desired_yaw = float(np.arctan2(v_total[1], v_total[0]))
-        else:
-            desired_yaw = yaw
-        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-
-        # Turn-only mode if yaw error is large to prevent moving in wrong direction
-        turn_only_threshold = np.deg2rad(10)  
-        if abs(yaw_err) > turn_only_threshold:
-            vx = 0.0
-            vy = 0.0
-            data.qvel[self.qpos_idx:self.qpos_idx + 2] = 0.0
-            yaw_rate = 20.0 * yaw_err
-        else:
-            vx = float(v_total[0])
-            vy = float(v_total[1])
-            yaw_rate = 20.0 * yaw_err        
-
-        # vx = float(v_total[0])
-        # vy = float(v_total[1])
-        # yaw_rate = 50.0 * yaw_err  # Heading gain
-        
-        # Clip to actuator limits
-        vx = np.clip(vx, -self.max_speed, self.max_speed)
-        vy = np.clip(vy, -self.max_speed, self.max_speed)
-        yaw_rate = np.clip(yaw_rate, -20.0, 20.0)
-        
-        # Return control commands [vx, vy, yaw_rate]
-        return np.array([vx, vy, yaw_rate], dtype=np.float32)

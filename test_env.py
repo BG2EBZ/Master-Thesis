@@ -16,36 +16,40 @@ for step in range(30000):
     env.render()
     time.sleep(0.02)
 
-    if step % 100 == 0:
-        vx = info["robot_vx"]
-        vy = info["robot_vy"]
-        v_yaw = info["robot_v_yaw"]
-        desired_yaw = info["desired_yaw"]
-        actual_yaw = info["actual_yaw"]
-        print(f"[step {step}] robot velocity: vx={vx:.4f}, vy={vy:.4f}, v_yaw={v_yaw:.4f}")
-        print(f"           robot yaw: desired={desired_yaw:.4f}, actual={actual_yaw:.4f}")
-        human_desired_yaw = info["human_desired_yaw"]
-        human_actual_yaw = info["human_actual_yaw"]
-        human_vx = info["human_vx"]
-        human_vy = info["human_vy"]
-        human_v_yaw = info["human_v_yaw"]
-        for i, (dyaw, ayaw) in enumerate(zip(human_desired_yaw, human_actual_yaw)):
-            print(
-                f"           person{i+1} velocity: "
-                f"vx={human_vx[i]:.4f}, vy={human_vy[i]:.4f}, v_yaw={human_v_yaw[i]:.4f}"
-            )
-            print(f"           person{i+1} yaw: desired={dyaw:.4f}, actual={ayaw:.4f}")
-        human_goals = info["human_goals"]
-        for i, (gx, gy) in enumerate(human_goals):
-            print(f"           person{i+1} goal: x={gx:.4f}, y={gy:.4f}")
+    # if step % 100 == 0:
+        # vx = info["robot_vx"]
+        # vy = info["robot_vy"]
+        # v_yaw = info["robot_v_yaw"]
+        # desired_yaw = info["desired_yaw"]
+        # actual_yaw = info["actual_yaw"]
+        # print(f"[step {step}] robot velocity: vx={vx:.4f}, vy={vy:.4f}, v_yaw={v_yaw:.4f}")
+        # print(f"           robot yaw: desired={desired_yaw:.4f}, actual={actual_yaw:.4f}")
+        # human_desired_yaw = info["human_desired_yaw"]
+        # human_actual_yaw = info["human_actual_yaw"]
+        # human_vx = info["human_vx"]
+        # human_vy = info["human_vy"]
+        # human_v_yaw = info["human_v_yaw"]
+        # for i, (dyaw, ayaw) in enumerate(zip(human_desired_yaw, human_actual_yaw)):
+        #     print(
+        #         f"           person{i+1} velocity: "
+        #         f"vx={human_vx[i]:.4f}, vy={human_vy[i]:.4f}, v_yaw={human_v_yaw[i]:.4f}"
+        #     )
+        #     print(f"           person{i+1} yaw: desired={dyaw:.4f}, actual={ayaw:.4f}")
+        # human_goals = info["human_goals"]
+        # for i, (gx, gy) in enumerate(human_goals):
+        #     print(f"           person{i+1} goal: x={gx:.4f}, y={gy:.4f}")
+
+            
+
+    if step % 10 == 0:
         human_v_follow = info["human_v_follow"]
         human_v_repulsion = info["human_v_repulsion"]
-        print(f"[step {step}]")
-        for i, (vf, vr) in enumerate(zip(human_v_follow, human_v_repulsion)):
-            print(
-                f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
-                f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f})")
-            
+        if np.any(np.linalg.norm(human_v_repulsion, axis=1) > 1e-6):
+            print(f"[step {step}]")
+            for i, (vf, vr) in enumerate(zip(human_v_follow, human_v_repulsion)):
+                print(
+                    f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
+                    f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f})")
 
     # if step % 500 == 0:
     #     rx, ry = info["robot_xy"]

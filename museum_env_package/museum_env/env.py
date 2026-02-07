@@ -76,11 +76,11 @@ class MuseumEnv(gym.Env):
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
-        self.robot_start_xy = None
+        self.robot_start_xy = None  
         self.human_follow_distance = 0.5
         # Social distance (repulsion) parameters
         self.social_distance = 1.0
-        self.repulsion_gain = 1.0
+        self.repulsion_gain = 2.0
         # Listening formation (fan around robot after it stops)
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
@@ -300,16 +300,27 @@ class MuseumEnv(gym.Env):
         follow_radius = 1.0
         fan_angle = 2.0 * self.listen_fan_half_angle
         for i, human in enumerate(self.humans):
+
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            # If listening, form a 120-degree fan in front of the robot and stand
+            relative_angle = 0.0
+
+            ctx = {
+                "robot_xy": np.array([rx, ry], dtype=np.float32),
+                "robot_yaw": ryaw,
+                "repulsion": repulsion_vec,
+                "follow_radius": follow_radius,
+                "angle_offset": relative_angle,
+                "stand_threshold": self.listen_stand_threshold,
+            }
+
             if self.listen_mode:
                 human.set_mode(HumanMode.LISTEN)
-                human.external_waypoint = True
-                # Distribute waypoints for each human in the fan
+
                 if n_humans > 1:
-                    relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
+                    relative_angle = (i / (n_humans - 1)) * fan_angle - fan_angle / 2.0
                 else:
                     relative_angle = 0.0
+
                 angle = ryaw + relative_angle
                 target = np.array(
                     [
@@ -319,37 +330,32 @@ class MuseumEnv(gym.Env):
                     dtype=np.float32,
                 )
                 human.current_waypoint = target
-                # If close enough to target, stand still
-                if human_xy.size:
-                    dist_to_target = float(np.linalg.norm(human_xy[i] - target))
-                else:
-                    dist_to_target = float("inf")
-                if dist_to_target < self.listen_stand_threshold:
-                    human_action = np.zeros(3, dtype=np.float32)
-                else:
-                    human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
-            
+
             else:
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
-                human.external_waypoint = self.follow_humans
-                # Human following the robot
+
                 if self.follow_humans:
-                    # 120-degree fan behind the robot (centered at yaw + pi)
                     if n_humans > 1:
-                        relative_angle = (i / (n_humans - 1)) * fan_angle - (fan_angle / 2.0)
+                        relative_angle = (i / (n_humans - 1)) * fan_angle - fan_angle / 2.0
                     else:
                         relative_angle = 0.0
+
                     angle = ryaw + np.pi + relative_angle
                     offset = np.array(
                         [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
                         dtype=np.float32,
                     )
                     human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
-                human_action = human.update(self.model, self.data, self.timestep, repulsion_vec=repulsion_vec)
+                else:
+                    relative_angle = 0.0
+
+
+            human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
-            # Person controls: person1 at indices 3-5, person2 at 6-8, etc.
+
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx+3] = human_action
+
 
         # Step simulation
         mujoco.mj_step(self.model, self.data)
