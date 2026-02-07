@@ -38,6 +38,9 @@ class Human:
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
         self.step_count = 0
+        # Cache for debugging/metrics
+        self.last_v_follow = np.zeros(2, dtype=np.float32)
+        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
 
     def set_mode(self, mode: str):
         if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTEN):
@@ -113,6 +116,8 @@ class Human:
 
         # v_repulsion: push away from nearby humans
         v_repulsion = np.array(repulsion_vec, dtype=np.float32)
+        self.last_v_follow = v_follow.astype(np.float32, copy=True)
+        self.last_v_repulsion = v_repulsion.astype(np.float32, copy=True)
 
         # Total desired velocity
         v_total = v_follow + v_repulsion

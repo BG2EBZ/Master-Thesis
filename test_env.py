@@ -38,6 +38,14 @@ for step in range(30000):
         human_goals = info["human_goals"]
         for i, (gx, gy) in enumerate(human_goals):
             print(f"           person{i+1} goal: x={gx:.4f}, y={gy:.4f}")
+        human_v_follow = info["human_v_follow"]
+        human_v_repulsion = info["human_v_repulsion"]
+        print(f"[step {step}]")
+        for i, (vf, vr) in enumerate(zip(human_v_follow, human_v_repulsion)):
+            print(
+                f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
+                f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f})")
+            
 
     # if step % 500 == 0:
     #     rx, ry = info["robot_xy"]

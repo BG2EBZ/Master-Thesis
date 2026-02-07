@@ -372,6 +372,8 @@ class MuseumEnv(gym.Env):
         human_actions = np.array(human_actions, dtype=np.float32) if human_actions else np.zeros((0, 3), dtype=np.float32)
         human_goal_threshold = 0.5
         human_reached_goal = []
+        human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
+        human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
 
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
             dist_to_goal = np.linalg.norm(pos - goal)
@@ -405,6 +407,8 @@ class MuseumEnv(gym.Env):
             "human_vx": human_actions[:, 0],         # (N,)
             "human_vy": human_actions[:, 1],         # (N,)
             "human_v_yaw": human_actions[:, 2],      # (N,)
+            "human_v_follow": human_v_follow,         # (N, 2)
+            "human_v_repulsion": human_v_repulsion,   # (N, 2)
             "human_reached_goal": human_reached_goal,
         }
 
