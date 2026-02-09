@@ -4,7 +4,7 @@ import numpy as np
 class HumanMode:
     WANDERING = "wandering"
     FOLLOWING = "following"
-    LISTEN = "listen"
+    LISTENING = "listening"
 
 
 class Human:
@@ -41,7 +41,7 @@ class Human:
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
 
     def set_mode(self, mode: str):
-        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTEN):
+        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING):
             raise ValueError(f"Unknown human mode: {mode}")
         self.mode = mode
 
@@ -64,11 +64,54 @@ class Human:
         elif self.mode == HumanMode.FOLLOWING:
             return self._step_following(data, ctx)
 
-        elif self.mode == HumanMode.LISTEN:
+        elif self.mode == HumanMode.LISTENING:
             return self._step_listening(data, ctx)
 
         else:
             raise ValueError(f"Unknown human mode {self.mode}")
+        
+    def assign_follow_target(self, index, n_humans, robot_pose, follow_radius, fan_half_angle):
+        """
+        Compute and assign target for FOLLOWING behavior.
+        """
+        rx, ry, ryaw = robot_pose
+
+        if n_humans > 1:
+            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+        else:
+            relative_angle = 0.0
+
+        angle = ryaw + np.pi + relative_angle
+        offset = np.array(
+            [
+                follow_radius * np.cos(angle),
+                follow_radius * np.sin(angle),
+            ],
+            dtype=np.float32,
+        )
+
+        self.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
+
+
+    def assign_listen_target(self, index, n_humans, robot_pose, listen_radius, fan_half_angle):
+        """
+        Compute and assign target for LISTEN behavior.
+        """
+        rx, ry, ryaw = robot_pose
+
+        if n_humans > 1:
+            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+        else:
+            relative_angle = 0.0
+
+        angle = ryaw + relative_angle
+        self.current_waypoint = np.array(
+            [
+                rx + listen_radius * np.cos(angle),
+                ry + listen_radius * np.sin(angle),
+            ],
+            dtype=np.float32,
+        )
 
 
     def _step_wandering(self, data, ctx):

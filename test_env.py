@@ -41,7 +41,7 @@ for step in range(30000):
 
             
 
-    if step % 10 == 0:
+    if step % 50 == 0:
         human_v_follow = info["human_v_follow"]
         human_v_repulsion = info["human_v_repulsion"]
         if np.any(np.linalg.norm(human_v_repulsion, axis=1) > 1e-6):

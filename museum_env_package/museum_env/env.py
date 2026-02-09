@@ -314,40 +314,27 @@ class MuseumEnv(gym.Env):
             }
 
             if self.listen_mode:
-                human.set_mode(HumanMode.LISTEN)
+                human.set_mode(HumanMode.LISTENING)
 
-                if n_humans > 1:
-                    relative_angle = (i / (n_humans - 1)) * fan_angle - fan_angle / 2.0
-                else:
-                    relative_angle = 0.0
-
-                angle = ryaw + relative_angle
-                target = np.array(
-                    [
-                        rx + self.listen_fan_radius * np.cos(angle),
-                        ry + self.listen_fan_radius * np.sin(angle),
-                    ],
-                    dtype=np.float32,
+                human.assign_listen_target(
+                    index=i,
+                    n_humans=n_humans,
+                    robot_pose=(rx, ry, ryaw),
+                    listen_radius=self.listen_fan_radius,
+                    fan_half_angle=self.listen_fan_half_angle,
                 )
-                human.current_waypoint = target
 
             else:
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
                 if self.follow_humans:
-                    if n_humans > 1:
-                        relative_angle = (i / (n_humans - 1)) * fan_angle - fan_angle / 2.0
-                    else:
-                        relative_angle = 0.0
-
-                    angle = ryaw + np.pi + relative_angle
-                    offset = np.array(
-                        [follow_radius * np.cos(angle), follow_radius * np.sin(angle)],
-                        dtype=np.float32,
+                    human.assign_follow_target(
+                        index=i,
+                        n_humans=n_humans,
+                        robot_pose=(rx, ry, ryaw),
+                        follow_radius=follow_radius,
+                        fan_half_angle=self.listen_fan_half_angle,
                     )
-                    human.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
-                else:
-                    relative_angle = 0.0
 
 
             human_action = human.step(self.model, self.data, ctx)
