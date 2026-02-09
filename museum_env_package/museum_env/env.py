@@ -69,9 +69,14 @@ class MuseumEnv(gym.Env):
         #     (10, -12.5),    # Stop in room B
         # ]
 
-        # Single target: middle position on the left wall (assume a display here).
-        self.display_xy = (1.0, 5.0)
-        self.waypoints = [self.display_xy]
+        # Waypoints: room A → corridor → room B
+        self.waypoints = [
+            (1.0, 5.0),   
+            (1.0, 1.0),
+            (8.5, 1.0),
+            (8.5, -10.0),
+            (8.5, -12.5),
+        ]
         self.current_waypoint_idx = 0
 
         # Human follow switch (start with random walking)
@@ -87,6 +92,8 @@ class MuseumEnv(gym.Env):
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
         self.listen_fan_radius = 1.0
         self.listen_stand_threshold = 1.0
+        self.listen_done = False
+        self.listen_reached_logged = set()
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
@@ -152,12 +159,13 @@ class MuseumEnv(gym.Env):
         dist = np.hypot(dx, dy) + 1e-8
 
         # Switch to next waypoint if close enough (threshold: 0.3m)
-        if dist < 0.3 and self.current_waypoint_idx < len(self.waypoints) - 1:
-            self.current_waypoint_idx += 1
-            wx, wy = self.waypoints[self.current_waypoint_idx]
-            dx = wx - x
-            dy = wy - y
-            dist = np.hypot(dx, dy) + 1e-8
+        if dist < 0.2 and self.current_waypoint_idx < len(self.waypoints) - 1:
+            if not (self.current_waypoint_idx == 0 and not self.listen_done):
+                self.current_waypoint_idx += 1
+                wx, wy = self.waypoints[self.current_waypoint_idx]
+                dx = wx - x
+                dy = wy - y
+                dist = np.hypot(dx, dy) + 1e-8
 
         # Tunable gains
         k_v = 20.0      # translation gain
@@ -204,6 +212,8 @@ class MuseumEnv(gym.Env):
         self.turn_target_yaw = None
         self.turn_done = False
         self.listen_mode = False
+        self.listen_done = False
+        self.listen_reached_logged = set()
         self.robot_mode = RobotMode.MOVE
         
         # Reset humans
@@ -262,6 +272,7 @@ class MuseumEnv(gym.Env):
         # Enter listening mode after turning is done at the display
         if dist < 0.2 and self.turn_done and not self.listen_mode:
             self.listen_mode = True
+            self.listen_reached_logged = set()
             print(">>> Robot entering LISTEN mode.")
 
         # Apply robot action
@@ -362,7 +373,7 @@ class MuseumEnv(gym.Env):
             human_goals[:, 0] - human_xy[:, 0],
         ).astype(np.float32)
         human_actions = np.array(human_actions, dtype=np.float32) if human_actions else np.zeros((0, 3), dtype=np.float32)
-        human_goal_threshold = 0.5
+        human_goal_threshold = 0.2
         human_reached_goal = []
         human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
         human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
@@ -372,6 +383,18 @@ class MuseumEnv(gym.Env):
             dist_to_goal = np.linalg.norm(pos - goal)
             if dist_to_goal < human_goal_threshold:
                 human_reached_goal.append(i)
+                if self.listen_mode and i not in self.listen_reached_logged:
+                    self.listen_reached_logged.add(i)
+                    print(f">>> person{i+1} reached their goal at step {self.step_count}!")
+
+        if self.listen_mode and len(self.humans) > 0 and len(human_reached_goal) == len(self.humans):
+            self.listen_mode = False
+            self.turn_done = False
+            self.turn_target_yaw = None
+            self.follow_humans = True
+            self.current_waypoint_idx = 1
+            self.listen_done = True
+            print(">>> Listening complete. Resume MOVE to Room B.")
 
         obs = self._get_obs()
 
