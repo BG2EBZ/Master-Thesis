@@ -82,7 +82,7 @@ class MuseumEnv(gym.Env):
         self.social_distance = 1.0
         self.repulsion_gain = 2.0
         # Listening formation (fan around robot after it stops)
-        self.follow_fan_half_angle = np.deg2rad(120.0)  # 120-degree fan for following
+        self.follow_fan_half_angle = np.deg2rad(80.0)  # 120-degree fan for following
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
         self.listen_fan_radius = 1.0
@@ -366,6 +366,7 @@ class MuseumEnv(gym.Env):
         human_reached_goal = []
         human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
         human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
+        human_v_hr = np.array([h.last_v_hr for h in self.humans], dtype=np.float32)
 
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
             dist_to_goal = np.linalg.norm(pos - goal)
@@ -401,6 +402,7 @@ class MuseumEnv(gym.Env):
             "human_v_yaw": human_actions[:, 2],      # (N,)
             "human_v_follow": human_v_follow,         # (N, 2)
             "human_v_repulsion": human_v_repulsion,   # (N, 2)
+            "human_v_hr": human_v_hr,                 # (N, 2)
             "human_reached_goal": human_reached_goal,
         }
 
