@@ -41,6 +41,7 @@ class Human:
         # Cache for debugging/metrics
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+        self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
 
     def set_mode(self, mode: str):
         if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING):
@@ -189,13 +190,13 @@ class Human:
             dx = self.current_waypoint[0] - x
             dy = self.current_waypoint[1] - y
 
-        return self._move(dx, dy, yaw, ctx)
+        return self._move(dx, dy, yaw, data, ctx)
 
     def _step_following(self, data, ctx):
         x, y, yaw = self._get_pose(data)
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
-        return self._move(dx, dy, yaw, ctx)
+        return self._move(dx, dy, yaw, data, ctx)
     
     def _step_listening(self, data, ctx):
         x, y, yaw = self._get_pose(data)
@@ -206,10 +207,36 @@ class Human:
         if dist < ctx.get("stand_threshold", 0.4):
             return np.zeros(3)
 
-        return self._move(dx, dy, yaw, ctx)
+        return self._move(dx, dy, yaw, data, ctx)
 
-    def _move(self, dx, dy, yaw, ctx):
+    def _move(self, dx, dy, yaw, data, ctx):
+        robot_xy = ctx.get("robot_xy", None)
+
         repulsion = ctx.get("repulsion", np.zeros(2))
+        v_hr = np.zeros(2, dtype=np.float32)
+
+        if robot_xy is not None:
+            # current human position
+            hx, hy, _ = self._get_pose(data)
+
+            diff_hr = np.array([hx, hy], dtype=np.float32) - robot_xy
+            dist_hr = np.linalg.norm(diff_hr) + 1e-6
+            dir_hr = diff_hr / dist_hr
+
+        # preferred human–robot distance (meters)
+        d_pref = 1.0
+        d_min = 1.0   # too close → repulsion
+        d_max = 2.0   # too far → attraction
+
+        if dist_hr < d_min:
+            # too close → repulsion (slow down / move away)
+            k_rep_hr = 1.5
+            v_hr = k_rep_hr * (d_min - dist_hr) * dir_hr
+
+        elif dist_hr > d_max:
+            # too far → attraction (move towards robot)
+            k_att_hr = 0.8
+            v_hr = -k_att_hr * (dist_hr - d_max) * dir_hr
 
         dist = np.hypot(dx, dy)
         if dist > 1e-6:
@@ -221,8 +248,9 @@ class Human:
 
         self.last_v_follow = v_follow.copy()
         self.last_v_repulsion = v_repulsion.copy()
+        self.last_v_hr = v_hr.copy()
 
-        v_total = v_follow + v_repulsion
+        v_total = v_follow + v_repulsion + v_hr
         speed = np.linalg.norm(v_total)
 
         if speed > self.max_speed:
