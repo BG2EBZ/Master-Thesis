@@ -29,6 +29,8 @@ class Human:
         # If True, current_waypoint is managed externally (e.g., follow robot)
         self.external_waypoint = False
         self.mode = HumanMode.WANDERING
+
+        self.context = {}
         
         # Store body_id (will be set when we have access to model)
         self.body_id = None
@@ -45,6 +47,66 @@ class Human:
             raise ValueError(f"Unknown human mode: {mode}")
         self.mode = mode
 
+
+    def set_context(self, **kwargs):
+        """
+        Store high-level social context provided by env.
+        Example:
+            mode="listening"
+            index=0
+            n_humans=3
+            robot_pose=(rx, ry, ryaw)
+        """
+        self.context = kwargs
+
+    def _assign_target_from_context(self):
+        """
+        Decide where to stand based on social context.
+        """
+        if not self.context:
+            return
+
+        index = self.context.get("index", 0)
+        n_humans = self.context.get("n_humans", 1)
+        robot_pose = self.context.get("robot_pose", None)
+
+        if robot_pose is None:
+            return
+
+        rx, ry, ryaw = robot_pose
+
+        if self.mode == HumanMode.LISTENING:
+            fan_half_angle = self.context.get("fan_half_angle", np.pi / 6)
+            radius = self.context.get("listen_radius", 1.2)
+
+            if n_humans > 1:
+                rel = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+            else:
+                rel = 0.0
+
+            angle = ryaw + rel
+            self.current_waypoint = np.array(
+                [rx + radius * np.cos(angle),
+                ry + radius * np.sin(angle)],
+                dtype=np.float32
+            )
+
+        elif self.mode == HumanMode.FOLLOWING:
+            fan_half_angle = self.context.get("fan_half_angle", np.pi / 6)
+            radius = self.context.get("follow_radius", 1.0)
+
+            if n_humans > 1:
+                rel = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+            else:
+                rel = 0.0
+
+            angle = ryaw + np.pi + rel
+            self.current_waypoint = np.array(
+                [rx + radius * np.cos(angle),
+                ry + radius * np.sin(angle)],
+                dtype=np.float32
+            )
+    
     def step(self, model, data, ctx):
         """
         ctx: dict provided by env, e.g.
@@ -58,17 +120,18 @@ class Human:
         if self.body_id is None:
             self.body_id = model.body(self.body_name).id
 
+        self._assign_target_from_context()
+
         if self.mode == HumanMode.WANDERING:
             return self._step_wandering(data, ctx)
 
-        elif self.mode == HumanMode.FOLLOWING:
+        if self.mode == HumanMode.FOLLOWING:
             return self._step_following(data, ctx)
 
-        elif self.mode == HumanMode.LISTENING:
+        if self.mode == HumanMode.LISTENING:
             return self._step_listening(data, ctx)
 
-        else:
-            raise ValueError(f"Unknown human mode {self.mode}")
+        raise ValueError(f"Unknown human mode {self.mode}")
         
     def assign_follow_target(self, index, n_humans, robot_pose, follow_radius, fan_half_angle):
         """
@@ -129,22 +192,9 @@ class Human:
         return self._move(dx, dy, yaw, ctx)
 
     def _step_following(self, data, ctx):
-        robot_xy = ctx["robot_xy"]
-        robot_yaw = ctx["robot_yaw"]
-
-        follow_radius = ctx.get("follow_radius", 1.0)
-        angle_offset = ctx.get("angle_offset", 0.0)
-
-        target = robot_xy + follow_radius * np.array([
-            np.cos(robot_yaw + np.pi + angle_offset),
-            np.sin(robot_yaw + np.pi + angle_offset),
-        ])
-
-        self.current_waypoint = target
         x, y, yaw = self._get_pose(data)
-        dx = target[0] - x
-        dy = target[1] - y
-
+        dx = self.current_waypoint[0] - x
+        dy = self.current_waypoint[1] - y
         return self._move(dx, dy, yaw, ctx)
     
     def _step_listening(self, data, ctx):

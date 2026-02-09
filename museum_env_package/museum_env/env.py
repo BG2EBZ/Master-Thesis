@@ -82,6 +82,7 @@ class MuseumEnv(gym.Env):
         self.social_distance = 1.0
         self.repulsion_gain = 2.0
         # Listening formation (fan around robot after it stops)
+        self.follow_fan_half_angle = np.deg2rad(120.0)  # 120-degree fan for following
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
         self.listen_fan_radius = 1.0
@@ -314,7 +315,7 @@ class MuseumEnv(gym.Env):
             if self.listen_mode:
                 human.set_mode(HumanMode.LISTENING)
 
-                human.assign_listen_target(
+                human.set_context(
                     index=i,
                     n_humans=n_humans,
                     robot_pose=(rx, ry, ryaw),
@@ -326,12 +327,12 @@ class MuseumEnv(gym.Env):
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
                 if self.follow_humans:
-                    human.assign_follow_target(
+                    human.set_context(
                         index=i,
                         n_humans=n_humans,
                         robot_pose=(rx, ry, ryaw),
                         follow_radius=follow_radius,
-                        fan_half_angle=self.listen_fan_half_angle,
+                        fan_half_angle=self.follow_fan_half_angle,
                     )
 
 
