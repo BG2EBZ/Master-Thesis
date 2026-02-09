@@ -84,8 +84,8 @@ class MuseumEnv(gym.Env):
         # Listening formation (fan around robot after it stops)
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
-        self.listen_fan_radius = 0.6
-        self.listen_stand_threshold = 0.6
+        self.listen_fan_radius = 1.0
+        self.listen_stand_threshold = 1.0
         # Turn to face people after reaching the display
         self.turn_target_yaw = None
         self.turn_done = False
@@ -302,14 +302,12 @@ class MuseumEnv(gym.Env):
         for i, human in enumerate(self.humans):
 
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            relative_angle = 0.0
+            
 
             ctx = {
                 "robot_xy": np.array([rx, ry], dtype=np.float32),
                 "robot_yaw": ryaw,
                 "repulsion": repulsion_vec,
-                "follow_radius": follow_radius,
-                "angle_offset": relative_angle,
                 "stand_threshold": self.listen_stand_threshold,
             }
 
