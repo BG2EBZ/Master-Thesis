@@ -273,6 +273,15 @@ class MuseumEnv(gym.Env):
         if dist < 0.2 and self.turn_done and not self.listen_mode:
             self.listen_mode = True
             self.listen_reached_logged = set()
+            n_humans = len(self.humans)
+            for i, human in enumerate(self.humans):
+                human.assign_listen_target(
+                    index=i,
+                    n_humans=n_humans,
+                    robot_pose=(rx, ry, ryaw),
+                    listen_radius=self.listen_fan_radius,
+                    fan_half_angle=self.listen_fan_half_angle,
+                )
             print(">>> Robot entering LISTEN mode.")
 
         # Apply robot action
@@ -310,12 +319,10 @@ class MuseumEnv(gym.Env):
         
         n_humans = len(self.humans)
         follow_radius = 1.0
-        fan_angle = 2.0 * self.listen_fan_half_angle
         for i, human in enumerate(self.humans):
 
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
             
-
             ctx = {
                 "robot_xy": np.array([rx, ry], dtype=np.float32),
                 "robot_yaw": ryaw,
@@ -325,14 +332,6 @@ class MuseumEnv(gym.Env):
 
             if self.listen_mode:
                 human.set_mode(HumanMode.LISTENING)
-
-                human.set_context(
-                    index=i,
-                    n_humans=n_humans,
-                    robot_pose=(rx, ry, ryaw),
-                    listen_radius=self.listen_fan_radius,
-                    fan_half_angle=self.listen_fan_half_angle,
-                )
 
             else:
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
@@ -346,13 +345,11 @@ class MuseumEnv(gym.Env):
                         fan_half_angle=self.follow_fan_half_angle,
                     )
 
-
             human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
 
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx+3] = human_action
-
 
         # Step simulation
         mujoco.mj_step(self.model, self.data)

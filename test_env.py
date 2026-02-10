@@ -41,7 +41,7 @@ for step in range(30000):
 
             
 
-    if step % 200 == 0:
+    if step % 50 == 0:
         human_v_follow = info["human_v_follow"]
         human_v_repulsion = info["human_v_repulsion"]
         human_v_hr = info["human_v_hr"]

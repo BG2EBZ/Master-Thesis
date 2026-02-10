@@ -121,12 +121,11 @@ class Human:
         if self.body_id is None:
             self.body_id = model.body(self.body_name).id
 
-        self._assign_target_from_context()
-
         if self.mode == HumanMode.WANDERING:
             return self._step_wandering(data, ctx)
 
         if self.mode == HumanMode.FOLLOWING:
+            self._assign_target_from_context()
             return self._step_following(data, ctx)
 
         if self.mode == HumanMode.LISTENING:
@@ -204,7 +203,7 @@ class Human:
         dy = self.current_waypoint[1] - y
         dist = np.hypot(dx, dy)
 
-        if dist < ctx.get("stand_threshold", 0.4):
+        if dist < ctx.get("stand_threshold", 0.2):
             return np.zeros(3)
 
         return self._move(dx, dy, yaw, data, ctx)

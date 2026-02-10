@@ -13,3 +13,30 @@ Robot behaviors:
   Stop (Explain this display)
   
   Add more behaviors before learning
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Velocity Control or Position Control for people and robot moving?
+
