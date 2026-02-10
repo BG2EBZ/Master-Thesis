@@ -85,7 +85,7 @@ class MuseumEnv(gym.Env):
         self.human_follow_distance = 0.5
         # Social distance (repulsion) parameters
         self.social_distance = 1.0
-        self.repulsion_gain = 2.0
+        self.repulsion_gain = 5.0
         # Listening formation (fan around robot after it stops)
         self.follow_fan_half_angle = np.deg2rad(80.0)  # 120-degree fan for following
         self.listen_mode = False
@@ -274,6 +274,8 @@ class MuseumEnv(gym.Env):
             self.listen_mode = True
             self.listen_reached_logged = set()
             n_humans = len(self.humans)
+
+            print(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
             for i, human in enumerate(self.humans):
                 human.assign_listen_target(
                     index=i,
@@ -282,7 +284,9 @@ class MuseumEnv(gym.Env):
                     listen_radius=self.listen_fan_radius,
                     fan_half_angle=self.listen_fan_half_angle,
                 )
-            print(">>> Robot entering LISTEN mode.")
+                gx, gy = human.current_waypoint
+                print(f"    person{i+1} listen_goal=({gx:.3f}, {gy:.3f})")
+           
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -399,7 +403,7 @@ class MuseumEnv(gym.Env):
         reward = -dist
 
         # Terminate when robot reaches the final waypoint
-        terminated = (dist < 0.3 and self.current_waypoint_idx == len(self.waypoints) - 1)
+        terminated = (dist < 0.2 and self.current_waypoint_idx == len(self.waypoints) - 1)
         truncated = self.step_count >= self.max_steps
 
         info = {

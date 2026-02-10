@@ -264,11 +264,11 @@ class Human:
         desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > 1e-6 else yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
-        if abs(yaw_err) > np.deg2rad(5):
-            # hard stop translation while turning
-            # data.qvel[self.x_dof_idx] = 0.0
-            # data.qvel[self.y_dof_idx] = 0.0
-            return np.array([0.0, 0.0, 20.0 * yaw_err])
+        # if abs(yaw_err) > np.deg2rad(5):
+        #     # hard stop translation while turning
+        #     # data.qvel[self.x_dof_idx] = 0.0
+        #     # data.qvel[self.y_dof_idx] = 0.0
+        #     return np.array([0.0, 0.0, 20.0 * yaw_err])
 
         return np.array([v_total[0], v_total[1], 20.0 * yaw_err])
     
