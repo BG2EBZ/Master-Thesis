@@ -423,6 +423,7 @@ class MuseumEnv(gym.Env):
             "human_v_follow": human_v_follow,         # (N, 2)
             "human_v_repulsion": human_v_repulsion,   # (N, 2)
             "human_v_hr": human_v_hr,                 # (N, 2)
+            "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,  # (N, 2)
             "human_reached_goal": human_reached_goal,
         }
 

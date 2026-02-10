@@ -34,6 +34,8 @@ class Human:
         
         # Store body_id (will be set when we have access to model)
         self.body_id = None
+        self.x_dof_idx = None
+        self.y_dof_idx = None
         
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
@@ -120,6 +122,10 @@ class Human:
         """
         if self.body_id is None:
             self.body_id = model.body(self.body_name).id
+
+        if self.x_dof_idx is None:
+            self.x_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_x").id]
+            self.y_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_y").id]
 
         if self.mode == HumanMode.WANDERING:
             return self._step_wandering(data, ctx)
@@ -259,6 +265,9 @@ class Human:
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
         if abs(yaw_err) > np.deg2rad(5):
+            # hard stop translation while turning
+            # data.qvel[self.x_dof_idx] = 0.0
+            # data.qvel[self.y_dof_idx] = 0.0
             return np.array([0.0, 0.0, 20.0 * yaw_err])
 
         return np.array([v_total[0], v_total[1], 20.0 * yaw_err])
