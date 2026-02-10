@@ -84,14 +84,14 @@ class MuseumEnv(gym.Env):
         self.robot_start_xy = None  
         self.human_follow_distance = 0.5
         # Social distance (repulsion) parameters
-        self.social_distance = 1.0
-        self.repulsion_gain = 5.0
+        self.social_distance = 0.8
+        self.repulsion_gain = 6.0
         # Listening formation (fan around robot after it stops)
-        self.follow_fan_half_angle = np.deg2rad(80.0)  # 120-degree fan for following
+        self.follow_fan_half_angle = np.deg2rad(85.0)  # 120-degree fan for following
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
-        self.listen_fan_radius = 1.0
-        self.listen_stand_threshold = 1.0
+        self.listen_fan_radius = 0.8
+        self.listen_stand_threshold = 0.8
         self.listen_done = False
         self.listen_reached_logged = set()
         # Turn to face people after reaching the display
