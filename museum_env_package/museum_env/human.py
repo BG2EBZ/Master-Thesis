@@ -209,7 +209,7 @@ class Human:
         dy = self.current_waypoint[1] - y
         dist = np.hypot(dx, dy)
 
-        if dist < ctx.get("stand_threshold", 0.2):
+        if dist < ctx.get("stand_threshold"):
             return np.zeros(3)
 
         return self._move(dx, dy, yaw, data, ctx)
