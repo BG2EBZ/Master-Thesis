@@ -91,7 +91,7 @@ class MuseumEnv(gym.Env):
         self.listen_mode = False
         self.listen_fan_half_angle = np.deg2rad(75.0)  # 150-degree fan
         self.listen_fan_radius = 0.8
-        self.listen_stand_threshold = 0.8
+        self.listen_stand_threshold = 0.2
         self.listen_done = False
         self.listen_reached_logged = set()
         # Turn to face people after reaching the display
