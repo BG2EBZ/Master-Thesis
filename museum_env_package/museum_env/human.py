@@ -209,10 +209,23 @@ class Human:
         dy = self.current_waypoint[1] - y
         dist = np.hypot(dx, dy)
 
-        if dist < ctx.get("stand_threshold"):
-            return np.zeros(3)
+        stand_threshold = ctx.get("stand_threshold")
 
-        return self._move(dx, dy, yaw, data, ctx)
+        if dist >= stand_threshold:
+            return self._move(dx, dy, yaw, data, ctx)
+        
+        robot_xy = ctx.get("robot_xy")
+        if robot_xy is None:
+            return np.zeros(3, dtype=np.float32)
+        
+        rx, ry = robot_xy[0], robot_xy[1]
+        desired_yaw = np.arctan2(ry - y, rx - x)
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+
+        if abs(yaw_err) < np.deg2rad(3.0):
+            return np.zeros(3, dtype=np.float32)
+        
+        return np.array([0.0, 0.0, 20.0 * yaw_err])
 
     def _move(self, dx, dy, yaw, data, ctx):
         robot_xy = ctx.get("robot_xy", None)
