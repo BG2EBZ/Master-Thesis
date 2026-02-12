@@ -41,19 +41,19 @@ for step in range(30000):
 
             
 
-    if step % 200 == 0:
-        human_v_follow = info["human_v_follow"]
-        human_v_repulsion = info["human_v_repulsion"]
-        human_v_hr = info["human_v_hr"]
-        human_v_total = human_v_follow + human_v_repulsion + human_v_hr
-        if np.any(np.linalg.norm(human_v_repulsion, axis=1) > 1e-6) or np.any(np.linalg.norm(human_v_hr, axis=1) > 1e-6):
-            print(f"[step {step}]")
-            for i, (vf, vr, vhr) in enumerate(zip(human_v_follow, human_v_repulsion, human_v_hr)):
-                print(
-                    f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
-                    f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f}) "
-                    f"v_hr=({vhr[0]:.4f}, {vhr[1]:.4f})"
-                    f" v_total=({human_v_total[i][0]:.4f}, {human_v_total[i][1]:.4f})")
+    # if step % 200 == 0:
+    #     human_v_follow = info["human_v_follow"]
+    #     human_v_repulsion = info["human_v_repulsion"]
+    #     human_v_hr = info["human_v_hr"]
+    #     human_v_total = human_v_follow + human_v_repulsion + human_v_hr
+    #     if np.any(np.linalg.norm(human_v_repulsion, axis=1) > 1e-6) or np.any(np.linalg.norm(human_v_hr, axis=1) > 1e-6):
+    #         print(f"[step {step}]")
+    #         for i, (vf, vr, vhr) in enumerate(zip(human_v_follow, human_v_repulsion, human_v_hr)):
+    #             print(
+    #                 f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
+    #                 f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f}) "
+    #                 f"v_hr=({vhr[0]:.4f}, {vhr[1]:.4f})"
+    #                 f" v_total=({human_v_total[i][0]:.4f}, {human_v_total[i][1]:.4f})")
 
     # if step % 500 == 0:
     #     rx, ry = info["robot_xy"]

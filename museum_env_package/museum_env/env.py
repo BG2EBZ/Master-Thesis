@@ -71,18 +71,20 @@ class MuseumEnv(gym.Env):
 
         # Waypoints: room A → corridor → room B
         self.waypoints = [
-            (1.0, 5.0),   
-            (1.0, 1.0),
-            (8.5, 1.0),
+            (1.0, 5.0),
+            (0.5, 5.0),   
+            (0.5, 2.0),
+            (8.5, 2.0),
             (8.5, -10.0),
             (8.5, -12.5),
+            (11, -12.5),
         ]
         self.current_waypoint_idx = 0
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
         self.robot_start_xy = None  
-        self.human_follow_distance = 0.5
+        self.human_follow_distance = 1.0
         # Social distance (repulsion) parameters
         self.social_distance = 0.8
         self.repulsion_gain = 6.0
@@ -393,7 +395,9 @@ class MuseumEnv(gym.Env):
             self.listen_mode = False
             self.turn_done = False
             self.turn_target_yaw = None
-            self.follow_humans = True
+            # Reuse startup behavior: robot departs first, humans follow after 0.5m.
+            self.follow_humans = False
+            self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
             self.current_waypoint_idx = 1
             self.listen_done = True
             print(">>> Listening complete. Resume MOVE to Room B.")
