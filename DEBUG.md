@@ -1,7 +1,13 @@
 Human behaviors: 
   walking (towards the robot)
   wandering (randomly)
-  standing (in front of one display with the robot)
+  listening (go to target position then stand in front of the robot listening robot explanation a display)
+
+  distracted (when humans are following a robot, someone may falls behind)
+
+  Overwhelmed (step back)
+
+  
   
   Add more behaviors before learning
 
@@ -9,8 +15,12 @@ Human behaviors:
 
 Robot behaviors:
   Move (To next display)
-  Slow (Reduce speed)
+
   Stop (Explain this display)
+
+  Slow (Reduce speed)
+
+  Call back (Robot stop and turn to the lagging person)
   
   Add more behaviors before learning
 
@@ -30,13 +40,4 @@ Robot behaviors:
 
 
 
-
-
-
-
-
-
-
-
-Velocity Control or Position Control for people and robot moving?
 

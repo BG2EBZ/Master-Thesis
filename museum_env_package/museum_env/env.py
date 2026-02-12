@@ -188,7 +188,8 @@ class MuseumEnv(gym.Env):
         yaw_rate = k_yaw * yaw_err
 
         # Clip to actuator limits (match XML ctrlrange)
-        v = np.clip(k_v * dist, 0, 50.0)
+        v_max = 3
+        v = np.clip(k_v * dist, 0, v_max)
         vx = v * np.cos(yaw)
         vy = v * np.sin(yaw)
         yaw_rate = np.clip(k_yaw * yaw_err, -50.0, 50.0)

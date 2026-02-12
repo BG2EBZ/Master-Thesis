@@ -12,7 +12,7 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed=2.5, waypoint_threshold=0.2):
+    def __init__(self, name, body_name, qpos_idx, max_speed=3, waypoint_threshold=0.2):
         """
         Args:
             name: Human identifier (e.g., "person1")
