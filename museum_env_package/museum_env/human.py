@@ -12,7 +12,7 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed=3, waypoint_threshold=0.2):
+    def __init__(self, name, body_name, qpos_idx, max_speed=2.5, waypoint_threshold=0.2):
         """
         Args:
             name: Human identifier (e.g., "person1")
@@ -248,7 +248,7 @@ class Human:
 
         if dist_hr < d_min:
             # too close → repulsion (slow down / move away)
-            k_rep_hr = 1.5
+            k_rep_hr = 2.0
             v_hr = k_rep_hr * (d_min - dist_hr) * dir_hr
 
         elif dist_hr > d_max:
