@@ -13,8 +13,8 @@ class MuseumEnv(gym.Env):
     """
     Minimal runnable Gymnasium environment for a MuJoCo museum scene.
     """
-
-    metadata = {"render_modes": ["human"], "render_fps": 60}
+    # metadata = {"render_modes": ["human"], "render_fps": 60}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(self, xml_path=None, render_mode=None):
         super().__init__()
@@ -29,6 +29,9 @@ class MuseumEnv(gym.Env):
 
         self.render_mode = render_mode
         self.viewer = None
+        self.renderer = None
+        self.render_width = 1920
+        self.render_height = 1080
 
         # --- Action space ---
         self.nu = self.model.nu
@@ -48,7 +51,7 @@ class MuseumEnv(gym.Env):
         )
 
         self.timestep = self.model.opt.timestep
-        self.max_steps = 1000
+        self.max_steps = 100000
         self.step_count = 0
 
         # Waypoints: room A → corridor → room B
@@ -344,8 +347,30 @@ class MuseumEnv(gym.Env):
             if self.viewer is None:
                 self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             self.viewer.sync()
+            return None
+        if self.render_mode == "rgb_array":
+            if self.renderer is None:
+                vis = getattr(self.model, "vis", None)
+                global_vis = getattr(vis, "global_", None) if vis is not None else None
+                offwidth = int(getattr(global_vis, "offwidth", 640))
+                offheight = int(getattr(global_vis, "offheight", 480))
+
+                width = max(1, min(self.render_width, offwidth))
+                height = max(1, min(self.render_height, offheight))
+
+                try:
+                    self.renderer = mujoco.Renderer(self.model, height=height, width=width)
+                except ValueError:
+                    # Last-resort fallback to MuJoCo defaults when XML/driver limits are tighter.
+                    self.renderer = mujoco.Renderer(self.model, height=480, width=640)
+            self.renderer.update_scene(self.data)
+            return self.renderer.render()
+        return None
 
     def close(self):
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None
+        if self.renderer is not None:
+            self.renderer.close()
+            self.renderer = None
