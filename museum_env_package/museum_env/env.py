@@ -62,7 +62,7 @@ class MuseumEnv(gym.Env):
             (11, -12.5),
         ]
 
-        # Robot agent (NEW)
+        # Robot agent
         self.robot = Robot(waypoints=waypoints, v_max=3.0, k_v=20.0, k_yaw=20.0)
 
         # Human follow switch (start with random walking)
@@ -282,20 +282,26 @@ class MuseumEnv(gym.Env):
                     self.listen_reached_logged.add(i)
                     print(f">>> person{i+1} reached their goal at step {self.step_count}!")
 
+        final_waypoint_reached = self.robot.is_final_reached(dist)
+        all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
+
         # Listening complete condition: all humans reached
-        if self.robot.listen_mode and len(self.humans) > 0 and len(human_reached_goal) == len(self.humans):
-            self.robot.on_listening_complete()
+        if self.robot.listen_mode and all_humans_reached:
+            if not final_waypoint_reached:
+                self.robot.on_listening_complete()
 
-            # Reuse startup behavior: robot departs first, humans follow after 0.5m.
-            self.follow_humans = False
-            self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
+                # Reuse startup behavior: robot departs first, humans follow after 0.5m.
+                self.follow_humans = False
+                self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
 
-            print(">>> Listening complete. Resume MOVE to Room B.")
+                print(">>> Listening complete. Resume MOVE to Room B.")
+
+        final_listen_ready = final_waypoint_reached and self.robot.listen_mode and all_humans_reached
 
         obs = self._get_obs()
 
         reward = -dist
-        terminated = self.robot.is_final_reached(dist)
+        terminated = final_listen_ready
         truncated = self.step_count >= self.max_steps
 
         info = {
@@ -321,6 +327,9 @@ class MuseumEnv(gym.Env):
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "human_reached_goal": human_reached_goal,
+            "final_waypoint_reached": bool(final_waypoint_reached),
+            "all_humans_reached": bool(all_humans_reached),
+            "final_listen_ready": bool(final_listen_ready),
         }
 
         return obs, reward, terminated, truncated, info

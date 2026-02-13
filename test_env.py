@@ -1,4 +1,5 @@
 import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
 import numpy as np
 import time
 import museum_env.register_env
@@ -77,8 +78,17 @@ for step in range(30000):
     #     for i in info["human_reached_goal"]:
     #         print(f"[step {step}] >>> person{i+1} reached their goal!")
 
-    # if terminated:
-    #     print(f"Robot reached goal at step {step}!")
-    #     break
+    if info.get("final_listen_ready", False):
+        print(
+            f"[step {step}] >>> Termination gate met: "
+            "final waypoint reached + all humans reached final listen goals."
+        )
+
+    if terminated:
+        print(
+            f"Episode terminated at step {step}. "
+            f"final_listen_ready={info.get('final_listen_ready', False)}"
+        )
+        break
 
 env.close()

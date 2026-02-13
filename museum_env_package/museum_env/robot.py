@@ -60,7 +60,7 @@ class Robot:
 
         # Switch to next waypoint if close enough
         if dist < 0.2 and self.current_waypoint_idx < len(self.waypoints) - 1:
-            # Keep your original special rule:
+            
             # don't leave waypoint 0 before the first listening is done.
             if not (self.current_waypoint_idx == 0 and not self.listen_done):
                 self.current_waypoint_idx += 1
