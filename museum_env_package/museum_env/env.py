@@ -57,8 +57,8 @@ class MuseumEnv(gym.Env):
         # Waypoints: room A → corridor → room B
         waypoints = [
             (1.0, 5.0),
-            (0.5, 5.0),
-            (0.5, 2.0),
+            (0.6, 5.0),
+            (1.0, 2.0),
             (8.5, 2.0),
             (8.5, -10.0),
             (8.5, -12.5),

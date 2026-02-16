@@ -5,6 +5,7 @@ class HumanMode:
     WANDERING = "wandering"
     FOLLOWING = "following"
     LISTENING = "listening"
+    DISTRACTED = "distracted"
 
 
 class Human:
@@ -44,6 +45,10 @@ class Human:
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
+
+        self.distracted_timer = 0
+        self.distracted_duration = np.random.randint(50, 150)
+        self.distracted_probability = 0.002  # small chance per step
 
     def set_mode(self, mode: str):
         if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING):
@@ -131,11 +136,21 @@ class Human:
             return self._step_wandering(data, ctx)
 
         if self.mode == HumanMode.FOLLOWING:
+            # probabilistic switch to distracted
+            if np.random.rand() < self.distracted_probability:
+                self.mode = HumanMode.DISTRACTED
+                self.distracted_timer = 0
+                print(f">>> {self.name} became DISTRACTED!")
+
             self._assign_target_from_context()
             return self._step_following(data, ctx)
 
         if self.mode == HumanMode.LISTENING:
             return self._step_listening(data, ctx)
+        
+        if self.mode == HumanMode.DISTRACTED:
+            return self._step_distracted(data, ctx)
+
 
         raise ValueError(f"Unknown human mode {self.mode}")
         
@@ -226,6 +241,32 @@ class Human:
             return np.zeros(3, dtype=np.float32)
         
         return np.array([0.0, 0.0, 20.0 * yaw_err])
+    
+    def _step_distracted(self, data, ctx):
+        x, y, yaw = self._get_pose(data)
+
+        # Option A: slow down drastically
+        slow_factor = 0.2
+
+        # Option B: drift slightly toward a random nearby point
+        if self.distracted_timer == 0:
+            offset = np.random.uniform(-0.5, 0.5, size=2)
+            self.current_waypoint = np.array([x, y], dtype=np.float32) + offset
+
+        dx = self.current_waypoint[0] - x
+        dy = self.current_waypoint[1] - y
+
+        action = self._move(dx, dy, yaw, data, ctx)
+        action[0:2] *= slow_factor  # reduce speed
+
+        self.distracted_timer += 1
+
+        # return to following after duration
+        if self.distracted_timer > self.distracted_duration:
+            self.mode = HumanMode.FOLLOWING
+
+        return action
+
 
     def _move(self, dx, dy, yaw, data, ctx):
         robot_xy = ctx.get("robot_xy", None)
