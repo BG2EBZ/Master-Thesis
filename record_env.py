@@ -1,8 +1,9 @@
-import gymnasium as gym
-from gymnasium.wrappers import RecordVideo
 import inspect
 from datetime import datetime
 from pathlib import Path
+
+import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
 import museum_env.register_env
 
 # -----------------------------
@@ -62,73 +63,18 @@ def main():
             f"offsamples={OFFSAMPLES}, video_fps={VIDEO_FPS}"
         )
 
-        # action = np.zeros(env.action_space.shape, dtype=np.float32)
-        # action[0] = 20.0  # command full speed forward on X axis
-
         for step in range(MAX_STEPS):
             last_step = step
             obs, reward, terminated, truncated, info = env.step(None)
 
-            # if step % 100 == 0:
-            #     vx = info["robot_vx"]
-            #     vy = info["robot_vy"]
-            #     v_yaw = info["robot_v_yaw"]
-            #     desired_yaw = info["desired_yaw"]
-            #     actual_yaw = info["actual_yaw"]
-            #     print(f"[step {step}] robot velocity: vx={vx:.4f}, vy={vy:.4f}, v_yaw={v_yaw:.4f}")
-            #     print(f"           robot yaw: desired={desired_yaw:.4f}, actual={actual_yaw:.4f}")
-            #     human_desired_yaw = info["human_desired_yaw"]
-            #     human_actual_yaw = info["human_actual_yaw"]
-            #     human_vx = info["human_vx"]
-            #     human_vy = info["human_vy"]
-            #     human_v_yaw = info["human_v_yaw"]
-            #     for i, (dyaw, ayaw) in enumerate(zip(human_desired_yaw, human_actual_yaw)):
-            #         print(
-            #             f"           person{i+1} velocity: "
-            #             f"vx={human_vx[i]:.4f}, vy={human_vy[i]:.4f}, v_yaw={human_v_yaw[i]:.4f}"
-            #         )
-            #         print(f"           person{i+1} yaw: desired={dyaw:.4f}, actual={ayaw:.4f}")
-            #     human_goals = info["human_goals"]
-            #     for i, (gx, gy) in enumerate(human_goals):
-            #         print(f"           person{i+1} goal: x={gx:.4f}, y={gy:.4f}")
+            # Example debug reads with the new nested info schema:
+            # robot = info["robot"]
+            # humans = info["humans"]
+            # status = info["status"]
+            # events = info["events"]
+            # print(robot["mode"], humans["all_reached"], status["listen_wait"]["remaining"])
 
-            # if step % 200 == 0:
-            #     human_v_follow = info["human_v_follow"]
-            #     human_v_repulsion = info["human_v_repulsion"]
-            #     human_v_hr = info["human_v_hr"]
-            #     human_v_total = human_v_follow + human_v_repulsion + human_v_hr
-            #     if np.any(np.linalg.norm(human_v_repulsion, axis=1) > 1e-6) or np.any(np.linalg.norm(human_v_hr, axis=1) > 1e-6):
-            #         print(f"[step {step}]")
-            #         for i, (vf, vr, vhr) in enumerate(zip(human_v_follow, human_v_repulsion, human_v_hr)):
-            #             print(
-            #                 f"           person{i+1} v_follow=({vf[0]:.4f}, {vf[1]:.4f}) "
-            #                 f"v_repulsion=({vr[0]:.4f}, {vr[1]:.4f}) "
-            #                 f"v_hr=({vhr[0]:.4f}, {vhr[1]:.4f})"
-            #                 f" v_total=({human_v_total[i][0]:.4f}, {human_v_total[i][1]:.4f})")
-
-            # if step % 500 == 0:
-            #     rx, ry = info["robot_xy"]
-            #     gx, gy = info["robot_goal_xy"]
-            #     human_xy = info["human_xy"]
-            #     human_goals = info["human_goals"]
-
-            #     print(f"\n[step {step}]")
-            #     print(f"  robot pos : ({rx:.2f}, {ry:.2f})")
-            #     print(f"  robot goal: ({gx:.2f}, {gy:.2f})")
-
-            #     for i, ((hx, hy), (hgx, hgy)) in enumerate(zip(human_xy, human_goals)):
-            #         print(
-            #             f"  person{i+1}: "
-            #             f"pos=({hx:.2f}, {hy:.2f}) "
-            #             f"goal=({hgx:.2f}, {hgy:.2f})"
-            #         )
-
-            # # ---- event-based print: any human reaches goal ----
-            # if info["human_reached_goal"]:
-            #     for i in info["human_reached_goal"]:
-            #         print(f"[step {step}] >>> person{i+1} reached their goal!")
-
-            if info.get("final_listen_ready", False):
+            if info["events"]["final_listen_ready"]:
                 print(
                     f"[step {step}] >>> Termination gate met: "
                     "final waypoint reached + all humans reached final listen goals."
@@ -137,9 +83,10 @@ def main():
             if terminated:
                 print(
                     f"Episode terminated at step {step}. "
-                    f"final_listen_ready={info.get('final_listen_ready', False)}"
+                    f"final_listen_ready={info['events']['final_listen_ready']}"
                 )
                 break
+
             if truncated:
                 print(f"Episode truncated at step {step}.")
                 break
