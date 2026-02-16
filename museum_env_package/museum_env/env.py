@@ -57,7 +57,7 @@ class MuseumEnv(gym.Env):
         # Waypoints: room A → corridor → room B
         waypoints = [
             (1.0, 5.0),
-            (0.6, 5.0),
+            (0.6, 4.5),
             (1.0, 2.0),
             (8.5, 2.0),
             (8.5, -10.0),
@@ -95,6 +95,9 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
+
+        self.humans[0].can_be_distracted = True
+        self.humans[0].distracted_probability = 0.0005
 
     def _get_robot_pose(self):
         robot_body_id = self.model.body("robot").id
@@ -237,8 +240,10 @@ class MuseumEnv(gym.Env):
             if self.robot.listen_mode:
                 human.set_mode(HumanMode.LISTENING)
             else:
-                human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
-                if self.follow_humans:
+                if human.mode != HumanMode.DISTRACTED:
+                    human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
+
+                if self.follow_humans and human.mode == HumanMode.FOLLOWING:
                     human.set_context(
                         index=i,
                         n_humans=n_humans,
@@ -329,6 +334,8 @@ class MuseumEnv(gym.Env):
             "human_v_repulsion": human_v_repulsion,
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
+            "human_mode": [h.mode for h in self.humans],
+            "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
             "human_reached_goal": human_reached_goal,
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),

@@ -46,12 +46,13 @@ class Human:
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
 
+        self.can_be_distracted = False
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(500, 1500)
-        self.distracted_probability = 0.002  # small chance per step
+        self.distracted_probability = 0.000  # small chance per step
 
     def set_mode(self, mode: str):
-        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING):
+        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING, HumanMode.DISTRACTED):
             raise ValueError(f"Unknown human mode: {mode}")
         self.mode = mode
 
@@ -137,10 +138,11 @@ class Human:
 
         if self.mode == HumanMode.FOLLOWING:
             # probabilistic switch to distracted
-            if np.random.rand() < self.distracted_probability:
+            if self.can_be_distracted and np.random.rand() < self.distracted_probability:
                 self.mode = HumanMode.DISTRACTED
                 self.distracted_timer = 0
                 print(f">>> {self.name} became DISTRACTED!")
+                return self._step_distracted(data, ctx)
 
             self._assign_target_from_context()
             return self._step_following(data, ctx)
@@ -259,7 +261,6 @@ class Human:
         # On first distracted step → choose a new random waypoint
         if self.distracted_timer == 1:
             self.current_waypoint = self._random_waypoint()
-            print(f">>> {self.name} became DISTRACTED!")
 
         # Create modified context that ignores robot
         distracted_ctx = ctx.copy()
@@ -297,20 +298,19 @@ class Human:
             dist_hr = np.linalg.norm(diff_hr) + 1e-6
             dir_hr = diff_hr / dist_hr
 
-        # preferred human–robot distance (meters)
-        d_pref = 1.0
-        d_min = 1.0   # too close → repulsion
-        d_max = 2.0   # too far → attraction
+            # preferred human–robot distance (meters)
+            d_min = 1.0   # too close → repulsion
+            d_max = 2.0   # too far → attraction
 
-        if dist_hr < d_min:
-            # too close → repulsion (slow down / move away)
-            k_rep_hr = 2.0
-            v_hr = k_rep_hr * (d_min - dist_hr) * dir_hr
+            if dist_hr < d_min:
+                # too close → repulsion (slow down / move away)
+                k_rep_hr = 2.0
+                v_hr = k_rep_hr * (d_min - dist_hr) * dir_hr
 
-        elif dist_hr > d_max:
-            # too far → attraction (move towards robot)
-            k_att_hr = 0.8
-            v_hr = -k_att_hr * (dist_hr - d_max) * dir_hr
+            elif dist_hr > d_max:
+                # too far → attraction (move towards robot)
+                k_att_hr = 0.8
+                v_hr = -k_att_hr * (dist_hr - d_max) * dir_hr
 
         dist = np.hypot(dx, dy)
         if dist > 1e-6:
