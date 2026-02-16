@@ -47,7 +47,7 @@ class Human:
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
 
         self.distracted_timer = 0
-        self.distracted_duration = np.random.randint(50, 150)
+        self.distracted_duration = np.random.randint(500, 1500)
         self.distracted_probability = 0.002  # small chance per step
 
     def set_mode(self, mode: str):
@@ -245,25 +245,40 @@ class Human:
     def _step_distracted(self, data, ctx):
         x, y, yaw = self._get_pose(data)
 
-        # Option A: slow down drastically
-        slow_factor = 0.2
+        """
+        Distracted behavior:
+        - Ignore robot attraction
+        - Wander locally
+        - Move slower than normal wandering
+        - Recover automatically after duration
+        """
 
-        # Option B: drift slightly toward a random nearby point
-        if self.distracted_timer == 0:
-            offset = np.random.uniform(-0.5, 0.5, size=2)
-            self.current_waypoint = np.array([x, y], dtype=np.float32) + offset
-
-        dx = self.current_waypoint[0] - x
-        dy = self.current_waypoint[1] - y
-
-        action = self._move(dx, dy, yaw, data, ctx)
-        action[0:2] *= slow_factor  # reduce speed
-
+        # Increment internal timer
         self.distracted_timer += 1
 
-        # return to following after duration
+        # On first distracted step → choose a new random waypoint
+        if self.distracted_timer == 1:
+            self.current_waypoint = self._random_waypoint()
+            print(f">>> {self.name} became DISTRACTED!")
+
+        # Create modified context that ignores robot
+        distracted_ctx = ctx.copy()
+        distracted_ctx["robot_xy"] = None  # disable human-robot attraction
+
+        # Reuse wandering behavior
+        action = self._step_wandering(data, distracted_ctx)
+
+        # Slow down movement to make distraction visible
+        action[0:2] *= 0.5  # reduce translation speed
+
+        # Optional: slight random yaw noise for realism
+        action[2] += np.random.uniform(-2.0, 2.0)
+
+        # Recover after duration
         if self.distracted_timer > self.distracted_duration:
             self.mode = HumanMode.FOLLOWING
+            self.distracted_timer = 0
+            print(f">>> {self.name} recovered → FOLLOWING")
 
         return action
 
