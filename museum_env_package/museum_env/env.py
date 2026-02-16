@@ -83,6 +83,10 @@ class MuseumEnv(gym.Env):
         self.listen_fan_radius = 0.8
         self.listen_stand_threshold = 0.2
         self.listen_reached_logged = set()
+        self.listen_wait_steps = 400
+        self.listen_wait_active = False
+        self.listen_wait_counter = 0
+        self.listen_wait_is_final = False
 
         # --- Initialize humans ---
         self.humans = [
@@ -138,6 +142,9 @@ class MuseumEnv(gym.Env):
 
         # Reset listening logging
         self.listen_reached_logged = set()
+        self.listen_wait_active = False
+        self.listen_wait_counter = 0
+        self.listen_wait_is_final = False
 
         # Reset humans
         for human in self.humans:
@@ -155,6 +162,105 @@ class MuseumEnv(gym.Env):
         Robot rule-based navigation (via Robot class) + human walking.
         """
         self.step_count += 1
+
+        if self.listen_wait_active:
+            # Freeze everyone during explanation window.
+            self.data.ctrl[:] = 0.0
+            mujoco.mj_step(self.model, self.data)
+            self.listen_wait_counter += 1
+
+            rx, ry, ryaw = self._get_robot_pose()
+            human_xyz = self._get_human_poses()
+            human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+            human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
+
+            wx, wy = self.robot.get_current_waypoint()
+            dist = float(np.hypot(wx - rx, wy - ry) + 1e-8)
+            desired_yaw = float(np.arctan2(wy - ry, wx - rx))
+            actual_yaw = float(ryaw)
+            robot_mode = self.robot.mode
+            gx, gy = self._get_goal_xy()
+
+            human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
+            human_desired_yaw = np.arctan2(
+                human_goals[:, 1] - human_xy[:, 1],
+                human_goals[:, 0] - human_xy[:, 0],
+            ).astype(np.float32)
+
+            human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
+            human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
+            human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
+            human_v_hr = np.zeros((len(self.humans), 2), dtype=np.float32)
+
+            human_goal_threshold = 0.2
+            human_reached_goal = []
+            for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
+                dist_to_goal = float(np.linalg.norm(pos - goal))
+                if dist_to_goal < human_goal_threshold:
+                    human_reached_goal.append(i)
+
+            final_waypoint_reached = self.robot.is_final_reached(dist)
+            all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
+            final_listen_ready = False
+
+            if self.listen_wait_counter >= self.listen_wait_steps:
+                if self.listen_wait_is_final:
+                    final_listen_ready = True
+                    print(">>> Listening wait complete at final display.")
+                else:
+                    self.robot.on_listening_complete()
+                    self.follow_humans = False
+                    self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
+                    print(">>> Listening wait complete. Resume MOVE to Room B.")
+
+                self.listen_wait_active = False
+                self.listen_wait_counter = 0
+                self.listen_wait_is_final = False
+
+            obs = self._get_obs()
+            reward = -dist
+            terminated = final_listen_ready
+            truncated = self.step_count >= self.max_steps
+
+            listen_wait_remaining = (
+                max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
+            )
+
+            info = {
+                "dist_to_goal": dist,
+                "robot_xy": np.array([rx, ry], dtype=np.float32),
+                "robot_goal_xy": np.array([gx, gy], dtype=np.float32),
+                "robot_vx": 0.0,
+                "robot_vy": 0.0,
+                "robot_v_yaw": 0.0,
+                "desired_yaw": float(desired_yaw),
+                "actual_yaw": float(actual_yaw),
+                "robot_mode": str(robot_mode),
+                "listen_mode": bool(self.robot.listen_mode),
+                "human_xy": human_xy,
+                "human_goals": human_goals,
+                "human_desired_yaw": human_desired_yaw,
+                "human_actual_yaw": human_actual_yaw,
+                "human_vx": human_actions[:, 0],
+                "human_vy": human_actions[:, 1],
+                "human_v_yaw": human_actions[:, 2],
+                "human_v_follow": human_v_follow,
+                "human_v_repulsion": human_v_repulsion,
+                "human_v_hr": human_v_hr,
+                "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
+                "human_mode": [h.mode for h in self.humans],
+                "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
+                "human_reached_goal": human_reached_goal,
+                "final_waypoint_reached": bool(final_waypoint_reached),
+                "all_humans_reached": bool(all_humans_reached),
+                "final_listen_ready": bool(final_listen_ready),
+                "listen_wait_active": bool(self.listen_wait_active),
+                "listen_wait_counter": int(self.listen_wait_counter),
+                "listen_wait_steps": int(self.listen_wait_steps),
+                "listen_wait_remaining": int(listen_wait_remaining),
+                "listen_wait_is_final": bool(self.listen_wait_is_final),
+            }
+            return obs, reward, terminated, truncated, info
 
         # Get human poses once per step (needed for robot to face crowd)
         human_xyz = self._get_human_poses()
@@ -176,6 +282,9 @@ class MuseumEnv(gym.Env):
         if enter_listen:
             rx, ry, ryaw = robot_pose
             self.listen_reached_logged = set()
+            self.listen_wait_active = False
+            self.listen_wait_counter = 0
+            self.listen_wait_is_final = False
             n_humans = len(self.humans)
 
             print(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
@@ -293,24 +402,24 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
 
-        # Listening complete condition: all humans reached
-        if self.robot.listen_mode and all_humans_reached:
-            if not final_waypoint_reached:
-                self.robot.on_listening_complete()
+        # Listening complete condition: all humans reached.
+        # Start waiting window instead of switching immediately.
+        if self.robot.listen_mode and all_humans_reached and not self.listen_wait_active:
+            self.listen_wait_active = True
+            self.listen_wait_counter = 0
+            self.listen_wait_is_final = bool(final_waypoint_reached)
+            print(f">>> Listening targets reached. Start wait for {self.listen_wait_steps} steps.")
 
-                # Reuse startup behavior: robot departs first, humans follow after 0.5m.
-                self.follow_humans = False
-                self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
-
-                print(">>> Listening complete. Resume MOVE to Room B.")
-
-        final_listen_ready = final_waypoint_reached and self.robot.listen_mode and all_humans_reached
+        final_listen_ready = False
 
         obs = self._get_obs()
 
         reward = -dist
         terminated = final_listen_ready
         truncated = self.step_count >= self.max_steps
+        listen_wait_remaining = (
+            max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
+        )
 
         info = {
             "dist_to_goal": dist,
@@ -340,6 +449,11 @@ class MuseumEnv(gym.Env):
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
             "final_listen_ready": bool(final_listen_ready),
+            "listen_wait_active": bool(self.listen_wait_active),
+            "listen_wait_counter": int(self.listen_wait_counter),
+            "listen_wait_steps": int(self.listen_wait_steps),
+            "listen_wait_remaining": int(listen_wait_remaining),
+            "listen_wait_is_final": bool(self.listen_wait_is_final),
         }
 
         return obs, reward, terminated, truncated, info
