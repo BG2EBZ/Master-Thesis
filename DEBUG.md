@@ -44,6 +44,7 @@ Info schema (current):
   - started_listen_wait
   - completed_listen_wait
   - final_listen_ready
+  - overwhelmed_triggered
 
 - info["status"]
   - step_count
@@ -61,6 +62,7 @@ Info schema (current):
   - pose_xy, goal_xy
   - actual_yaw, desired_yaw
   - mode, distracted_timer
+  - overwhelmed_stage, overwhelmed_leave_timer
   - reached_goal_indices, all_reached
   - action: vx/vy/yaw_rate
   - velocity_components: follow/repulsion/human_robot/total

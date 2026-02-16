@@ -89,6 +89,10 @@ class MuseumEnv(gym.Env):
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
+        self.listen_session_count = 0
+        self.overwhelmed_triggered_once = False
+        self.overwhelmed_target_idx = 1  # person2
+        self.overwhelmed_trigger_wait_step = 200
 
         # --- Initialize humans ---
         self.humans = [
@@ -104,6 +108,7 @@ class MuseumEnv(gym.Env):
 
         self.humans[0].can_be_distracted = True
         self.humans[0].distracted_probability = 0.0005
+        self.humans[1].can_be_overwhelmed = True
 
     def _get_robot_pose(self):
         robot_body_id = self.model.body("robot").id
@@ -147,6 +152,8 @@ class MuseumEnv(gym.Env):
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
+        self.listen_session_count = 0
+        self.overwhelmed_triggered_once = False
 
         # Reset humans
         for human in self.humans:
@@ -154,6 +161,7 @@ class MuseumEnv(gym.Env):
             human.external_waypoint = False
             human.current_waypoint = human._random_waypoint()
             human.set_mode(HumanMode.WANDERING)
+            human.reset_overwhelmed_state()
 
         obs = self._get_obs()
         info = {}
@@ -176,10 +184,39 @@ class MuseumEnv(gym.Env):
             "started_listen_wait": False,
             "completed_listen_wait": False,
             "final_listen_ready": False,
+            "overwhelmed_triggered": False,
         }
+
+        rx, ry, ryaw = self._get_robot_pose()
+        human_xyz = self._get_human_poses()
+        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+
+        robot_xy = np.array([rx, ry], dtype=np.float32)
+        events["overwhelmed_triggered"] = self._maybe_trigger_overwhelmed_in_wait(
+            robot_xy=robot_xy,
+            human_xy=human_xy,
+        )
 
         # Freeze everyone during explanation window.
         self.data.ctrl[:] = 0.0
+        human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
+
+        # Let only person2 move if they are overwhelmed.
+        tgt_idx = self.overwhelmed_target_idx
+        if 0 <= tgt_idx < len(self.humans):
+            tgt_human = self.humans[tgt_idx]
+            if tgt_human.mode == HumanMode.OVERWHELMED:
+                ctx = {
+                    "robot_xy": robot_xy,
+                    "robot_yaw": ryaw,
+                    "repulsion": np.zeros(2, dtype=np.float32),
+                    "stand_threshold": self.listen_stand_threshold,
+                }
+                tgt_action = tgt_human.step(self.model, self.data, ctx)
+                human_actions[tgt_idx] = tgt_action
+                ctrl_idx = 3 + tgt_idx * 3
+                self.data.ctrl[ctrl_idx:ctrl_idx + 3] = tgt_action
+
         mujoco.mj_step(self.model, self.data)
         self.listen_wait_counter += 1
 
@@ -214,7 +251,6 @@ class MuseumEnv(gym.Env):
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
 
-        human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
         human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
         human_v_hr = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -246,12 +282,34 @@ class MuseumEnv(gym.Env):
         info = self._build_info(snapshot, events, truncated)
         return obs, reward, terminated, truncated, info
 
+    def _maybe_trigger_overwhelmed_in_wait(self, robot_xy, human_xy):
+        # Trigger on the 200th waiting step of the first listen session only once per episode.
+        if self.overwhelmed_triggered_once:
+            return False
+        if self.listen_session_count != 1:
+            return False
+        if (self.listen_wait_counter + 1) != self.overwhelmed_trigger_wait_step:
+            return False
+
+        idx = self.overwhelmed_target_idx
+        if idx < 0 or idx >= len(self.humans) or idx >= human_xy.shape[0]:
+            return False
+
+        human = self.humans[idx]
+        if not human.can_be_overwhelmed:
+            return False
+
+        human.start_overwhelmed(robot_xy=robot_xy, current_xy=human_xy[idx])
+        self.overwhelmed_triggered_once = True
+        return True
+
     def _step_active_branch(self):
         events = {
             "entered_listen": False,
             "started_listen_wait": False,
             "completed_listen_wait": False,
             "final_listen_ready": False,
+            "overwhelmed_triggered": False,
         }
 
         human_xyz = self._get_human_poses()
@@ -277,6 +335,7 @@ class MuseumEnv(gym.Env):
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
+            self.listen_session_count += 1
             n_humans = len(self.humans)
 
             print(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
@@ -394,9 +453,10 @@ class MuseumEnv(gym.Env):
             }
 
             if self.robot.listen_mode:
-                human.set_mode(HumanMode.LISTENING)
+                if human.mode != HumanMode.OVERWHELMED:
+                    human.set_mode(HumanMode.LISTENING)
             else:
-                if human.mode != HumanMode.DISTRACTED:
+                if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
                     human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
                 if self.follow_humans and human.mode == HumanMode.FOLLOWING:
@@ -494,6 +554,10 @@ class MuseumEnv(gym.Env):
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "human_mode": [h.mode for h in self.humans],
             "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
+            "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
+            "human_overwhelmed_leave_timer": np.array(
+                [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
+            ),
             "human_reached_goal": human_reached_goal,
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
@@ -519,6 +583,7 @@ class MuseumEnv(gym.Env):
                 "started_listen_wait": bool(events["started_listen_wait"]),
                 "completed_listen_wait": bool(events["completed_listen_wait"]),
                 "final_listen_ready": bool(events["final_listen_ready"]),
+                "overwhelmed_triggered": bool(events["overwhelmed_triggered"]),
             },
             "status": {
                 "step_count": int(self.step_count),
@@ -553,6 +618,8 @@ class MuseumEnv(gym.Env):
                 "desired_yaw": snapshot["human_desired_yaw"],
                 "mode": snapshot["human_mode"],
                 "distracted_timer": snapshot["human_distracted_timer"],
+                "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
+                "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
                 "reached_goal_indices": snapshot["human_reached_goal"],
                 "all_reached": bool(snapshot["all_humans_reached"]),
                 "action": {

@@ -6,6 +6,7 @@ class HumanMode:
     FOLLOWING = "following"
     LISTENING = "listening"
     DISTRACTED = "distracted"
+    OVERWHELMED = "overwhelmed"
 
 
 class Human:
@@ -51,10 +52,58 @@ class Human:
         self.distracted_duration = np.random.randint(500, 1500)
         self.distracted_probability = 0.000  # small chance per step
 
+        self.can_be_overwhelmed = False
+        self.overwhelmed_stage = None  # "backoff" | "leave"
+        self.overwhelmed_backoff_dist = 0.3
+        self.overwhelmed_leave_speed = 1.5
+        self.overwhelmed_leave_duration = 1000
+        self.overwhelmed_leave_timer = 0
+        self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
+        self.overwhelmed_robot_ref_xy = None
+        self.overwhelmed_backoff_start_xy = None
+
     def set_mode(self, mode: str):
-        if mode not in (HumanMode.WANDERING, HumanMode.FOLLOWING, HumanMode.LISTENING, HumanMode.DISTRACTED):
+        if mode not in (
+            HumanMode.WANDERING,
+            HumanMode.FOLLOWING,
+            HumanMode.LISTENING,
+            HumanMode.DISTRACTED,
+            HumanMode.OVERWHELMED,
+        ):
             raise ValueError(f"Unknown human mode: {mode}")
         self.mode = mode
+
+    def reset_overwhelmed_state(self):
+        self.overwhelmed_stage = None
+        self.overwhelmed_leave_timer = 0
+        self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
+        self.overwhelmed_robot_ref_xy = None
+        self.overwhelmed_backoff_start_xy = None
+
+    def start_overwhelmed(self, robot_xy, current_xy=None):
+        if not self.can_be_overwhelmed:
+            return
+
+        if current_xy is None:
+            current_xy = np.array(self.current_waypoint, dtype=np.float32)
+        else:
+            current_xy = np.array(current_xy, dtype=np.float32)
+
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        diff = current_xy - robot_xy
+        dist = float(np.linalg.norm(diff))
+        if dist < 1e-6:
+            leave_dir = np.array([1.0, 0.0], dtype=np.float32)
+        else:
+            leave_dir = diff / dist
+
+        self.mode = HumanMode.OVERWHELMED
+        self.overwhelmed_stage = "backoff"
+        self.overwhelmed_leave_timer = 0
+        self.overwhelmed_leave_dir = leave_dir.astype(np.float32)
+        self.overwhelmed_robot_ref_xy = robot_xy
+        self.overwhelmed_backoff_start_xy = current_xy
+        print(f">>> {self.name} became OVERWHELMED!")
 
 
     def set_context(self, **kwargs):
@@ -152,6 +201,9 @@ class Human:
         
         if self.mode == HumanMode.DISTRACTED:
             return self._step_distracted(data, ctx)
+
+        if self.mode == HumanMode.OVERWHELMED:
+            return self._step_overwhelmed(data, ctx)
 
 
         raise ValueError(f"Unknown human mode {self.mode}")
@@ -282,6 +334,71 @@ class Human:
             print(f">>> {self.name} recovered → FOLLOWING")
 
         return action
+
+    def _step_overwhelmed(self, data, ctx):
+        x, y, yaw = self._get_pose(data)
+        pos_xy = np.array([x, y], dtype=np.float32)
+        self.last_v_follow = np.zeros(2, dtype=np.float32)
+        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+        self.last_v_hr = np.zeros(2, dtype=np.float32)
+
+        if self.overwhelmed_stage is None:
+            self.mode = HumanMode.FOLLOWING
+            self.reset_overwhelmed_state()
+            return np.zeros(3, dtype=np.float32)
+
+        leave_dir = np.array(self.overwhelmed_leave_dir, dtype=np.float32)
+        leave_norm = float(np.linalg.norm(leave_dir))
+        if leave_norm < 1e-6:
+            robot_xy = self.overwhelmed_robot_ref_xy
+            if robot_xy is None:
+                robot_xy = np.array(ctx.get("robot_xy", np.array([x - 1.0, y], dtype=np.float32)), dtype=np.float32)
+            diff = pos_xy - robot_xy
+            diff_norm = float(np.linalg.norm(diff))
+            leave_dir = diff / diff_norm if diff_norm > 1e-6 else np.array([1.0, 0.0], dtype=np.float32)
+            self.overwhelmed_leave_dir = leave_dir
+        else:
+            leave_dir = leave_dir / leave_norm
+
+        desired_yaw = np.arctan2(leave_dir[1], leave_dir[0])
+
+        if self.overwhelmed_stage == "backoff":
+            if self.overwhelmed_backoff_start_xy is None:
+                self.overwhelmed_backoff_start_xy = pos_xy.copy()
+
+            backoff_target = (
+                self.overwhelmed_backoff_start_xy
+                + self.overwhelmed_backoff_dist * leave_dir
+            )
+            to_target = backoff_target - pos_xy
+            dist_to_target = float(np.linalg.norm(to_target))
+
+            if dist_to_target < 0.02:
+                self.overwhelmed_stage = "leave"
+                to_target = np.zeros(2, dtype=np.float32)
+                dist_to_target = 0.0
+
+            if dist_to_target > 1e-6:
+                backoff_speed = min(self.overwhelmed_leave_speed, self.max_speed)
+                v_xy = backoff_speed * (to_target / dist_to_target)
+            else:
+                v_xy = np.zeros(2, dtype=np.float32)
+
+            yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+            return np.array([v_xy[0], v_xy[1], 20.0 * yaw_err], dtype=np.float32)
+
+        # Leave stage: keep moving away for a fixed duration.
+        leave_speed = min(self.overwhelmed_leave_speed, self.max_speed)
+        v_xy = leave_speed * leave_dir
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+        self.overwhelmed_leave_timer += 1
+
+        if self.overwhelmed_leave_timer >= self.overwhelmed_leave_duration:
+            self.mode = HumanMode.FOLLOWING
+            self.reset_overwhelmed_state()
+            print(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
+
+        return np.array([v_xy[0], v_xy[1], 20.0 * yaw_err], dtype=np.float32)
 
 
     def _move(self, dx, dy, yaw, data, ctx):
