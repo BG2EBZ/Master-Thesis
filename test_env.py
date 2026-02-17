@@ -19,8 +19,8 @@ DEFAULT_SLEEP_SCALE = 1.0
 # my timestep="0.002" in .xml files, so 500 steps ~ 1 second of sim time 
 DEFAULT_RTF_PRINT_EVERY = 500
 # resolution (in pixels) for the simulation window and the recorded video. 
-DEFAULT_RENDER_WIDTH = 1920
-DEFAULT_RENDER_HEIGHT = 1080
+DEFAULT_RENDER_WIDTH = 640
+DEFAULT_RENDER_HEIGHT = 480
 
 DEFAULT_OFFSAMPLES = 1
 
@@ -124,8 +124,8 @@ def _run_demo_stable(env, args, sim_dt):
             obs, reward, terminated, truncated, info = env.step(None)
             steps_done += 1
 
-            # if steps_done % args.rtf_print_every == 0:
-            #     _print_rtf("demo-stable", steps_done, sim_dt, wall_start)
+            if steps_done % args.rtf_print_every == 0:
+                _print_rtf("demo-stable", steps_done, sim_dt, wall_start)
 
             # Checks if the goal was met or the simulation ended during these steps.
             if _report_step(steps_done - 1, terminated, truncated, info):

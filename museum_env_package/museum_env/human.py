@@ -14,7 +14,7 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed=2.5, waypoint_threshold=0.2):
+    def __init__(self, name, body_name, qpos_idx, max_speed, waypoint_threshold=0.2):
         """
         Args:
             name: Human identifier (e.g., "person1")
@@ -49,7 +49,7 @@ class Human:
 
         self.can_be_distracted = False
         self.distracted_timer = 0
-        self.distracted_duration = np.random.randint(500, 1500)
+        self.distracted_duration = np.random.randint(1000, 1500)
         self.distracted_probability = 0.000  # small chance per step
 
         self.can_be_overwhelmed = False

@@ -66,7 +66,7 @@ class MuseumEnv(gym.Env):
         ]
 
         # Robot agent
-        self.robot = Robot(waypoints=waypoints, v_max=3.0, k_v=20.0, k_yaw=20.0)
+        self.robot = Robot(waypoints=waypoints, v_max=1.5, k_v=20.0, k_yaw=20.0)
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
@@ -80,7 +80,7 @@ class MuseumEnv(gym.Env):
         # Listening formation (fan around robot after it stops)
         self.follow_fan_half_angle = np.deg2rad(85.0)
         self.listen_fan_half_angle = np.deg2rad(75.0)
-        self.listen_fan_radius = 0.8
+        self.listen_fan_radius = 1.0
         self.listen_stand_threshold = 0.2
         self.listen_reached_logged = set()
 
@@ -96,11 +96,11 @@ class MuseumEnv(gym.Env):
 
         # --- Initialize humans ---
         self.humans = [
-            Human("person1", "person1", qpos_idx=3),
-            Human("person2", "person2", qpos_idx=6),
-            Human("person3", "person3", qpos_idx=9),
-            Human("person4", "person4", qpos_idx=12),
-            Human("person5", "person5", qpos_idx=15),
+            Human("person1", "person1", qpos_idx=3, max_speed=1.67),
+            Human("person2", "person2", qpos_idx=6, max_speed=1.67),
+            Human("person3", "person3", qpos_idx=9, max_speed=1.67),
+            Human("person4", "person4", qpos_idx=12, max_speed=1.67),
+            Human("person5", "person5", qpos_idx=15, max_speed=1.67),
         ]
         for human in self.humans:
             human.external_waypoint = False
