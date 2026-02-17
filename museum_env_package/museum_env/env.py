@@ -157,11 +157,7 @@ class MuseumEnv(gym.Env):
 
         # Reset humans
         for human in self.humans:
-            human.step_count = 0
-            human.external_waypoint = False
-            human.current_waypoint = human._random_waypoint()
-            human.set_mode(HumanMode.WANDERING)
-            human.reset_overwhelmed_state()
+            human.reset_episode_state()
 
         obs = self._get_obs()
         info = {}

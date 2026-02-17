@@ -80,6 +80,23 @@ class Human:
         self.overwhelmed_robot_ref_xy = None
         self.overwhelmed_backoff_start_xy = None
 
+    def reset_episode_state(self):
+        """Reset per-episode dynamic state while keeping static config."""
+        self.step_count = 0
+        self.external_waypoint = False
+        self.mode = HumanMode.WANDERING
+        self.context = {}
+        self.current_waypoint = self._random_waypoint()
+
+        self.distracted_timer = 0
+        self.distracted_duration = np.random.randint(1000, 1500)
+
+        self.last_v_follow = np.zeros(2, dtype=np.float32)
+        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+        self.last_v_hr = np.zeros(2, dtype=np.float32)
+
+        self.reset_overwhelmed_state()
+
     def start_overwhelmed(self, robot_xy, current_xy=None):
         if not self.can_be_overwhelmed:
             return
