@@ -84,9 +84,6 @@
                   <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
             </body>
 
-            <!-- Goal site for reference -->
-            <site name="goal_site" pos="10 -12.5 0.05" size="0.08" rgba="1 0 0 1"/>
-
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
             <body name="person1" pos="6 5 0.125">
                   <!-- Planar movement: x, y, yaw -->

@@ -128,7 +128,7 @@ class MuseumEnv(gym.Env):
         return np.array(humans_xyz, dtype=np.float32)
 
     def _get_goal_xy(self):
-        goal_xy = self.data.site("goal_site").xpos[:2]
+        goal_xy = self.robot.get_current_waypoint()
         return float(goal_xy[0]), float(goal_xy[1])
 
     def reset(self, seed=None, options=None):

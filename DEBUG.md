@@ -57,6 +57,7 @@ Info schema (current):
   - yaw, desired_yaw, mode
   - action: vx/vy/yaw_rate
   - final_waypoint_reached
+  - note: goal_xy is the robot's current waypoint, not an XML goal site
 
 - info["humans"]
   - pose_xy, goal_xy

@@ -9,6 +9,8 @@
 - `info["robot"]`
 - `info["humans"]`
 
+`info["robot"]["goal_xy"]` is sourced from `Robot`'s current waypoint (`Robot.get_current_waypoint()`), not from an XML `goal_site`.
+
 Example:
 
 ```python
