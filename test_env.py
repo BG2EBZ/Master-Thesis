@@ -1,6 +1,7 @@
 import argparse
 import inspect
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,11 @@ from pathlib import Path
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
 import museum_env.register_env
+
+try:
+    import glfw
+except ImportError:  # pragma: no cover - optional runtime dependency
+    glfw = None
 
 
 DEFAULT_MAX_STEPS = 30000
@@ -28,6 +34,7 @@ DEFAULT_OFFSAMPLES = 1
 DEFAULT_VIDEO_ROOT = "videos"
 # Starting string for video filenames
 DEFAULT_NAME_PREFIX = "museum_full_run"
+R_KEYCODE_FALLBACKS = (ord("R"), ord("r"))
 
 
 def _positive_int(value):
@@ -103,7 +110,31 @@ def _print_initial_obs_and_goal(env, obs):
         print(f"Initial robot goal_xy: ({gx:.3f}, {gy:.3f})")
 
 
-def _run_demo_stable(env, args, sim_dt):
+def _make_demo_key_callback(reset_event):
+    valid_keycodes = set(R_KEYCODE_FALLBACKS)
+    if glfw is not None and hasattr(glfw, "KEY_R"):
+        valid_keycodes.add(int(glfw.KEY_R))
+
+    def _on_key(keycode):
+        try:
+            if int(keycode) in valid_keycodes:
+                reset_event.set()
+        except (TypeError, ValueError):
+            return
+
+    return _on_key
+
+
+def _handle_requested_reset_if_any(env, reset_event):
+    if reset_event is None or not reset_event.is_set():
+        return False
+    reset_event.clear()
+    obs, _ = env.reset()
+    _print_initial_obs_and_goal(env, obs)
+    return True
+
+
+def _run_demo_stable(env, args, sim_dt, reset_event=None):
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
@@ -123,10 +154,14 @@ def _run_demo_stable(env, args, sim_dt):
         frame_start = time.perf_counter()
         terminated = False
         truncated = False
+        reset_happened = False
         info = {"events": {"final_listen_ready": False}}
 
         for _ in range(steps_per_frame):
             if steps_done >= args.max_steps:
+                break
+            if _handle_requested_reset_if_any(env, reset_event):
+                reset_happened = True
                 break
 
             obs, reward, terminated, truncated, info = env.step(None)
@@ -140,6 +175,8 @@ def _run_demo_stable(env, args, sim_dt):
                 break
 
         env.render()
+        if reset_happened:
+            continue
         
         elapsed = time.perf_counter() - frame_start
         sleep_sec = target_frame_sec - elapsed
@@ -150,7 +187,7 @@ def _run_demo_stable(env, args, sim_dt):
             break
 
 
-def _run_demo_strict(env, args, sim_dt):
+def _run_demo_strict(env, args, sim_dt, reset_event=None):
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
@@ -166,6 +203,12 @@ def _run_demo_strict(env, args, sim_dt):
     lag_steps = 0
 
     for step in range(args.max_steps):
+        if _handle_requested_reset_if_any(env, reset_event):
+            wall_start = time.perf_counter()
+            lag_steps = 0
+            env.render()
+            continue
+
         obs, reward, terminated, truncated, info = env.step(None)
 
         target_tick = wall_start + ((step + 1) * sim_dt) / args.sleep_scale
@@ -253,16 +296,21 @@ def run(args):
         base_env = env.unwrapped
         _configure_base_env(base_env, args)
         sim_dt = float(base_env.timestep)
+        demo_reset_event = None
 
         if args.mode == "train":
             print(f"[train] dt={sim_dt:.6f}, no render, no sleep")
             _run_fast_loop(env, args, sim_dt, tag="train")
             return
 
+        if args.mode == "demo" and hasattr(base_env, "set_viewer_key_callback"):
+            demo_reset_event = threading.Event()
+            base_env.set_viewer_key_callback(_make_demo_key_callback(demo_reset_event))
+
         if args.realtime_policy == "strict":
-            _run_demo_strict(env, args, sim_dt)
+            _run_demo_strict(env, args, sim_dt, reset_event=demo_reset_event)
         else:
-            _run_demo_stable(env, args, sim_dt)
+            _run_demo_stable(env, args, sim_dt, reset_event=demo_reset_event)
     finally:
         if env is not None:
             env.close()

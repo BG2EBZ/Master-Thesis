@@ -70,6 +70,7 @@ class MuseumEnv(gym.Env):
         self.render_mode = render_mode
         self.viewer = None
         self.renderer = None
+        self._viewer_key_callback = None
         self.render_width = 1920
         self.render_height = 1080
 
@@ -184,6 +185,11 @@ class MuseumEnv(gym.Env):
             return
         self.viewer.opt.label = self._label_scene_option.label
         self.viewer.opt.sitegroup[:] = self._label_scene_option.sitegroup
+
+    def set_viewer_key_callback(self, callback):
+        if callback is not None and not callable(callback):
+            raise ValueError("viewer key callback must be callable or None.")
+        self._viewer_key_callback = callback
 
     @staticmethod
     def _default_events():
@@ -764,7 +770,11 @@ class MuseumEnv(gym.Env):
     def render(self):
         if self.render_mode == "human":
             if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+                self.viewer = mujoco.viewer.launch_passive(
+                    self.model,
+                    self.data,
+                    key_callback=self._viewer_key_callback,
+                )
             self._apply_label_options_to_viewer()
             self.viewer.sync()
             return None
