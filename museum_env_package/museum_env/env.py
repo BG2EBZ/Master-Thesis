@@ -35,7 +35,7 @@ FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
 HUMAN1_DISTRACTED_PROB = 0.0005
-HUMAN3_IMPATIENT_PROB = 0.0005
+HUMAN5_IMPATIENT_PROB = 0.0005
 HUMAN_LABEL_SITE_GROUP = 2
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 
@@ -150,9 +150,10 @@ class MuseumEnv(gym.Env):
         self._configure_human_following_variants()
 
         self.humans[1].can_be_overwhelmed = True
-        self.humans[2].impatient_duration = 800
-        self.humans[2].impatient_speed_multiplier = 1.3
-        self.humans[2].impatient_front_offset = 0.8
+        if len(self.humans) > 4:
+            self.humans[4].impatient_duration = 2000
+            self.humans[4].impatient_speed_multiplier = 1.5
+            self.humans[4].impatient_front_offset = 1.0
 
         # Cache MuJoCo body ids (static across episodes).
         self.robot_body_id = self.model.body("robot").id
@@ -168,8 +169,8 @@ class MuseumEnv(gym.Env):
             human.configure_following_variant(None, 0.0)
         if len(self.humans) > 0:
             self.humans[0].configure_following_variant(HumanMode.DISTRACTED, HUMAN1_DISTRACTED_PROB)
-        if len(self.humans) > 2:
-            self.humans[2].configure_following_variant(HumanMode.IMPATIENT, HUMAN3_IMPATIENT_PROB)
+        if len(self.humans) > 4:
+            self.humans[4].configure_following_variant(HumanMode.IMPATIENT, HUMAN5_IMPATIENT_PROB)
 
     def _build_label_scene_option(self):
         opt = mujoco.MjvOption()
