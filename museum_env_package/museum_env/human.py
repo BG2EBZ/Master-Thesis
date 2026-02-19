@@ -110,13 +110,10 @@ class Human:
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
 
-        self.can_be_distracted = False
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(1000, 1500)
-        self.distracted_probability = 0.000  # small chance per step
 
         self.can_be_impatient = False
-        self.impatient_probability = 0.0005
         self.impatient_duration = 800
         self.impatient_timer = 0
         self.impatient_cooldown = 800
@@ -124,6 +121,8 @@ class Human:
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
+        self.following_variant_mode = None
+        self.following_variant_probability = 0.0
 
         self.can_be_overwhelmed = False
         self.overwhelmed_stage = None  # "backoff" | "leave"
@@ -182,6 +181,17 @@ class Human:
     def set_event_logging(self, enabled: bool):
         self.enable_event_logs = bool(enabled)
         logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
+
+    def configure_following_variant(self, variant_mode, probability):
+        allowed = (None, HumanMode.DISTRACTED, HumanMode.IMPATIENT)
+        if variant_mode not in allowed:
+            raise ValueError(f"Invalid following variant mode: {variant_mode}")
+        p = float(probability)
+        if p < 0.0 or p > 1.0:
+            raise ValueError(f"following variant probability must be in [0, 1], got {probability}")
+        self.following_variant_mode = variant_mode
+        self.following_variant_probability = p
+        self.can_be_impatient = variant_mode == HumanMode.IMPATIENT
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -262,25 +272,12 @@ class Human:
             self.impatient_cooldown_timer = max(self.impatient_cooldown_timer, int(self.impatient_cooldown))
 
     def _maybe_trigger_following_variant(self):
-        p_i = self.impatient_probability if (self.can_be_impatient and self.impatient_cooldown_timer == 0) else 0.0
-        p_d = self.distracted_probability if self.can_be_distracted else 0.0
-
-        if p_i <= 0.0 and p_d <= 0.0:
+        if self.following_variant_mode is None or self.following_variant_probability <= 0.0:
             return None
 
-        total_raw = p_i + p_d
-        if total_raw <= 0.0:
+        if self.following_variant_mode == HumanMode.IMPATIENT and self.impatient_cooldown_timer > 0:
             return None
-
-        total = min(1.0, total_raw)
-        u = np.random.rand()
-        if u >= total:
-            return None
-
-        p_i_scaled = total * (p_i / total_raw)
-        if u < p_i_scaled:
-            return HumanMode.IMPATIENT
-        return HumanMode.DISTRACTED
+        return self.following_variant_mode if np.random.rand() < self.following_variant_probability else None
 
 
     def set_context(self, **kwargs):

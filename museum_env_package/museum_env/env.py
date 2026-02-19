@@ -34,6 +34,8 @@ HUMAN_MAX_SPEED_DEFAULT = 1.67
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
+HUMAN1_DISTRACTED_PROB = 0.0005
+HUMAN3_IMPATIENT_PROB = 0.0005
 
 
 class MuseumEnv(gym.Env):
@@ -143,11 +145,9 @@ class MuseumEnv(gym.Env):
             human.set_mode(HumanMode.WANDERING)
             human.set_event_logging(self.enable_event_logs)
 
-        self.humans[0].can_be_distracted = True
-        self.humans[0].distracted_probability = 0.0005
+        self._configure_human_following_variants()
+
         self.humans[1].can_be_overwhelmed = True
-        self.humans[2].can_be_impatient = True
-        self.humans[2].impatient_probability = 0.0005
         self.humans[2].impatient_duration = 800
         self.humans[2].impatient_cooldown = 800
         self.humans[2].impatient_speed_multiplier = 1.3
@@ -160,6 +160,14 @@ class MuseumEnv(gym.Env):
     def _log_event(self, msg: str):
         if self.enable_event_logs:
             logger.info(msg)
+
+    def _configure_human_following_variants(self):
+        for human in self.humans:
+            human.configure_following_variant(None, 0.0)
+        if len(self.humans) > 0:
+            self.humans[0].configure_following_variant(HumanMode.DISTRACTED, HUMAN1_DISTRACTED_PROB)
+        if len(self.humans) > 2:
+            self.humans[2].configure_following_variant(HumanMode.IMPATIENT, HUMAN3_IMPATIENT_PROB)
 
     @staticmethod
     def _default_events():
@@ -253,6 +261,7 @@ class MuseumEnv(gym.Env):
         # Reset humans
         for human in self.humans:
             human.reset_episode_state()
+        self._configure_human_following_variants()
 
         obs = self._get_obs()
         info = {}
