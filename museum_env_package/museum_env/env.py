@@ -149,7 +149,6 @@ class MuseumEnv(gym.Env):
 
         self.humans[1].can_be_overwhelmed = True
         self.humans[2].impatient_duration = 800
-        self.humans[2].impatient_cooldown = 800
         self.humans[2].impatient_speed_multiplier = 1.3
         self.humans[2].impatient_front_offset = 0.8
 
@@ -652,9 +651,6 @@ class MuseumEnv(gym.Env):
                 [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
             ),
             "human_impatient_timer": np.array([h.impatient_timer for h in self.humans], dtype=np.int32),
-            "human_impatient_cooldown_timer": np.array(
-                [h.impatient_cooldown_timer for h in self.humans], dtype=np.int32
-            ),
             "human_reached_goal": human_reached_goal,
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
@@ -727,7 +723,6 @@ class MuseumEnv(gym.Env):
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
                 "impatient_timer": snapshot["human_impatient_timer"],
-                "impatient_cooldown_timer": snapshot["human_impatient_cooldown_timer"],
                 "reached_goal_indices": snapshot["human_reached_goal"],
                 "all_reached": bool(snapshot["all_humans_reached"]),
                 "action": {

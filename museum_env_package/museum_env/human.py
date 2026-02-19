@@ -116,8 +116,6 @@ class Human:
         self.can_be_impatient = False
         self.impatient_duration = 800
         self.impatient_timer = 0
-        self.impatient_cooldown = 800
-        self.impatient_cooldown_timer = 0
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
@@ -146,7 +144,7 @@ class Human:
             raise ValueError(f"Unknown human mode: {mode}")
 
         if self.mode == HumanMode.IMPATIENT and mode != HumanMode.IMPATIENT:
-            self._stop_impatient(apply_cooldown=True)
+            self._stop_impatient()
         self.mode = mode
 
     def reset_overwhelmed_state(self):
@@ -168,7 +166,6 @@ class Human:
         self.distracted_duration = np.random.randint(1000, 1500)
 
         self.impatient_timer = 0
-        self.impatient_cooldown_timer = 0
         self.impatient_original_max_speed = None
 
         self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -240,8 +237,6 @@ class Human:
     def start_impatient(self, robot_pose=None, index=None, n_humans=None):
         if not self.can_be_impatient:
             return False
-        if self.impatient_cooldown_timer > 0:
-            return False
         if self.mode == HumanMode.IMPATIENT:
             return True
 
@@ -261,22 +256,18 @@ class Human:
         self._log_event(f">>> {self.name} became IMPATIENT!")
         return True
 
-    def _stop_impatient(self, apply_cooldown):
+    def _stop_impatient(self):
         if self.impatient_original_max_speed is not None:
             self.max_speed = float(self.impatient_original_max_speed)
         else:
             self.max_speed = float(self.base_max_speed)
         self.impatient_original_max_speed = None
         self.impatient_timer = 0
-        if apply_cooldown:
-            self.impatient_cooldown_timer = max(self.impatient_cooldown_timer, int(self.impatient_cooldown))
 
     def _maybe_trigger_following_variant(self):
         if self.following_variant_mode is None or self.following_variant_probability <= 0.0:
             return None
 
-        if self.following_variant_mode == HumanMode.IMPATIENT and self.impatient_cooldown_timer > 0:
-            return None
         return self.following_variant_mode if np.random.rand() < self.following_variant_probability else None
 
 
@@ -349,9 +340,6 @@ class Human:
         if self.x_dof_idx is None:
             self.x_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_x").id]
             self.y_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_y").id]
-
-        if self.impatient_cooldown_timer > 0 and self.mode != HumanMode.IMPATIENT:
-            self.impatient_cooldown_timer -= 1
 
         if self.mode == HumanMode.WANDERING:
             return self._step_wandering(data, ctx)
