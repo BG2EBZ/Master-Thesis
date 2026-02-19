@@ -95,6 +95,14 @@ def _configure_base_env(base_env, args):
     base_env.metadata["render_fps"] = args.render_fps
 
 
+def _print_initial_obs_and_goal(env, obs):
+    print("Initial obs:", obs)
+    base_env = env.unwrapped
+    if hasattr(base_env, "_get_goal_xy"):
+        gx, gy = base_env._get_goal_xy()
+        print(f"Initial robot goal_xy: ({gx:.3f}, {gy:.3f})")
+
+
 def _run_demo_stable(env, args, sim_dt):
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
@@ -102,7 +110,7 @@ def _run_demo_stable(env, args, sim_dt):
     target_frame_sec = (steps_per_frame * sim_dt) / args.sleep_scale
 
     obs, _ = env.reset()
-    print("Initial obs:", obs)
+    _print_initial_obs_and_goal(env, obs)
     print(
         f"[demo-stable] dt={sim_dt:.6f}s, render_fps={render_fps}, "
         f"steps_per_frame={steps_per_frame}, target_frame={target_frame_sec:.6f}s"
@@ -148,7 +156,7 @@ def _run_demo_strict(env, args, sim_dt):
     steps_per_frame = max(1, round(sim_hz / render_fps))
 
     obs, _ = env.reset()
-    print("Initial obs:", obs)
+    _print_initial_obs_and_goal(env, obs)
     print(
         f"[demo-strict] dt={sim_dt:.6f}s, render_fps={render_fps}, "
         f"steps_per_frame={steps_per_frame}, sleep_scale={args.sleep_scale:.3f}"
@@ -185,7 +193,7 @@ def _run_demo_strict(env, args, sim_dt):
 
 def _run_fast_loop(env, args, sim_dt, tag):
     obs, _ = env.reset()
-    print("Initial obs:", obs)
+    _print_initial_obs_and_goal(env, obs)
 
     wall_start = time.perf_counter()
     for step in range(args.max_steps):
