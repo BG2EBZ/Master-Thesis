@@ -36,6 +36,8 @@ HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
 HUMAN1_DISTRACTED_PROB = 0.0005
 HUMAN3_IMPATIENT_PROB = 0.0005
+HUMAN_LABEL_SITE_GROUP = 2
+HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 
 
 class MuseumEnv(gym.Env):
@@ -155,6 +157,7 @@ class MuseumEnv(gym.Env):
         # Cache MuJoCo body ids (static across episodes).
         self.robot_body_id = self.model.body("robot").id
         self.human_body_ids = [self.model.body(human.body_name).id for human in self.humans]
+        self._label_scene_option = self._build_label_scene_option()
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -167,6 +170,19 @@ class MuseumEnv(gym.Env):
             self.humans[0].configure_following_variant(HumanMode.DISTRACTED, HUMAN1_DISTRACTED_PROB)
         if len(self.humans) > 2:
             self.humans[2].configure_following_variant(HumanMode.IMPATIENT, HUMAN3_IMPATIENT_PROB)
+
+    def _build_label_scene_option(self):
+        opt = mujoco.MjvOption()
+        opt.label = HUMAN_LABEL_MODE
+        opt.sitegroup[:] = 0
+        opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
+        return opt
+
+    def _apply_label_options_to_viewer(self):
+        if self.viewer is None:
+            return
+        self.viewer.opt.label = self._label_scene_option.label
+        self.viewer.opt.sitegroup[:] = self._label_scene_option.sitegroup
 
     @staticmethod
     def _default_events():
@@ -748,6 +764,7 @@ class MuseumEnv(gym.Env):
         if self.render_mode == "human":
             if self.viewer is None:
                 self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self._apply_label_options_to_viewer()
             self.viewer.sync()
             return None
         if self.render_mode == "rgb_array":
@@ -765,7 +782,7 @@ class MuseumEnv(gym.Env):
                 except ValueError:
                     # Last-resort fallback to MuJoCo defaults when XML/driver limits are tighter.
                     self.renderer = mujoco.Renderer(self.model, height=480, width=640)
-            self.renderer.update_scene(self.data)
+            self.renderer.update_scene(self.data, scene_option=self._label_scene_option)
             return self.renderer.render()
         return None
 

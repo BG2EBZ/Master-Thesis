@@ -15,7 +15,7 @@ DEFAULT_WAYPOINT_THRESHOLD = 0.2
 DEFAULT_FAN_HALF_ANGLE = np.pi / 6
 DEFAULT_LISTEN_RADIUS = 1.2
 DEFAULT_FOLLOW_RADIUS = 1.0
-DEFAULT_IMPATIENT_FRONT_OFFSET = 0.8
+DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
 HUMAN_YAW_RATE_GAIN = 20.0
 HUMAN_ROTATION_STOP_DEG = 3.0
 DISTRACTED_SPEED_SCALE = 0.5
@@ -345,6 +345,7 @@ class Human:
             return self._step_wandering(data, ctx)
 
         if self.mode == HumanMode.FOLLOWING:
+            # may trigger a variant behavior (e.g., distracted or impatient)
             variant = self._maybe_trigger_following_variant()
             if variant == HumanMode.IMPATIENT:
                 robot_xy = self.context.robot_xy if self.context.robot_xy is not None else ctx.get("robot_xy")

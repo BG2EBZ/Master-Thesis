@@ -81,10 +81,10 @@ def _print_rtf(tag, steps_done, sim_dt, wall_start, extra=""):
     sim_time = steps_done * sim_dt
     rtf = sim_time / real_time
     suffix = f", {extra}" if extra else ""
-    print(
-        f"[{tag}] steps={steps_done}, sim_time={sim_time:.3f}s, "
-        f"real_time={real_time:.3f}s, rtf={rtf:.3f}{suffix}"
-    )
+    # print(
+    #     f"[{tag}] steps={steps_done}, sim_time={sim_time:.3f}s, "
+    #     f"real_time={real_time:.3f}s, rtf={rtf:.3f}{suffix}"
+    # )
 
 
 def _configure_base_env(base_env, args):
