@@ -10,7 +10,7 @@ Human behaviors:
 
   overwhelmed (step back or leaving when listen)
 
-  impatient (move faster than robot)
+  impatient (only person3: move faster than robot and go to the robot's front side while following)
 
   attact (hit the robot)
 
@@ -64,6 +64,7 @@ Info schema (current):
   - actual_yaw, desired_yaw
   - mode, distracted_timer
   - overwhelmed_stage, overwhelmed_leave_timer
+  - impatient_timer, impatient_cooldown_timer
   - reached_goal_indices, all_reached
   - action: vx/vy/yaw_rate
   - velocity_components: follow/repulsion/human_robot/total

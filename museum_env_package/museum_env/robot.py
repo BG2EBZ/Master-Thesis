@@ -1,5 +1,10 @@
 import numpy as np
 
+ROBOT_WAYPOINT_REACHED_DIST = 0.2
+ROBOT_YAW_RATE_LIMIT = 50.0
+ROBOT_TURN_DONE_YAW_ERR = 0.05
+ROBOT_TURN_GAIN = 50.0
+
 
 class RobotMode:
     MOVE = "move"
@@ -59,7 +64,7 @@ class Robot:
         dist = float(np.hypot(dx, dy) + 1e-8)
 
         # Switch to next waypoint if close enough
-        if dist < 0.2 and self.current_waypoint_idx < len(self.waypoints) - 1:
+        if dist < ROBOT_WAYPOINT_REACHED_DIST and self.current_waypoint_idx < len(self.waypoints) - 1:
             
             # don't leave waypoint 0 before the first listening is done.
             if not (self.current_waypoint_idx == 0 and not self.listen_done):
@@ -79,7 +84,7 @@ class Robot:
         # move in heading direction (as your original)
         vx = v * float(np.cos(yaw))
         vy = v * float(np.sin(yaw))
-        yaw_rate = float(np.clip(self.k_yaw * yaw_err, -50.0, 50.0))
+        yaw_rate = float(np.clip(self.k_yaw * yaw_err, -ROBOT_YAW_RATE_LIMIT, ROBOT_YAW_RATE_LIMIT))
 
         action = np.array([vx, vy, yaw_rate], dtype=np.float32)
         return action, dist, desired_yaw, float(yaw)
@@ -106,12 +111,13 @@ class Robot:
         yaw_err = self._wrap_to_pi(self.turn_target_yaw - ryaw)
 
         action = np.zeros(3, dtype=np.float32)
-        if abs(yaw_err) < 0.05:
+        if abs(yaw_err) < ROBOT_TURN_DONE_YAW_ERR:
             action[2] = 0.0
             self.turn_done = True
         else:
-            k_turn = 50.0
-            action[2] = float(np.clip(k_turn * yaw_err, -50.0, 50.0))
+            action[2] = float(
+                np.clip(ROBOT_TURN_GAIN * yaw_err, -ROBOT_YAW_RATE_LIMIT, ROBOT_YAW_RATE_LIMIT)
+            )
 
         return action
 
@@ -137,13 +143,13 @@ class Robot:
         self.mode = RobotMode.MOVE
 
         # Stop after reaching the display and turn to face people
-        if dist < 0.2:
+        if dist < ROBOT_WAYPOINT_REACHED_DIST:
             self.mode = RobotMode.STOP
             turn_action = self._turn_to_crowd_action(robot_pose, human_xyz)
             base_action[:] = turn_action
 
         # Enter listening mode after turning is done at the display
-        if dist < 0.2 and self.turn_done and not self.listen_mode:
+        if dist < ROBOT_WAYPOINT_REACHED_DIST and self.turn_done and not self.listen_mode:
             self.listen_mode = True
             enter_listen = True
 
@@ -171,4 +177,7 @@ class Robot:
         self.mode = RobotMode.MOVE
 
     def is_final_reached(self, dist: float):
-        return (dist < 0.2 and self.current_waypoint_idx == len(self.waypoints) - 1)
+        return (
+            dist < ROBOT_WAYPOINT_REACHED_DIST
+            and self.current_waypoint_idx == len(self.waypoints) - 1
+        )

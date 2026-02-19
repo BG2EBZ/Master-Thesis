@@ -1,12 +1,39 @@
+import logging
+from importlib import resources
+
 import gymnasium as gym
-from gymnasium import spaces
-import numpy as np
 import mujoco
 import mujoco.viewer
-from importlib import resources
+import numpy as np
+from gymnasium import spaces
 
 from .human import Human, HumanMode
 from .robot import Robot
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+logger.propagate = False
+
+ACTION_LOW = -1.0
+ACTION_HIGH = 1.0
+MAX_STEPS_DEFAULT = 100000
+HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
+SOCIAL_DISTANCE_DEFAULT = 0.8
+REPULSION_GAIN_DEFAULT = 6.0
+FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
+LISTEN_FAN_HALF_ANGLE_DEG = 75.0
+LISTEN_FAN_RADIUS_DEFAULT = 1.0
+LISTEN_STAND_THRESHOLD_DEFAULT = 0.2
+LISTEN_WAIT_STEPS_DEFAULT = 1000
+OVERWHELMED_TARGET_IDX_DEFAULT = 1
+OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT = 200
+HUMAN_MAX_SPEED_DEFAULT = 1.67
+FOLLOW_RADIUS_DEFAULT = 1.0
+HUMAN_GOAL_THRESHOLD = 0.2
+DIST_EPS = 1e-8
 
 
 class MuseumEnv(gym.Env):
@@ -16,8 +43,17 @@ class MuseumEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(self, xml_path=None, render_mode=None):
+    def __init__(
+        self,
+        xml_path=None,
+        render_mode=None,
+        enable_event_logs: bool = True,
+        strict_action_validation: bool = True,
+    ):
         super().__init__()
+        self.enable_event_logs = bool(enable_event_logs)
+        self.strict_action_validation = bool(strict_action_validation)
+        logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
 
         if xml_path is None:
             with resources.path("museum_env.assets", "museum_scene.xml") as xml_file:
@@ -36,8 +72,8 @@ class MuseumEnv(gym.Env):
         # --- Action space ---
         self.nu = self.model.nu
         self.action_space = spaces.Box(
-            low=-1.0,
-            high=1.0,
+            low=ACTION_LOW,
+            high=ACTION_HIGH,
             shape=(self.nu,),
             dtype=np.float32,
         )
@@ -51,7 +87,7 @@ class MuseumEnv(gym.Env):
         )
 
         self.timestep = self.model.opt.timestep
-        self.max_steps = 100000
+        self.max_steps = MAX_STEPS_DEFAULT
         self.step_count = 0
 
         # Waypoints: room A -> corridor -> room B
@@ -71,56 +107,115 @@ class MuseumEnv(gym.Env):
         # Human follow switch (start with random walking)
         self.follow_humans = False
         self.robot_start_xy = None
-        self.human_follow_distance = 1.0
+        self.human_follow_distance = HUMAN_FOLLOW_DISTANCE_DEFAULT
 
         # Social distance (repulsion) parameters
-        self.social_distance = 0.8
-        self.repulsion_gain = 6.0
+        self.social_distance = SOCIAL_DISTANCE_DEFAULT
+        self.repulsion_gain = REPULSION_GAIN_DEFAULT
 
         # Listening formation (fan around robot after it stops)
-        self.follow_fan_half_angle = np.deg2rad(85.0)
-        self.listen_fan_half_angle = np.deg2rad(75.0)
-        self.listen_fan_radius = 1.0
-        self.listen_stand_threshold = 0.2
+        self.follow_fan_half_angle = np.deg2rad(FOLLOW_FAN_HALF_ANGLE_DEG)
+        self.listen_fan_half_angle = np.deg2rad(LISTEN_FAN_HALF_ANGLE_DEG)
+        self.listen_fan_radius = LISTEN_FAN_RADIUS_DEFAULT
+        self.listen_stand_threshold = LISTEN_STAND_THRESHOLD_DEFAULT
         self.listen_reached_logged = set()
 
         # Listening wait window
-        self.listen_wait_steps = 400
+        self.listen_wait_steps = LISTEN_WAIT_STEPS_DEFAULT
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self.listen_session_count = 0
         self.overwhelmed_triggered_once = False
-        self.overwhelmed_target_idx = 1  # person2
-        self.overwhelmed_trigger_wait_step = 200
+        self.overwhelmed_target_idx = OVERWHELMED_TARGET_IDX_DEFAULT  # person2
+        self.overwhelmed_trigger_wait_step = OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT
 
         # --- Initialize humans ---
         self.humans = [
-            Human("person1", "person1", qpos_idx=3, max_speed=1.67),
-            Human("person2", "person2", qpos_idx=6, max_speed=1.67),
-            Human("person3", "person3", qpos_idx=9, max_speed=1.67),
-            Human("person4", "person4", qpos_idx=12, max_speed=1.67),
-            Human("person5", "person5", qpos_idx=15, max_speed=1.67),
+            Human("person1", "person1", qpos_idx=3, max_speed=HUMAN_MAX_SPEED_DEFAULT),
+            Human("person2", "person2", qpos_idx=6, max_speed=HUMAN_MAX_SPEED_DEFAULT),
+            Human("person3", "person3", qpos_idx=9, max_speed=HUMAN_MAX_SPEED_DEFAULT),
+            Human("person4", "person4", qpos_idx=12, max_speed=HUMAN_MAX_SPEED_DEFAULT),
+            Human("person5", "person5", qpos_idx=15, max_speed=HUMAN_MAX_SPEED_DEFAULT),
         ]
         for human in self.humans:
             human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
+            human.set_event_logging(self.enable_event_logs)
 
         self.humans[0].can_be_distracted = True
         self.humans[0].distracted_probability = 0.0005
         self.humans[1].can_be_overwhelmed = True
+        self.humans[2].can_be_impatient = True
+        self.humans[2].impatient_probability = 0.0005
+        self.humans[2].impatient_duration = 800
+        self.humans[2].impatient_cooldown = 800
+        self.humans[2].impatient_speed_multiplier = 1.3
+        self.humans[2].impatient_front_offset = 0.8
+
+        # Cache MuJoCo body ids (static across episodes).
+        self.robot_body_id = self.model.body("robot").id
+        self.human_body_ids = [self.model.body(human.body_name).id for human in self.humans]
+
+    def _log_event(self, msg: str):
+        if self.enable_event_logs:
+            logger.info(msg)
+
+    @staticmethod
+    def _default_events():
+        return {
+            "entered_listen": False,
+            "started_listen_wait": False,
+            "completed_listen_wait": False,
+            "final_listen_ready": False,
+            "overwhelmed_triggered": False,
+        }
+
+    def _validate_external_action(self, action):
+        if action is None:
+            return False
+        if not self.strict_action_validation:
+            return True
+        if not isinstance(action, np.ndarray):
+            raise ValueError("Expected action to be a numpy.ndarray when provided.")
+        if action.shape != (self.nu,):
+            raise ValueError(f"Expected action shape {(self.nu,)}, got {action.shape}.")
+        if not np.issubdtype(action.dtype, np.number):
+            raise ValueError(f"Expected numeric action dtype, got {action.dtype}.")
+        if not np.all(np.isfinite(action)):
+            raise ValueError("Action contains NaN or Inf.")
+        return True
+
+    def _finalize_step_output(
+        self,
+        snapshot,
+        events,
+        dist,
+        terminated,
+        external_action_received,
+        external_action_used=False,
+    ):
+        obs = self._get_obs()
+        reward = -float(dist)
+        truncated = self.step_count >= self.max_steps
+        info = self._build_info(
+            snapshot=snapshot,
+            events=events,
+            truncated=truncated,
+            external_action_received=external_action_received,
+            external_action_used=external_action_used,
+        )
+        return obs, reward, terminated, truncated, info
 
     def _get_robot_pose(self):
-        robot_body_id = self.model.body("robot").id
-        x = float(self.data.xpos[robot_body_id, 0])
-        y = float(self.data.xpos[robot_body_id, 1])
+        x = float(self.data.xpos[self.robot_body_id, 0])
+        y = float(self.data.xpos[self.robot_body_id, 1])
         yaw = float(self.data.qpos[2])
         return x, y, yaw
 
     def _get_human_poses(self):
         humans_xyz = []
-        for human in self.humans:
-            human_body_id = self.model.body(human.body_name).id
+        for human, human_body_id in zip(self.humans, self.human_body_ids):
             x = float(self.data.xpos[human_body_id, 0])
             y = float(self.data.xpos[human_body_id, 1])
             yaw = float(self.data.qpos[human.qpos_idx + 2])
@@ -167,21 +262,16 @@ class MuseumEnv(gym.Env):
         """
         Robot rule-based navigation (via Robot class) + human walking.
         """
+        external_action_received = self._validate_external_action(action)
         self.step_count += 1
 
         if self.listen_wait_active:
-            return self._step_waiting_branch()
+            return self._step_waiting_branch(external_action_received=external_action_received)
 
-        return self._step_active_branch()
+        return self._step_active_branch(external_action_received=external_action_received)
 
-    def _step_waiting_branch(self):
-        events = {
-            "entered_listen": False,
-            "started_listen_wait": False,
-            "completed_listen_wait": False,
-            "final_listen_ready": False,
-            "overwhelmed_triggered": False,
-        }
+    def _step_waiting_branch(self, external_action_received=False):
+        events = self._default_events()
 
         rx, ry, ryaw = self._get_robot_pose()
         human_xyz = self._get_human_poses()
@@ -222,7 +312,7 @@ class MuseumEnv(gym.Env):
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
 
         wx, wy = self.robot.get_current_waypoint()
-        dist = float(np.hypot(wx - rx, wy - ry) + 1e-8)
+        dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
         desired_yaw = float(np.arctan2(wy - ry, wx - rx))
         actual_yaw = float(ryaw)
 
@@ -236,12 +326,12 @@ class MuseumEnv(gym.Env):
             events["completed_listen_wait"] = True
             if self.listen_wait_is_final:
                 events["final_listen_ready"] = True
-                print(">>> Listening wait complete at final display.")
+                self._log_event(">>> Listening wait complete at final display.")
             else:
                 self.robot.on_listening_complete()
                 self.follow_humans = False
                 self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
-                print(">>> Listening wait complete. Resume MOVE to Room B.")
+                self._log_event(">>> Listening wait complete. Resume MOVE to Room B.")
 
             self.listen_wait_active = False
             self.listen_wait_counter = 0
@@ -270,13 +360,14 @@ class MuseumEnv(gym.Env):
             all_humans_reached=all_humans_reached,
         )
 
-        obs = self._get_obs()
-        reward = -dist
-        terminated = events["final_listen_ready"]
-        truncated = self.step_count >= self.max_steps
-
-        info = self._build_info(snapshot, events, truncated)
-        return obs, reward, terminated, truncated, info
+        return self._finalize_step_output(
+            snapshot=snapshot,
+            events=events,
+            dist=dist,
+            terminated=events["final_listen_ready"],
+            external_action_received=external_action_received,
+            external_action_used=False,
+        )
 
     def _maybe_trigger_overwhelmed_in_wait(self, robot_xy, human_xy):
         # Trigger on the 200th waiting step of the first listen session only once per episode.
@@ -299,14 +390,8 @@ class MuseumEnv(gym.Env):
         self.overwhelmed_triggered_once = True
         return True
 
-    def _step_active_branch(self):
-        events = {
-            "entered_listen": False,
-            "started_listen_wait": False,
-            "completed_listen_wait": False,
-            "final_listen_ready": False,
-            "overwhelmed_triggered": False,
-        }
+    def _step_active_branch(self, external_action_received=False):
+        events = self._default_events()
 
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
@@ -334,7 +419,7 @@ class MuseumEnv(gym.Env):
             self.listen_session_count += 1
             n_humans = len(self.humans)
 
-            print(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
+            self._log_event(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
             for i, human in enumerate(self.humans):
                 human.assign_listen_target(
                     index=i,
@@ -344,7 +429,7 @@ class MuseumEnv(gym.Env):
                     fan_half_angle=self.listen_fan_half_angle,
                 )
                 gx, gy = human.current_waypoint
-                print(f"    person{i+1} listen_goal=({gx:.3f}, {gy:.3f})")
+                self._log_event(f"    person{i+1} listen_goal=({gx:.3f}, {gy:.3f})")
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -405,13 +490,14 @@ class MuseumEnv(gym.Env):
             all_humans_reached=all_humans_reached,
         )
 
-        obs = self._get_obs()
-        reward = -float(dist)
-        terminated = False
-        truncated = self.step_count >= self.max_steps
-
-        info = self._build_info(snapshot, events, truncated)
-        return obs, reward, terminated, truncated, info
+        return self._finalize_step_output(
+            snapshot=snapshot,
+            events=events,
+            dist=float(dist),
+            terminated=False,
+            external_action_received=external_action_received,
+            external_action_used=False,
+        )
 
     def _compute_social_repulsion(self, human_xy):
         if not human_xy.size:
@@ -436,7 +522,7 @@ class MuseumEnv(gym.Env):
     def _update_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
         human_actions = []
         n_humans = len(self.humans)
-        follow_radius = 1.0
+        follow_radius = FOLLOW_RADIUS_DEFAULT
 
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
@@ -452,16 +538,19 @@ class MuseumEnv(gym.Env):
                 if human.mode != HumanMode.OVERWHELMED:
                     human.set_mode(HumanMode.LISTENING)
             else:
-                if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
+                if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
                     human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
-                if self.follow_humans and human.mode == HumanMode.FOLLOWING:
+                if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
                     human.set_context(
                         index=i,
                         n_humans=n_humans,
                         robot_pose=(rx, ry, ryaw),
                         follow_radius=follow_radius,
                         fan_half_angle=self.follow_fan_half_angle,
+                        impatient_front_offset=human.impatient_front_offset,
+                        robot_xy=np.array([rx, ry], dtype=np.float32),
+                        robot_yaw=ryaw,
                     )
 
             human_action = human.step(self.model, self.data, ctx)
@@ -475,15 +564,14 @@ class MuseumEnv(gym.Env):
         return np.zeros((0, 3), dtype=np.float32)
 
     def _check_human_goals(self, human_xy, human_goals):
-        human_goal_threshold = 0.2
         human_reached_goal = []
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
             dist_to_goal = float(np.linalg.norm(pos - goal))
-            if dist_to_goal < human_goal_threshold:
+            if dist_to_goal < HUMAN_GOAL_THRESHOLD:
                 human_reached_goal.append(i)
                 if self.robot.listen_mode and i not in self.listen_reached_logged:
                     self.listen_reached_logged.add(i)
-                    print(f">>> person{i+1} reached their goal at step {self.step_count}!")
+                    self._log_event(f">>> person{i+1} reached their goal at step {self.step_count}!")
         return human_reached_goal
 
     def _handle_listen_transitions(self, final_waypoint_reached, all_humans_reached):
@@ -500,7 +588,7 @@ class MuseumEnv(gym.Env):
             self.listen_wait_counter = 0
             self.listen_wait_is_final = bool(final_waypoint_reached)
             events["started_listen_wait"] = True
-            print(f">>> Listening targets reached. Start wait for {self.listen_wait_steps} steps.")
+            self._log_event(f">>> Listening targets reached. Start wait for {self.listen_wait_steps} steps.")
 
         return events
 
@@ -554,12 +642,23 @@ class MuseumEnv(gym.Env):
             "human_overwhelmed_leave_timer": np.array(
                 [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
             ),
+            "human_impatient_timer": np.array([h.impatient_timer for h in self.humans], dtype=np.int32),
+            "human_impatient_cooldown_timer": np.array(
+                [h.impatient_cooldown_timer for h in self.humans], dtype=np.int32
+            ),
             "human_reached_goal": human_reached_goal,
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
         }
 
-    def _build_info(self, snapshot, events, truncated):
+    def _build_info(
+        self,
+        snapshot,
+        events,
+        truncated,
+        external_action_received=False,
+        external_action_used=False,
+    ):
         listen_wait_remaining = (
             max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
         )
@@ -591,6 +690,8 @@ class MuseumEnv(gym.Env):
                     "remaining": int(listen_wait_remaining),
                     "is_final": bool(self.listen_wait_is_final),
                 },
+                "external_action_received": bool(external_action_received),
+                "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,
             },
             "robot": {
@@ -616,6 +717,8 @@ class MuseumEnv(gym.Env):
                 "distracted_timer": snapshot["human_distracted_timer"],
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
+                "impatient_timer": snapshot["human_impatient_timer"],
+                "impatient_cooldown_timer": snapshot["human_impatient_cooldown_timer"],
                 "reached_goal_indices": snapshot["human_reached_goal"],
                 "all_reached": bool(snapshot["all_humans_reached"]),
                 "action": {

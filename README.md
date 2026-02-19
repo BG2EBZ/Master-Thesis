@@ -11,6 +11,10 @@
 
 `info["robot"]["goal_xy"]` is sourced from `Robot`'s current waypoint (`Robot.get_current_waypoint()`), not from an XML `goal_site`.
 
+`info["humans"]` includes impatient debugging fields:
+- `info["humans"]["impatient_timer"]`
+- `info["humans"]["impatient_cooldown_timer"]`
+
 Example:
 
 ```python

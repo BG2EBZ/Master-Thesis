@@ -1,4 +1,57 @@
+import logging
+from dataclasses import dataclass, fields
+from typing import Optional, Tuple
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+logger.propagate = False
+
+DEFAULT_WAYPOINT_THRESHOLD = 0.2
+DEFAULT_FAN_HALF_ANGLE = np.pi / 6
+DEFAULT_LISTEN_RADIUS = 1.2
+DEFAULT_FOLLOW_RADIUS = 1.0
+DEFAULT_IMPATIENT_FRONT_OFFSET = 0.8
+HUMAN_YAW_RATE_GAIN = 20.0
+HUMAN_ROTATION_STOP_DEG = 3.0
+DISTRACTED_SPEED_SCALE = 0.5
+DISTRACTED_YAW_NOISE_MIN = -2.0
+DISTRACTED_YAW_NOISE_MAX = 2.0
+OVERWHELMED_FALLBACK_X_OFFSET = 1.0
+OVERWHELMED_STAGE_SWITCH_DIST = 0.02
+HR_DISTANCE_MIN = 1.0
+HR_DISTANCE_MAX = 2.0
+HR_REPULSION_GAIN = 2.0
+HR_ATTRACTION_GAIN = 0.8
+NORM_EPS = 1e-6
+
+@dataclass
+class HumanContext:
+    index: int = 0
+    n_humans: int = 1
+    robot_pose: Optional[Tuple[float, float, float]] = None
+    fan_half_angle: float = DEFAULT_FAN_HALF_ANGLE
+    follow_radius: float = DEFAULT_FOLLOW_RADIUS
+    listen_radius: float = DEFAULT_LISTEN_RADIUS
+    impatient_front_offset: Optional[float] = None
+    robot_xy: Optional[np.ndarray] = None
+    robot_yaw: Optional[float] = None
+
+    @classmethod
+    def from_kwargs(cls, **kwargs):
+        allowed = {f.name for f in fields(cls)}
+        unknown = set(kwargs.keys()) - allowed
+        if unknown:
+            unknown_str = ", ".join(sorted(unknown))
+            raise ValueError(f"Unknown context field(s): {unknown_str}")
+        ctx = cls()
+        for key, value in kwargs.items():
+            setattr(ctx, key, value)
+        return ctx
 
 
 class HumanMode:
@@ -7,6 +60,7 @@ class HumanMode:
     LISTENING = "listening"
     DISTRACTED = "distracted"
     OVERWHELMED = "overwhelmed"
+    IMPATIENT = "impatient"
 
 
 class Human:
@@ -14,7 +68,14 @@ class Human:
     Minimal human behavior: random walking in the museum.
     """
     
-    def __init__(self, name, body_name, qpos_idx, max_speed, waypoint_threshold=0.2):
+    def __init__(
+        self,
+        name,
+        body_name,
+        qpos_idx,
+        max_speed,
+        waypoint_threshold=DEFAULT_WAYPOINT_THRESHOLD,
+    ):
         """
         Args:
             name: Human identifier (e.g., "person1")
@@ -26,13 +87,15 @@ class Human:
         self.name = name
         self.body_name = body_name
         self.qpos_idx = qpos_idx  # qpos[qpos_idx:qpos_idx+3] = [x, y, yaw]
-        self.max_speed = max_speed
+        self.max_speed = float(max_speed)
+        self.base_max_speed = float(max_speed)
         self.waypoint_threshold = waypoint_threshold
         # If True, current_waypoint is managed externally (e.g., follow robot)
         self.external_waypoint = False
         self.mode = HumanMode.WANDERING
 
-        self.context = {}
+        self.context = HumanContext()
+        self.enable_event_logs = True
         
         # Store body_id (will be set when we have access to model)
         self.body_id = None
@@ -52,6 +115,16 @@ class Human:
         self.distracted_duration = np.random.randint(1000, 1500)
         self.distracted_probability = 0.000  # small chance per step
 
+        self.can_be_impatient = False
+        self.impatient_probability = 0.0005
+        self.impatient_duration = 800
+        self.impatient_timer = 0
+        self.impatient_cooldown = 800
+        self.impatient_cooldown_timer = 0
+        self.impatient_speed_multiplier = 1.3
+        self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
+        self.impatient_original_max_speed = None
+
         self.can_be_overwhelmed = False
         self.overwhelmed_stage = None  # "backoff" | "leave"
         self.overwhelmed_backoff_dist = 0.3
@@ -69,8 +142,12 @@ class Human:
             HumanMode.LISTENING,
             HumanMode.DISTRACTED,
             HumanMode.OVERWHELMED,
+            HumanMode.IMPATIENT,
         ):
             raise ValueError(f"Unknown human mode: {mode}")
+
+        if self.mode == HumanMode.IMPATIENT and mode != HumanMode.IMPATIENT:
+            self._stop_impatient(apply_cooldown=True)
         self.mode = mode
 
     def reset_overwhelmed_state(self):
@@ -85,17 +162,45 @@ class Human:
         self.step_count = 0
         self.external_waypoint = False
         self.mode = HumanMode.WANDERING
-        self.context = {}
+        self.context = HumanContext()
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(1000, 1500)
 
+        self.impatient_timer = 0
+        self.impatient_cooldown_timer = 0
+        self.impatient_original_max_speed = None
+
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
         self.last_v_hr = np.zeros(2, dtype=np.float32)
 
+        self.max_speed = float(self.base_max_speed)
         self.reset_overwhelmed_state()
+
+    def set_event_logging(self, enabled: bool):
+        self.enable_event_logs = bool(enabled)
+        logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
+
+    def _log_event(self, msg: str):
+        if self.enable_event_logs:
+            logger.info(msg)
+
+    @staticmethod
+    def _compute_fan_relative_angle(index, n_humans, fan_half_angle):
+        if n_humans > 1:
+            return (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+        return 0.0
+
+    @staticmethod
+    def _compute_fan_target(robot_pose, radius, relative_angle, base_angle_offset):
+        rx, ry, ryaw = robot_pose
+        angle = ryaw + base_angle_offset + relative_angle
+        return np.array(
+            [rx + radius * np.cos(angle), ry + radius * np.sin(angle)],
+            dtype=np.float32,
+        )
 
     def start_overwhelmed(self, robot_xy, current_xy=None):
         if not self.can_be_overwhelmed:
@@ -109,7 +214,7 @@ class Human:
         robot_xy = np.array(robot_xy, dtype=np.float32)
         diff = current_xy - robot_xy
         dist = float(np.linalg.norm(diff))
-        if dist < 1e-6:
+        if dist < NORM_EPS:
             leave_dir = np.array([1.0, 0.0], dtype=np.float32)
         else:
             leave_dir = diff / dist
@@ -120,7 +225,62 @@ class Human:
         self.overwhelmed_leave_dir = leave_dir.astype(np.float32)
         self.overwhelmed_robot_ref_xy = robot_xy
         self.overwhelmed_backoff_start_xy = current_xy
-        print(f">>> {self.name} became OVERWHELMED!")
+        self._log_event(f">>> {self.name} became OVERWHELMED!")
+
+    def start_impatient(self, robot_pose=None, index=None, n_humans=None):
+        if not self.can_be_impatient:
+            return False
+        if self.impatient_cooldown_timer > 0:
+            return False
+        if self.mode == HumanMode.IMPATIENT:
+            return True
+
+        if robot_pose is not None:
+            self.context.robot_pose = robot_pose
+        if index is not None:
+            self.context.index = index
+        if n_humans is not None:
+            self.context.n_humans = n_humans
+        if self.context.impatient_front_offset is None:
+            self.context.impatient_front_offset = self.impatient_front_offset
+
+        self.impatient_original_max_speed = float(self.max_speed)
+        self.max_speed = float(self.impatient_original_max_speed * self.impatient_speed_multiplier)
+        self.impatient_timer = 0
+        self.mode = HumanMode.IMPATIENT
+        self._log_event(f">>> {self.name} became IMPATIENT!")
+        return True
+
+    def _stop_impatient(self, apply_cooldown):
+        if self.impatient_original_max_speed is not None:
+            self.max_speed = float(self.impatient_original_max_speed)
+        else:
+            self.max_speed = float(self.base_max_speed)
+        self.impatient_original_max_speed = None
+        self.impatient_timer = 0
+        if apply_cooldown:
+            self.impatient_cooldown_timer = max(self.impatient_cooldown_timer, int(self.impatient_cooldown))
+
+    def _maybe_trigger_following_variant(self):
+        p_i = self.impatient_probability if (self.can_be_impatient and self.impatient_cooldown_timer == 0) else 0.0
+        p_d = self.distracted_probability if self.can_be_distracted else 0.0
+
+        if p_i <= 0.0 and p_d <= 0.0:
+            return None
+
+        total_raw = p_i + p_d
+        if total_raw <= 0.0:
+            return None
+
+        total = min(1.0, total_raw)
+        u = np.random.rand()
+        if u >= total:
+            return None
+
+        p_i_scaled = total * (p_i / total_raw)
+        if u < p_i_scaled:
+            return HumanMode.IMPATIENT
+        return HumanMode.DISTRACTED
 
 
     def set_context(self, **kwargs):
@@ -132,54 +292,48 @@ class Human:
             n_humans=3
             robot_pose=(rx, ry, ryaw)
         """
-        self.context = kwargs
+        self.context = HumanContext.from_kwargs(**kwargs)
 
     def _assign_target_from_context(self):
         """
         Decide where to stand based on social context.
         """
-        if not self.context:
-            return
-
-        index = self.context.get("index", 0)
-        n_humans = self.context.get("n_humans", 1)
-        robot_pose = self.context.get("robot_pose", None)
+        index = self.context.index
+        n_humans = self.context.n_humans
+        robot_pose = self.context.robot_pose
 
         if robot_pose is None:
             return
 
-        rx, ry, ryaw = robot_pose
-
+        fan_half_angle = self.context.fan_half_angle
+        relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
         if self.mode == HumanMode.LISTENING:
-            fan_half_angle = self.context.get("fan_half_angle", np.pi / 6)
-            radius = self.context.get("listen_radius", 1.2)
-
-            if n_humans > 1:
-                rel = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
-            else:
-                rel = 0.0
-
-            angle = ryaw + rel
-            self.current_waypoint = np.array(
-                [rx + radius * np.cos(angle),
-                ry + radius * np.sin(angle)],
-                dtype=np.float32
+            radius = self.context.listen_radius
+            self.current_waypoint = self._compute_fan_target(
+                robot_pose=robot_pose,
+                radius=radius,
+                relative_angle=relative_angle,
+                base_angle_offset=0.0,
             )
 
         elif self.mode == HumanMode.FOLLOWING:
-            fan_half_angle = self.context.get("fan_half_angle", np.pi / 6)
-            radius = self.context.get("follow_radius", 1.0)
+            radius = self.context.follow_radius
+            self.current_waypoint = self._compute_fan_target(
+                robot_pose=robot_pose,
+                radius=radius,
+                relative_angle=relative_angle,
+                base_angle_offset=np.pi,
+            )
 
-            if n_humans > 1:
-                rel = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
-            else:
-                rel = 0.0
-
-            angle = ryaw + np.pi + rel
-            self.current_waypoint = np.array(
-                [rx + radius * np.cos(angle),
-                ry + radius * np.sin(angle)],
-                dtype=np.float32
+        elif self.mode == HumanMode.IMPATIENT:
+            radius = self.context.impatient_front_offset
+            if radius is None:
+                radius = self.impatient_front_offset
+            self.current_waypoint = self._compute_fan_target(
+                robot_pose=robot_pose,
+                radius=radius,
+                relative_angle=relative_angle,
+                base_angle_offset=0.0,
             )
     
     def step(self, model, data, ctx):
@@ -199,15 +353,33 @@ class Human:
             self.x_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_x").id]
             self.y_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_y").id]
 
+        if self.impatient_cooldown_timer > 0 and self.mode != HumanMode.IMPATIENT:
+            self.impatient_cooldown_timer -= 1
+
         if self.mode == HumanMode.WANDERING:
             return self._step_wandering(data, ctx)
 
         if self.mode == HumanMode.FOLLOWING:
-            # probabilistic switch to distracted
-            if self.can_be_distracted and np.random.rand() < self.distracted_probability:
+            variant = self._maybe_trigger_following_variant()
+            if variant == HumanMode.IMPATIENT:
+                robot_xy = self.context.robot_xy if self.context.robot_xy is not None else ctx.get("robot_xy")
+                robot_yaw = self.context.robot_yaw if self.context.robot_yaw is not None else ctx.get("robot_yaw", 0.0)
+                if robot_xy is not None:
+                    robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(robot_yaw))
+                else:
+                    robot_pose = None
+                started = self.start_impatient(
+                    robot_pose=robot_pose,
+                    index=self.context.index,
+                    n_humans=self.context.n_humans,
+                )
+                if started:
+                    return self._step_impatient(data, ctx)
+
+            if variant == HumanMode.DISTRACTED:
                 self.mode = HumanMode.DISTRACTED
                 self.distracted_timer = 0
-                print(f">>> {self.name} became DISTRACTED!")
+                self._log_event(f">>> {self.name} became DISTRACTED!")
                 return self._step_distracted(data, ctx)
 
             self._assign_target_from_context()
@@ -222,6 +394,9 @@ class Human:
         if self.mode == HumanMode.OVERWHELMED:
             return self._step_overwhelmed(data, ctx)
 
+        if self.mode == HumanMode.IMPATIENT:
+            return self._step_impatient(data, ctx)
+
 
         raise ValueError(f"Unknown human mode {self.mode}")
         
@@ -229,43 +404,25 @@ class Human:
         """
         Compute and assign target for FOLLOWING behavior.
         """
-        rx, ry, ryaw = robot_pose
-
-        if n_humans > 1:
-            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
-        else:
-            relative_angle = 0.0
-
-        angle = ryaw + np.pi + relative_angle
-        offset = np.array(
-            [
-                follow_radius * np.cos(angle),
-                follow_radius * np.sin(angle),
-            ],
-            dtype=np.float32,
+        relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
+        self.current_waypoint = self._compute_fan_target(
+            robot_pose=robot_pose,
+            radius=follow_radius,
+            relative_angle=relative_angle,
+            base_angle_offset=np.pi,
         )
-
-        self.current_waypoint = np.array([rx, ry], dtype=np.float32) + offset
 
 
     def assign_listen_target(self, index, n_humans, robot_pose, listen_radius, fan_half_angle):
         """
         Compute and assign target for LISTEN behavior.
         """
-        rx, ry, ryaw = robot_pose
-
-        if n_humans > 1:
-            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
-        else:
-            relative_angle = 0.0
-
-        angle = ryaw + relative_angle
-        self.current_waypoint = np.array(
-            [
-                rx + listen_radius * np.cos(angle),
-                ry + listen_radius * np.sin(angle),
-            ],
-            dtype=np.float32,
+        relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
+        self.current_waypoint = self._compute_fan_target(
+            robot_pose=robot_pose,
+            radius=listen_radius,
+            relative_angle=relative_angle,
+            base_angle_offset=0.0,
         )
 
 
@@ -295,7 +452,7 @@ class Human:
         dy = self.current_waypoint[1] - y
         dist = np.hypot(dx, dy)
 
-        stand_threshold = ctx.get("stand_threshold")
+        stand_threshold = ctx.get("stand_threshold", self.waypoint_threshold)
 
         if dist >= stand_threshold:
             return self._move(dx, dy, yaw, data, ctx)
@@ -308,10 +465,10 @@ class Human:
         desired_yaw = np.arctan2(ry - y, rx - x)
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
-        if abs(yaw_err) < np.deg2rad(3.0):
+        if abs(yaw_err) < np.deg2rad(HUMAN_ROTATION_STOP_DEG):
             return np.zeros(3, dtype=np.float32)
         
-        return np.array([0.0, 0.0, 20.0 * yaw_err])
+        return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err])
     
     def _step_distracted(self, data, ctx):
         x, y, yaw = self._get_pose(data)
@@ -339,16 +496,16 @@ class Human:
         action = self._step_wandering(data, distracted_ctx)
 
         # Slow down movement to make distraction visible
-        action[0:2] *= 0.5  # reduce translation speed
+        action[0:2] *= DISTRACTED_SPEED_SCALE  # reduce translation speed
 
         # Optional: slight random yaw noise for realism
-        action[2] += np.random.uniform(-2.0, 2.0)
+        action[2] += np.random.uniform(DISTRACTED_YAW_NOISE_MIN, DISTRACTED_YAW_NOISE_MAX)
 
         # Recover after duration
         if self.distracted_timer > self.distracted_duration:
             self.mode = HumanMode.FOLLOWING
             self.distracted_timer = 0
-            print(f">>> {self.name} recovered → FOLLOWING")
+            self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
         return action
 
@@ -366,13 +523,16 @@ class Human:
 
         leave_dir = np.array(self.overwhelmed_leave_dir, dtype=np.float32)
         leave_norm = float(np.linalg.norm(leave_dir))
-        if leave_norm < 1e-6:
+        if leave_norm < NORM_EPS:
             robot_xy = self.overwhelmed_robot_ref_xy
             if robot_xy is None:
-                robot_xy = np.array(ctx.get("robot_xy", np.array([x - 1.0, y], dtype=np.float32)), dtype=np.float32)
+                robot_xy = np.array(
+                    ctx.get("robot_xy", np.array([x - OVERWHELMED_FALLBACK_X_OFFSET, y], dtype=np.float32)),
+                    dtype=np.float32,
+                )
             diff = pos_xy - robot_xy
             diff_norm = float(np.linalg.norm(diff))
-            leave_dir = diff / diff_norm if diff_norm > 1e-6 else np.array([1.0, 0.0], dtype=np.float32)
+            leave_dir = diff / diff_norm if diff_norm > NORM_EPS else np.array([1.0, 0.0], dtype=np.float32)
             self.overwhelmed_leave_dir = leave_dir
         else:
             leave_dir = leave_dir / leave_norm
@@ -390,19 +550,19 @@ class Human:
             to_target = backoff_target - pos_xy
             dist_to_target = float(np.linalg.norm(to_target))
 
-            if dist_to_target < 0.02:
+            if dist_to_target < OVERWHELMED_STAGE_SWITCH_DIST:
                 self.overwhelmed_stage = "leave"
                 to_target = np.zeros(2, dtype=np.float32)
                 dist_to_target = 0.0
 
-            if dist_to_target > 1e-6:
+            if dist_to_target > NORM_EPS:
                 backoff_speed = min(self.overwhelmed_leave_speed, self.max_speed)
                 v_xy = backoff_speed * (to_target / dist_to_target)
             else:
                 v_xy = np.zeros(2, dtype=np.float32)
 
             yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-            return np.array([v_xy[0], v_xy[1], 20.0 * yaw_err], dtype=np.float32)
+            return np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
 
         # Leave stage: keep moving away for a fixed duration.
         leave_speed = min(self.overwhelmed_leave_speed, self.max_speed)
@@ -413,9 +573,20 @@ class Human:
         if self.overwhelmed_leave_timer >= self.overwhelmed_leave_duration:
             self.mode = HumanMode.FOLLOWING
             self.reset_overwhelmed_state()
-            print(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
+            self._log_event(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
 
-        return np.array([v_xy[0], v_xy[1], 20.0 * yaw_err], dtype=np.float32)
+        return np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+
+    def _step_impatient(self, data, ctx):
+        self.impatient_timer += 1
+        self._assign_target_from_context()
+        action = self._step_following(data, ctx)
+
+        if self.impatient_timer >= self.impatient_duration:
+            self.set_mode(HumanMode.FOLLOWING)
+            self._log_event(f">>> {self.name} recovered from IMPATIENT -> FOLLOWING")
+
+        return action
 
 
     def _move(self, dx, dy, yaw, data, ctx):
@@ -429,25 +600,20 @@ class Human:
             hx, hy, _ = self._get_pose(data)
 
             diff_hr = np.array([hx, hy], dtype=np.float32) - robot_xy
-            dist_hr = np.linalg.norm(diff_hr) + 1e-6
+            dist_hr = np.linalg.norm(diff_hr) + NORM_EPS
             dir_hr = diff_hr / dist_hr
 
             # preferred human–robot distance (meters)
-            d_min = 1.0   # too close → repulsion
-            d_max = 2.0   # too far → attraction
-
-            if dist_hr < d_min:
+            if dist_hr < HR_DISTANCE_MIN:
                 # too close → repulsion (slow down / move away)
-                k_rep_hr = 2.0
-                v_hr = k_rep_hr * (d_min - dist_hr) * dir_hr
+                v_hr = HR_REPULSION_GAIN * (HR_DISTANCE_MIN - dist_hr) * dir_hr
 
-            elif dist_hr > d_max:
+            elif dist_hr > HR_DISTANCE_MAX:
                 # too far → attraction (move towards robot)
-                k_att_hr = 0.8
-                v_hr = -k_att_hr * (dist_hr - d_max) * dir_hr
+                v_hr = -HR_ATTRACTION_GAIN * (dist_hr - HR_DISTANCE_MAX) * dir_hr
 
         dist = np.hypot(dx, dy)
-        if dist > 1e-6:
+        if dist > NORM_EPS:
             v_follow = self.max_speed * np.array([dx, dy]) / dist
         else:
             v_follow = np.zeros(2)
@@ -464,7 +630,7 @@ class Human:
         if speed > self.max_speed:
             v_total = v_total / speed * self.max_speed
 
-        desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > 1e-6 else yaw
+        desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > NORM_EPS else yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
         # if abs(yaw_err) > np.deg2rad(5):
@@ -473,7 +639,7 @@ class Human:
         #     # data.qvel[self.y_dof_idx] = 0.0
         #     return np.array([0.0, 0.0, 20.0 * yaw_err])
 
-        return np.array([v_total[0], v_total[1], 20.0 * yaw_err])
+        return np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err])
     
     # -------------------------
     # Helpers
