@@ -4,11 +4,14 @@ ROBOT_WAYPOINT_REACHED_DIST = 0.2
 ROBOT_YAW_RATE_LIMIT = 50.0
 ROBOT_TURN_DONE_YAW_ERR = 0.05
 ROBOT_TURN_GAIN = 50.0
+ROBOT_CALLBACK_TURN_DONE_YAW_ERR = ROBOT_TURN_DONE_YAW_ERR
+ROBOT_CALLBACK_TURN_GAIN = ROBOT_TURN_GAIN
 
 
 class RobotMode:
     MOVE = "move"
     STOP = "stop"
+    CALLBACK = "callback"
 
 
 class Robot:
@@ -34,6 +37,11 @@ class Robot:
         self.turn_target_yaw = None
         self.turn_done = False
         self.mode = RobotMode.MOVE
+        self.callback_active = False
+        self.callback_target_idx = None
+        self.callback_target_xy = None
+        self.callback_hold_steps_remaining = 0
+        self.callback_turn_done = False
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
@@ -46,9 +54,26 @@ class Robot:
         self.turn_target_yaw = None
         self.turn_done = False
         self.mode = RobotMode.MOVE
+        self._reset_callback_state()
+
+    def _reset_callback_state(self):
+        self.callback_active = False
+        self.callback_target_idx = None
+        self.callback_target_xy = None
+        self.callback_hold_steps_remaining = 0
+        self.callback_turn_done = False
 
     def get_current_waypoint(self):
         return self.waypoints[self.current_waypoint_idx]
+
+    def _compute_waypoint_metrics(self, robot_pose):
+        x, y, yaw = robot_pose
+        wx, wy = self.waypoints[self.current_waypoint_idx]
+        dx = wx - x
+        dy = wy - y
+        dist = float(np.hypot(dx, dy) + 1e-8)
+        desired_yaw = float(np.arctan2(dy, dx))
+        return dist, desired_yaw, float(yaw)
 
     def _waypoint_action(self, robot_pose):
         """
@@ -121,7 +146,48 @@ class Robot:
 
         return action
 
-    def step(self, robot_pose, human_xyz):
+    def _start_callback(self, target_idx, target_xy, hold_steps):
+        self.callback_active = True
+        self.callback_target_idx = int(target_idx)
+        self.callback_target_xy = np.array(target_xy, dtype=np.float32)
+        self.callback_hold_steps_remaining = max(1, int(hold_steps))
+        self.callback_turn_done = False
+        self.mode = RobotMode.CALLBACK
+
+    def _finish_callback(self):
+        self._reset_callback_state()
+        self.mode = RobotMode.MOVE
+
+    def _callback_action(self, robot_pose):
+        rx, ry, ryaw = robot_pose
+        action = np.zeros(3, dtype=np.float32)
+        if self.callback_target_xy is None:
+            self._finish_callback()
+            return action
+
+        desired_yaw = float(np.arctan2(self.callback_target_xy[1] - ry, self.callback_target_xy[0] - rx))
+        yaw_err = self._wrap_to_pi(desired_yaw - ryaw)
+        if not self.callback_turn_done:
+            if abs(yaw_err) >= ROBOT_CALLBACK_TURN_DONE_YAW_ERR:
+                action[2] = float(
+                    np.clip(
+                        ROBOT_CALLBACK_TURN_GAIN * yaw_err,
+                        -ROBOT_YAW_RATE_LIMIT,
+                        ROBOT_YAW_RATE_LIMIT,
+                    )
+                )
+                return action
+            self.callback_turn_done = True
+
+        if self.callback_hold_steps_remaining > 0:
+            self.callback_hold_steps_remaining -= 1
+
+        if self.callback_hold_steps_remaining <= 0:
+            self._finish_callback()
+
+        return action
+
+    def step(self, robot_pose, human_xyz, callback_request=None):
         """
         Main robot decision step.
         Returns a dict so env can stay clean.
@@ -136,6 +202,29 @@ class Robot:
               "enter_listen": bool
             }
         """
+        if (
+            (not self.callback_active)
+            and callback_request is not None
+            and (not self.listen_mode)
+        ):
+            self._start_callback(
+                target_idx=callback_request["target_idx"],
+                target_xy=callback_request["target_xy"],
+                hold_steps=callback_request["hold_steps"],
+            )
+
+        if self.callback_active:
+            dist, desired_yaw, actual_yaw = self._compute_waypoint_metrics(robot_pose)
+            callback_action = self._callback_action(robot_pose)
+            return {
+                "action": callback_action,
+                "dist": float(dist),
+                "desired_yaw": float(desired_yaw),
+                "actual_yaw": float(actual_yaw),
+                "mode": RobotMode.CALLBACK,
+                "enter_listen": False,
+            }
+
         # base waypoint action
         base_action, dist, desired_yaw, actual_yaw = self._waypoint_action(robot_pose)
 
@@ -175,6 +264,7 @@ class Robot:
         self.current_waypoint_idx = 1
         self.listen_done = True
         self.mode = RobotMode.MOVE
+        self._reset_callback_state()
 
     def is_final_reached(self, dist: float):
         return (

@@ -8,7 +8,7 @@ import numpy as np
 from gymnasium import spaces
 
 from .human import Human, HumanMode
-from .robot import Robot
+from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotMode
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -42,6 +42,9 @@ HUMAN1_DISTRACTED_PROB = 0.0005
 HUMAN5_IMPATIENT_PROB = 0.0005
 HUMAN_LABEL_SITE_GROUP = 2
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
+CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
+CALLBACK_HOLD_SECONDS = 1.0
+CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
 
 
 class MuseumEnv(gym.Env):
@@ -142,6 +145,8 @@ class MuseumEnv(gym.Env):
         self.attack_trigger_wait_step = ATTACK_TRIGGER_WAIT_STEP_DEFAULT
         self.attack_triggered_once = False
         self.attack_hit_once = False
+        self.callback_target_whitelist = set(CALLBACK_TARGET_WHITELIST_DEFAULT)
+        self.callback_triggered_for_current_distracted = []
 
         # --- Initialize humans ---
         self.humans = [
@@ -155,6 +160,7 @@ class MuseumEnv(gym.Env):
             human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
             human.set_event_logging(self.enable_event_logs)
+        self.callback_triggered_for_current_distracted = [False] * len(self.humans)
 
         self._configure_human_following_variants()
 
@@ -213,6 +219,8 @@ class MuseumEnv(gym.Env):
             "overwhelmed_triggered": False,
             "attack_triggered": False,
             "attack_hit": False,
+            "callback_triggered": False,
+            "callback_completed": False,
         }
 
     def _validate_external_action(self, action):
@@ -270,6 +278,43 @@ class MuseumEnv(gym.Env):
         goal_xy = self.robot.get_current_waypoint()
         return float(goal_xy[0]), float(goal_xy[1])
 
+    def _is_robot_in_move_stage(self, robot_pose):
+        if self.robot.listen_mode or self.listen_wait_active or self.robot.callback_active:
+            return False
+        rx, ry, _ = robot_pose
+        wx, wy = self.robot.get_current_waypoint()
+        dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
+        return dist >= ROBOT_WAYPOINT_REACHED_DIST
+
+    def _refresh_callback_rearm_flags(self):
+        for idx, human in enumerate(self.humans):
+            if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
+                self.callback_triggered_for_current_distracted[idx] = False
+
+    def _build_callback_request(self, human_xy, robot_pose):
+        if not self._is_robot_in_move_stage(robot_pose):
+            return None
+        hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
+        for idx in sorted(self.callback_target_whitelist):
+            if idx < 0 or idx >= len(self.humans):
+                continue
+            human = self.humans[idx]
+            if human.mode != HumanMode.DISTRACTED:
+                continue
+            if human.distracted_timer < CALLBACK_DISTRACTED_TRIGGER_STEPS:
+                continue
+            if idx < len(self.callback_triggered_for_current_distracted):
+                if self.callback_triggered_for_current_distracted[idx]:
+                    continue
+            if idx >= human_xy.shape[0]:
+                continue
+            return {
+                "target_idx": int(idx),
+                "target_xy": np.array(human_xy[idx], dtype=np.float32),
+                "hold_steps": int(hold_steps),
+            }
+        return None
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -295,6 +340,7 @@ class MuseumEnv(gym.Env):
         self.overwhelmed_triggered_once = False
         self.attack_triggered_once = False
         self.attack_hit_once = False
+        self.callback_triggered_for_current_distracted = [False] * len(self.humans)
 
         # Reset humans
         for human in self.humans:
@@ -494,7 +540,14 @@ class MuseumEnv(gym.Env):
 
         # --- Robot decision ---
         robot_pose = self._get_robot_pose()
-        robot_out = self.robot.step(robot_pose=robot_pose, human_xyz=human_xyz)
+        self._refresh_callback_rearm_flags()
+        callback_request = self._build_callback_request(human_xy=human_xy, robot_pose=robot_pose)
+        callback_active_before_step = bool(self.robot.callback_active)
+        robot_out = self.robot.step(
+            robot_pose=robot_pose,
+            human_xyz=human_xyz,
+            callback_request=callback_request,
+        )
 
         rb_action = robot_out["action"]
         dist = robot_out["dist"]
@@ -503,6 +556,15 @@ class MuseumEnv(gym.Env):
         robot_mode = robot_out["mode"]
         enter_listen = robot_out["enter_listen"]
         events["entered_listen"] = bool(enter_listen)
+        if callback_request is not None and (not callback_active_before_step) and robot_mode == RobotMode.CALLBACK:
+            events["callback_triggered"] = True
+            target_idx = int(callback_request["target_idx"])
+            if 0 <= target_idx < len(self.callback_triggered_for_current_distracted):
+                self.callback_triggered_for_current_distracted[target_idx] = True
+                self._log_event(f">>> Robot CALLBACK triggered for person{target_idx + 1}.")
+        if callback_active_before_step and (not self.robot.callback_active):
+            events["callback_completed"] = True
+            self._log_event(">>> Robot CALLBACK completed.")
 
         # If robot just entered listen, assign listen targets
         if enter_listen:
@@ -773,6 +835,8 @@ class MuseumEnv(gym.Env):
                 "overwhelmed_triggered": bool(events["overwhelmed_triggered"]),
                 "attack_triggered": bool(events["attack_triggered"]),
                 "attack_hit": bool(events["attack_hit"]),
+                "callback_triggered": bool(events["callback_triggered"]),
+                "callback_completed": bool(events["callback_completed"]),
             },
             "status": {
                 "step_count": int(self.step_count),
@@ -784,6 +848,13 @@ class MuseumEnv(gym.Env):
                     "remaining": int(listen_wait_remaining),
                     "is_final": bool(self.listen_wait_is_final),
                 },
+                "callback_active": bool(self.robot.callback_active),
+                "callback_target_idx": (
+                    int(self.robot.callback_target_idx)
+                    if self.robot.callback_target_idx is not None
+                    else None
+                ),
+                "callback_hold_remaining": int(self.robot.callback_hold_steps_remaining),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     glfw = None
 
 
-DEFAULT_MAX_STEPS = 30000
+DEFAULT_MAX_STEPS = 300000
 DEFAULT_RENDER_FPS = 60
 DEFAULT_VIDEO_FPS = 500
 

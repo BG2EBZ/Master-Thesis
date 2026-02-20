@@ -488,7 +488,7 @@ class Human:
         - Recover automatically after duration
         """
 
-        # Increment internal timer
+        # Increment internal timer (also used by env callback trigger logic).
         self.distracted_timer += 1
 
         # On first distracted step → choose a new random waypoint
