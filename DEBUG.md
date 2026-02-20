@@ -1,40 +1,34 @@
 Human behaviors:
 
-  following (walking towards the robot)
-
-  wandering (walking randomly)
-
-  listening (go to target position then stand in front of the robot listening robot explanation a display)
-
-  distracted (when humans are following the robot, someone may fall behind)
-
-  overwhelmed (step back or leaving when listen)
-
-  impatient (only person3: move faster than robot and go to the robot's front side while following)
-
-  attact (hit the robot)
-
-  Add more behaviors before learning
+- Following (walking towards to the robot)
+- Wandering (walking randomly)
+- Listening (stopping at target position and attending
+to robot's explanation of display)
+- Distracted (falling behind the group while
+following)
+- Overwhelmed (stepping back or leaving the area
+when experiencing sensory/information overload in
+listening stage)
+- Impatient (moving faster than the robot)
+- Attack (hitting the robot)
+- And more potential behaviors to be added before
+learning phase
 
 
 
 Robot behaviors:
 
-  Move (To next display)
-
-  Stop (Explain this display)
-
-  Slow (Reduce speed)
-
-  Speed up (increase speed)
-
-  Call back (Robot stops and turns to the lagging person)
-
-  Move back
-
-  Wait (stop waiting people)
-
-  Add more behaviors before learning
+- Move (proceed to next display/destination)
+- Stop (explain current display)
+- Slow down (reduce speed)
+- Speed up (increase speed)
+- Call back (robot stops and turns toward lagging
+person)
+- Move back (Step back and keep a greater social
+distance to humans)
+- Wait (stop and wait for people)
+- And more potential behaviors to be added before
+learning phase
 
 
 Info schema (current):

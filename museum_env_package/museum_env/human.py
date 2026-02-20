@@ -28,6 +28,8 @@ HR_DISTANCE_MAX = 2.0
 HR_REPULSION_GAIN = 6.0
 HR_ATTRACTION_GAIN = 0.8
 NORM_EPS = 1e-6
+ATTACK_DEFAULT_SPEED = 1.0
+ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 
 @dataclass
 class HumanContext:
@@ -61,6 +63,7 @@ class HumanMode:
     DISTRACTED = "distracted"
     OVERWHELMED = "overwhelmed"
     IMPATIENT = "impatient"
+    ATTACK = "attack"
 
 
 class Human:
@@ -132,6 +135,11 @@ class Human:
         self.overwhelmed_robot_ref_xy = None
         self.overwhelmed_backoff_start_xy = None
 
+        self.can_attack = False
+        self.attack_speed = ATTACK_DEFAULT_SPEED
+        self.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
+        self.attack_hit_this_step = False
+
     def set_mode(self, mode: str):
         if mode not in (
             HumanMode.WANDERING,
@@ -140,6 +148,7 @@ class Human:
             HumanMode.DISTRACTED,
             HumanMode.OVERWHELMED,
             HumanMode.IMPATIENT,
+            HumanMode.ATTACK,
         ):
             raise ValueError(f"Unknown human mode: {mode}")
 
@@ -174,6 +183,7 @@ class Human:
 
         self.max_speed = float(self.base_max_speed)
         self.reset_overwhelmed_state()
+        self.attack_hit_this_step = False
 
     def set_event_logging(self, enabled: bool):
         self.enable_event_logs = bool(enabled)
@@ -263,6 +273,14 @@ class Human:
             self.max_speed = float(self.base_max_speed)
         self.impatient_original_max_speed = None
         self.impatient_timer = 0
+
+    def start_attack(self):
+        if not self.can_attack:
+            return False
+        self.mode = HumanMode.ATTACK
+        self.attack_hit_this_step = False
+        self._log_event(f">>> {self.name} became ATTACK!")
+        return True
 
     def _maybe_trigger_following_variant(self):
         if self.following_variant_mode is None or self.following_variant_probability <= 0.0:
@@ -382,6 +400,9 @@ class Human:
 
         if self.mode == HumanMode.IMPATIENT:
             return self._step_impatient(data, ctx)
+
+        if self.mode == HumanMode.ATTACK:
+            return self._step_attack(data, ctx)
 
 
         raise ValueError(f"Unknown human mode {self.mode}")
@@ -573,6 +594,42 @@ class Human:
             self._log_event(f">>> {self.name} recovered from IMPATIENT -> FOLLOWING")
 
         return action
+
+    def _step_attack(self, data, ctx):
+        self.attack_hit_this_step = False
+        robot_xy = ctx.get("robot_xy", None)
+        if robot_xy is None:
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            return np.zeros(3, dtype=np.float32)
+
+        x, y, yaw = self._get_pose(data)
+        to_robot = np.array([robot_xy[0] - x, robot_xy[1] - y], dtype=np.float32)
+        dist = float(np.linalg.norm(to_robot))
+
+        if dist <= float(self.attack_hit_distance):
+            self.attack_hit_this_step = True
+            self.mode = HumanMode.LISTENING
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            self._log_event(f">>> {self.name} hit robot -> LISTENING")
+            return np.zeros(3, dtype=np.float32)
+
+        if dist > NORM_EPS:
+            direction = to_robot / dist
+            v_follow = float(self.attack_speed) * direction
+        else:
+            v_follow = np.zeros(2, dtype=np.float32)
+
+        self.last_v_follow = v_follow.copy()
+        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+        self.last_v_hr = np.zeros(2, dtype=np.float32)
+
+        desired_yaw = np.arctan2(v_follow[1], v_follow[0]) if float(np.linalg.norm(v_follow)) > NORM_EPS else yaw
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+        return np.array([v_follow[0], v_follow[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
 
 
     def _move(self, dx, dy, yaw, data, ctx):

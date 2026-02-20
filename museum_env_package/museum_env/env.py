@@ -30,6 +30,10 @@ LISTEN_STAND_THRESHOLD_DEFAULT = 0.2
 LISTEN_WAIT_STEPS_DEFAULT = 1000
 OVERWHELMED_TARGET_IDX_DEFAULT = 1
 OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT = 200
+ATTACK_TARGET_IDX_DEFAULT = 2
+ATTACK_TRIGGER_WAIT_STEP_DEFAULT = OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT
+ATTACK_SPEED_DEFAULT = 1.0
+ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.67
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
@@ -134,6 +138,10 @@ class MuseumEnv(gym.Env):
         self.overwhelmed_triggered_once = False
         self.overwhelmed_target_idx = OVERWHELMED_TARGET_IDX_DEFAULT  # person2
         self.overwhelmed_trigger_wait_step = OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT
+        self.attack_target_idx = ATTACK_TARGET_IDX_DEFAULT  # person3
+        self.attack_trigger_wait_step = ATTACK_TRIGGER_WAIT_STEP_DEFAULT
+        self.attack_triggered_once = False
+        self.attack_hit_once = False
 
         # --- Initialize humans ---
         self.humans = [
@@ -151,6 +159,10 @@ class MuseumEnv(gym.Env):
         self._configure_human_following_variants()
 
         self.humans[1].can_be_overwhelmed = True
+        if len(self.humans) > 2:
+            self.humans[2].can_attack = True
+            self.humans[2].attack_speed = ATTACK_SPEED_DEFAULT
+            self.humans[2].attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
         if len(self.humans) > 4:
             self.humans[4].impatient_duration = 2000
             self.humans[4].impatient_speed_multiplier = 1.5
@@ -199,6 +211,8 @@ class MuseumEnv(gym.Env):
             "completed_listen_wait": False,
             "final_listen_ready": False,
             "overwhelmed_triggered": False,
+            "attack_triggered": False,
+            "attack_hit": False,
         }
 
     def _validate_external_action(self, action):
@@ -279,6 +293,8 @@ class MuseumEnv(gym.Env):
         self.listen_wait_is_final = False
         self.listen_session_count = 0
         self.overwhelmed_triggered_once = False
+        self.attack_triggered_once = False
+        self.attack_hit_once = False
 
         # Reset humans
         for human in self.humans:
@@ -313,12 +329,16 @@ class MuseumEnv(gym.Env):
             robot_xy=robot_xy,
             human_xy=human_xy,
         )
+        events["attack_triggered"] = self._maybe_trigger_attack_in_wait(
+            robot_xy=robot_xy,
+            human_xy=human_xy,
+        )
 
         # Freeze everyone during explanation window.
         self.data.ctrl[:] = 0.0
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
 
-        # Let only person2 move if they are overwhelmed.
+        # Let special states move during explanation window.
         tgt_idx = self.overwhelmed_target_idx
         if 0 <= tgt_idx < len(self.humans):
             tgt_human = self.humans[tgt_idx]
@@ -334,6 +354,26 @@ class MuseumEnv(gym.Env):
                 ctrl_idx = 3 + tgt_idx * 3
                 self.data.ctrl[ctrl_idx:ctrl_idx + 3] = tgt_action
 
+        # Allow attack human to move in attack mode during explanation
+        attack_idx = self.attack_target_idx
+        if 0 <= attack_idx < len(self.humans):
+            attack_human = self.humans[attack_idx]
+            if attack_human.mode == HumanMode.ATTACK:
+                attack_ctx = {
+                    "robot_xy": robot_xy,
+                    "robot_yaw": ryaw,
+                    "repulsion": np.zeros(2, dtype=np.float32),
+                    "stand_threshold": self.listen_stand_threshold,
+                }
+                attack_action = attack_human.step(self.model, self.data, attack_ctx)
+                human_actions[attack_idx] = attack_action
+                attack_ctrl_idx = 3 + attack_idx * 3
+                self.data.ctrl[attack_ctrl_idx:attack_ctrl_idx + 3] = attack_action
+                if attack_human.attack_hit_this_step and not self.attack_hit_once:
+                    events["attack_hit"] = True
+                    self.attack_hit_once = True
+
+        # Mujoco step update
         mujoco.mj_step(self.model, self.data)
         self.listen_wait_counter += 1
 
@@ -350,6 +390,7 @@ class MuseumEnv(gym.Env):
         human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
         human_reached_goal = self._check_human_goals(human_xy, human_goals)
 
+        # Finish conditions
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
 
@@ -419,6 +460,29 @@ class MuseumEnv(gym.Env):
 
         human.start_overwhelmed(robot_xy=robot_xy, current_xy=human_xy[idx])
         self.overwhelmed_triggered_once = True
+        return True
+
+    def _maybe_trigger_attack_in_wait(self, robot_xy, human_xy):
+        if self.attack_triggered_once:
+            return False
+        if self.listen_session_count != 1:
+            return False
+        if (self.listen_wait_counter + 1) != self.attack_trigger_wait_step:
+            return False
+
+        idx = self.attack_target_idx
+        if idx < 0 or idx >= len(self.humans) or idx >= human_xy.shape[0]:
+            return False
+
+        human = self.humans[idx]
+        if not human.can_attack:
+            return False
+
+        started = human.start_attack()
+        if not started:
+            return False
+
+        self.attack_triggered_once = True
         return True
 
     def _step_active_branch(self, external_action_received=False):
@@ -707,6 +771,8 @@ class MuseumEnv(gym.Env):
                 "completed_listen_wait": bool(events["completed_listen_wait"]),
                 "final_listen_ready": bool(events["final_listen_ready"]),
                 "overwhelmed_triggered": bool(events["overwhelmed_triggered"]),
+                "attack_triggered": bool(events["attack_triggered"]),
+                "attack_hit": bool(events["attack_hit"]),
             },
             "status": {
                 "step_count": int(self.step_count),
