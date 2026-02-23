@@ -45,6 +45,8 @@ HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
 CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
+MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
+MOVE_BACK_SPEED = 0.6
 
 
 class MuseumEnv(gym.Env):
@@ -147,6 +149,8 @@ class MuseumEnv(gym.Env):
         self.attack_hit_once = False
         self.callback_target_whitelist = set(CALLBACK_TARGET_WHITELIST_DEFAULT)
         self.callback_triggered_for_current_distracted = []
+        self.move_back_active = False
+        self.move_back_attacker_idx = None
 
         # --- Initialize humans ---
         self.humans = [
@@ -221,6 +225,8 @@ class MuseumEnv(gym.Env):
             "attack_hit": False,
             "callback_triggered": False,
             "callback_completed": False,
+            "move_back_triggered": False,
+            "move_back_completed": False,
         }
 
     def _validate_external_action(self, action):
@@ -315,6 +321,42 @@ class MuseumEnv(gym.Env):
             }
         return None
 
+    def _get_nearest_attack_threat(self, robot_xy, human_xy):
+        if human_xy.size == 0:
+            return None
+
+        nearest_idx = None
+        nearest_dist = None
+        for idx, human in enumerate(self.humans):
+            if human.mode != HumanMode.ATTACK:
+                continue
+            if idx >= human_xy.shape[0]:
+                continue
+            dist = float(np.linalg.norm(human_xy[idx] - robot_xy))
+            if nearest_idx is None or dist < nearest_dist:
+                nearest_idx = idx
+                nearest_dist = dist
+
+        if nearest_idx is None:
+            return None
+
+        return {
+            "idx": int(nearest_idx),
+            "dist": float(nearest_dist),
+            "xy": np.array(human_xy[nearest_idx], dtype=np.float32),
+        }
+
+    @staticmethod
+    def _compute_move_back_action(robot_xy, threat_xy):
+        diff = np.array(robot_xy - threat_xy, dtype=np.float32)
+        norm = float(np.linalg.norm(diff))
+        if norm < DIST_EPS:
+            direction = np.array([1.0, 0.0], dtype=np.float32)
+        else:
+            direction = diff / norm
+        v_xy = MOVE_BACK_SPEED * direction
+        return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -341,6 +383,8 @@ class MuseumEnv(gym.Env):
         self.attack_triggered_once = False
         self.attack_hit_once = False
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
+        self.move_back_active = False
+        self.move_back_attacker_idx = None
 
         # Reset humans
         for human in self.humans:
@@ -382,6 +426,7 @@ class MuseumEnv(gym.Env):
 
         # Freeze everyone during explanation window.
         self.data.ctrl[:] = 0.0
+        rb_action = np.zeros(3, dtype=np.float32)
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
 
         # Let special states move during explanation window.
@@ -419,6 +464,39 @@ class MuseumEnv(gym.Env):
                     events["attack_hit"] = True
                     self.attack_hit_once = True
 
+        move_back_was_active = bool(self.move_back_active)
+        threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
+        if threat is None:
+            self.move_back_active = False
+            self.move_back_attacker_idx = None
+            self.robot.mode = RobotMode.STOP
+            if move_back_was_active:
+                events["move_back_completed"] = True
+                self._log_event(">>> Robot MOVE_BACK completed (attack ended).")
+        elif threat["dist"] < MOVE_BACK_SAFE_DISTANCE:
+            self.move_back_active = True
+            self.move_back_attacker_idx = int(threat["idx"])
+            self.robot.mode = RobotMode.MOVE_BACK
+            rb_action = self._compute_move_back_action(robot_xy=robot_xy, threat_xy=threat["xy"])
+            if not move_back_was_active:
+                events["move_back_triggered"] = True
+                self._log_event(
+                    f">>> Robot MOVE_BACK triggered by person{self.move_back_attacker_idx + 1} "
+                    f"(dist={threat['dist']:.3f}m)."
+                )
+        else:
+            # Attack is ongoing but safety distance is satisfied: hold position.
+            if move_back_was_active:
+                self.move_back_active = True
+                self.move_back_attacker_idx = int(threat["idx"])
+                self.robot.mode = RobotMode.MOVE_BACK
+            else:
+                self.move_back_active = False
+                self.move_back_attacker_idx = None
+                self.robot.mode = RobotMode.STOP
+
+        self.data.ctrl[0:3] = rb_action
+
         # Mujoco step update
         mujoco.mj_step(self.model, self.data)
         self.listen_wait_counter += 1
@@ -451,6 +529,11 @@ class MuseumEnv(gym.Env):
                 self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
                 self._log_event(">>> Listening wait complete. Resume MOVE to Room B.")
 
+            if self.move_back_active:
+                events["move_back_completed"] = True
+            self.move_back_active = False
+            self.move_back_attacker_idx = None
+
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
@@ -465,7 +548,7 @@ class MuseumEnv(gym.Env):
             desired_yaw=desired_yaw,
             actual_yaw=actual_yaw,
             robot_mode=str(self.robot.mode),
-            robot_action=np.zeros(3, dtype=np.float32),
+            robot_action=rb_action,
             human_xy=human_xy,
             human_actual_yaw=human_actual_yaw,
             human_goals=human_goals,
@@ -837,6 +920,8 @@ class MuseumEnv(gym.Env):
                 "attack_hit": bool(events["attack_hit"]),
                 "callback_triggered": bool(events["callback_triggered"]),
                 "callback_completed": bool(events["callback_completed"]),
+                "move_back_triggered": bool(events["move_back_triggered"]),
+                "move_back_completed": bool(events["move_back_completed"]),
             },
             "status": {
                 "step_count": int(self.step_count),
@@ -855,6 +940,12 @@ class MuseumEnv(gym.Env):
                     else None
                 ),
                 "callback_hold_remaining": int(self.robot.callback_hold_steps_remaining),
+                "move_back_active": bool(self.move_back_active),
+                "move_back_attacker_idx": (
+                    int(self.move_back_attacker_idx) if self.move_back_attacker_idx is not None else None
+                ),
+                "move_back_safe_distance": float(MOVE_BACK_SAFE_DISTANCE),
+                "move_back_speed": float(MOVE_BACK_SPEED),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

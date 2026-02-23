@@ -39,11 +39,19 @@ Info schema (current):
   - completed_listen_wait
   - final_listen_ready
   - overwhelmed_triggered
+  - attack_triggered
+  - attack_hit
+  - callback_triggered
+  - callback_completed
+  - move_back_triggered
+  - move_back_completed
 
 - info["status"]
   - step_count
   - listen_mode
   - listen_wait: active/counter/steps/remaining/is_final
+  - callback_active/callback_target_idx/callback_hold_remaining
+  - move_back_active/move_back_attacker_idx/move_back_safe_distance/move_back_speed
   - terminated_reason
 
 - info["robot"]
@@ -58,7 +66,7 @@ Info schema (current):
   - actual_yaw, desired_yaw
   - mode, distracted_timer
   - overwhelmed_stage, overwhelmed_leave_timer
-  - impatient_timer, impatient_cooldown_timer
+  - impatient_timer
   - reached_goal_indices, all_reached
   - action: vx/vy/yaw_rate
   - velocity_components: follow/repulsion/human_robot/total

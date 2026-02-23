@@ -12,6 +12,7 @@ class RobotMode:
     MOVE = "move"
     STOP = "stop"
     CALLBACK = "callback"
+    MOVE_BACK = "move_back"
 
 
 class Robot:
