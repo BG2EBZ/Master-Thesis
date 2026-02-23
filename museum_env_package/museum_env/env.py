@@ -149,6 +149,7 @@ class MuseumEnv(gym.Env):
         self.attack_hit_once = False
         self.callback_target_whitelist = set(CALLBACK_TARGET_WHITELIST_DEFAULT)
         self.callback_triggered_for_current_distracted = []
+        self.callback_active_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
 
@@ -225,6 +226,7 @@ class MuseumEnv(gym.Env):
             "attack_hit": False,
             "callback_triggered": False,
             "callback_completed": False,
+            "callback_forced_recovery": False,
             "move_back_triggered": False,
             "move_back_completed": False,
         }
@@ -383,6 +385,7 @@ class MuseumEnv(gym.Env):
         self.attack_triggered_once = False
         self.attack_hit_once = False
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
+        self.callback_active_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
 
@@ -642,11 +645,21 @@ class MuseumEnv(gym.Env):
         if callback_request is not None and (not callback_active_before_step) and robot_mode == RobotMode.CALLBACK:
             events["callback_triggered"] = True
             target_idx = int(callback_request["target_idx"])
+            self.callback_active_target_idx = target_idx
             if 0 <= target_idx < len(self.callback_triggered_for_current_distracted):
                 self.callback_triggered_for_current_distracted[target_idx] = True
                 self._log_event(f">>> Robot CALLBACK triggered for person{target_idx + 1}.")
         if callback_active_before_step and (not self.robot.callback_active):
             events["callback_completed"] = True
+            recover_idx = self.callback_active_target_idx
+            if recover_idx is not None and 0 <= recover_idx < len(self.humans):
+                recover_human = self.humans[recover_idx]
+                if recover_human.mode == HumanMode.DISTRACTED:
+                    recover_human.set_mode(HumanMode.FOLLOWING)
+                    recover_human.distracted_timer = 0
+                    events["callback_forced_recovery"] = True
+                    self._log_event(f">>> person{recover_idx + 1} forced recovery by CALLBACK -> FOLLOWING.")
+            self.callback_active_target_idx = None
             self._log_event(">>> Robot CALLBACK completed.")
 
         # If robot just entered listen, assign listen targets
@@ -920,6 +933,7 @@ class MuseumEnv(gym.Env):
                 "attack_hit": bool(events["attack_hit"]),
                 "callback_triggered": bool(events["callback_triggered"]),
                 "callback_completed": bool(events["callback_completed"]),
+                "callback_forced_recovery": bool(events["callback_forced_recovery"]),
                 "move_back_triggered": bool(events["move_back_triggered"]),
                 "move_back_completed": bool(events["move_back_completed"]),
             },

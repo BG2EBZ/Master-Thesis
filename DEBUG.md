@@ -43,6 +43,7 @@ Info schema (current):
   - attack_hit
   - callback_triggered
   - callback_completed
+  - callback_forced_recovery
   - move_back_triggered
   - move_back_completed
 
