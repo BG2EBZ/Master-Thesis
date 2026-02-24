@@ -75,7 +75,7 @@
 
                   <!-- Main footprint: use a cylinder for stable collision (fast + robust).
            Radius ~0.20m (40cm diameter). Height 0.12m. -->
-                  <geom name="robot_base" type="cylinder" size="0.20 0.06" mass="20" friction="0.2 0.01 0.001" rgba="0.2 0.3 0.9 1"/>
+                  <geom name="robot_base" type="cylinder" size="0.20 0.06" mass="20" friction="0.2 0.01 0.001" rgba="0.85 0.85 0.85 1"/>
 
                   <!-- Nose: small box in front to show orientation (front/back) -->
                   <geom name="robot_nose" type="box" pos="0.18 0 0.03" size="0.03 0.06 0.03" rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
