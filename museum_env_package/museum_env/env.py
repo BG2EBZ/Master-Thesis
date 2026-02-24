@@ -8,7 +8,7 @@ import numpy as np
 from gymnasium import spaces
 
 from .human import Human, HumanMode
-from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotMode
+from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotEmotion, RobotMode
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -47,6 +47,8 @@ CALLBACK_HOLD_SECONDS = 1.0
 CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
+ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
+ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 
 
 class MuseumEnv(gym.Env):
@@ -181,8 +183,10 @@ class MuseumEnv(gym.Env):
 
         # Cache MuJoCo body ids (static across episodes).
         self.robot_body_id = self.model.body("robot").id
+        self.robot_base_geom_id = self.model.geom("robot_base").id
         self.human_body_ids = [self.model.body(human.body_name).id for human in self.humans]
         self._label_scene_option = self._build_label_scene_option()
+        self._apply_robot_base_color_from_robot_emotion()
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -359,6 +363,12 @@ class MuseumEnv(gym.Env):
         v_xy = MOVE_BACK_SPEED * direction
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
+    def _apply_robot_base_color_from_robot_emotion(self):
+        if self.robot.emotion == RobotEmotion.SAD:
+            self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_SAD
+            return
+        self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_NATURAL
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -393,6 +403,7 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.reset_episode_state()
         self._configure_human_following_variants()
+        self._apply_robot_base_color_from_robot_emotion()
 
         obs = self._get_obs()
         info = {}
@@ -540,6 +551,9 @@ class MuseumEnv(gym.Env):
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
+
+        self.robot.update_emotion([h.mode for h in self.humans])
+        self._apply_robot_base_color_from_robot_emotion()
 
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
         human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -723,6 +737,8 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
         events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
+        self.robot.update_emotion([h.mode for h in self.humans])
+        self._apply_robot_base_color_from_robot_emotion()
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -960,6 +976,7 @@ class MuseumEnv(gym.Env):
                 ),
                 "move_back_safe_distance": float(MOVE_BACK_SAFE_DISTANCE),
                 "move_back_speed": float(MOVE_BACK_SPEED),
+                "robot_emotion": str(self.robot.emotion),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,
@@ -976,6 +993,7 @@ class MuseumEnv(gym.Env):
                     "vy": float(robot_action[1]),
                     "yaw_rate": float(robot_action[2]),
                 },
+                "emotion": str(self.robot.emotion),
                 "final_waypoint_reached": bool(snapshot["final_waypoint_reached"]),
             },
             "humans": {

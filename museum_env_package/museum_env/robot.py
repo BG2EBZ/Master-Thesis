@@ -15,6 +15,11 @@ class RobotMode:
     MOVE_BACK = "move_back"
 
 
+class RobotEmotion:
+    NATURAL = "natural"
+    SAD = "sad"
+
+
 class Robot:
     """
     Robot policy/state wrapper:
@@ -43,6 +48,7 @@ class Robot:
         self.callback_target_xy = None
         self.callback_hold_steps_remaining = 0
         self.callback_turn_done = False
+        self.emotion = RobotEmotion.NATURAL
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
@@ -56,6 +62,7 @@ class Robot:
         self.turn_done = False
         self.mode = RobotMode.MOVE
         self._reset_callback_state()
+        self.emotion = RobotEmotion.NATURAL
 
     def _reset_callback_state(self):
         self.callback_active = False
@@ -188,6 +195,14 @@ class Robot:
 
         return action
 
+    def update_emotion(self, human_modes):
+        for mode in human_modes:
+            if mode in ("distracted", "overwhelmed"):
+                self.emotion = RobotEmotion.SAD
+                return self.emotion
+        self.emotion = RobotEmotion.NATURAL
+        return self.emotion
+
     def step(self, robot_pose, human_xyz, callback_request=None):
         """
         Main robot decision step.
@@ -224,6 +239,7 @@ class Robot:
                 "actual_yaw": float(actual_yaw),
                 "mode": RobotMode.CALLBACK,
                 "enter_listen": False,
+                "emotion": str(self.emotion),
             }
 
         # base waypoint action
@@ -250,6 +266,7 @@ class Robot:
             "actual_yaw": float(actual_yaw),
             "mode": str(self.mode),
             "enter_listen": bool(enter_listen),
+            "emotion": str(self.emotion),
         }
 
     def on_listening_complete(self):

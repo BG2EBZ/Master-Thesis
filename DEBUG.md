@@ -53,14 +53,21 @@ Info schema (current):
   - listen_wait: active/counter/steps/remaining/is_final
   - callback_active/callback_target_idx/callback_hold_remaining
   - move_back_active/move_back_attacker_idx/move_back_safe_distance/move_back_speed
+  - robot_emotion
   - terminated_reason
 
 - info["robot"]
   - pose_xy, goal_xy, dist_to_goal
   - yaw, desired_yaw, mode
+  - emotion
   - action: vx/vy/yaw_rate
   - final_waypoint_reached
   - note: goal_xy is the robot's current waypoint, not an XML goal site
+
+Robot emotion rule:
+
+- sad: any human is DISTRACTED or OVERWHELMED
+- natural: otherwise
 
 - info["humans"]
   - pose_xy, goal_xy
