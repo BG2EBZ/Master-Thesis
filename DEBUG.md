@@ -44,6 +44,8 @@ Info schema (current):
   - callback_triggered
   - callback_completed
   - callback_forced_recovery
+  - happy_triggered
+  - happy_completed
   - move_back_triggered
   - move_back_completed
 
@@ -54,6 +56,8 @@ Info schema (current):
   - callback_active/callback_target_idx/callback_hold_remaining
   - move_back_active/move_back_attacker_idx/move_back_safe_distance/move_back_speed
   - robot_emotion
+  - happy_remaining_steps
+  - happy_hold_seconds
   - terminated_reason
 
 - info["robot"]
@@ -67,7 +71,9 @@ Info schema (current):
 Robot emotion rule:
 
 - sad: any human is DISTRACTED or OVERWHELMED
+- happy: triggered by callback_forced_recovery for 1 second
 - natural: otherwise
+- priority: sad overrides happy (happy timer pauses during sad)
 
 - info["humans"]
   - pose_xy, goal_xy

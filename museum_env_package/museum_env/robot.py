@@ -18,6 +18,7 @@ class RobotMode:
 class RobotEmotion:
     NATURAL = "natural"
     SAD = "sad"
+    HAPPY = "happy"
 
 
 class Robot:
@@ -49,6 +50,7 @@ class Robot:
         self.callback_hold_steps_remaining = 0
         self.callback_turn_done = False
         self.emotion = RobotEmotion.NATURAL
+        self.happy_hold_steps_remaining = 0
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
@@ -63,6 +65,7 @@ class Robot:
         self.mode = RobotMode.MOVE
         self._reset_callback_state()
         self.emotion = RobotEmotion.NATURAL
+        self.happy_hold_steps_remaining = 0
 
     def _reset_callback_state(self):
         self.callback_active = False
@@ -200,8 +203,15 @@ class Robot:
             if mode in ("distracted", "overwhelmed"):
                 self.emotion = RobotEmotion.SAD
                 return self.emotion
+        if self.happy_hold_steps_remaining > 0:
+            self.emotion = RobotEmotion.HAPPY
+            self.happy_hold_steps_remaining -= 1
+            return self.emotion
         self.emotion = RobotEmotion.NATURAL
         return self.emotion
+
+    def trigger_happy(self, hold_steps: int):
+        self.happy_hold_steps_remaining = max(1, int(hold_steps))
 
     def step(self, robot_pose, human_xyz, callback_request=None):
         """
