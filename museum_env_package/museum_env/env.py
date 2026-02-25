@@ -43,6 +43,7 @@ HUMAN5_IMPATIENT_PROB = 0.0005
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
+ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
@@ -221,6 +222,7 @@ class MuseumEnv(gym.Env):
         opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
         opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
         opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
+        opt.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 0
         return opt
 
     def _apply_label_options_to_viewer(self):
@@ -402,8 +404,10 @@ class MuseumEnv(gym.Env):
         return any(h.mode == HumanMode.DISTRACTED for h in self.humans)
 
     def _sync_robot_text_label_visibility(self):
-        show_follow_me = self._has_any_distracted_human()
-        show_explanation = (not show_follow_me) and bool(self.robot.speaker_active)
+        show_need_space = bool(self.fear_active)
+        show_follow_me = (not show_need_space) and self._has_any_distracted_human()
+        show_explanation = (not show_need_space) and (not show_follow_me) and bool(self.robot.speaker_active)
+        self._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 1 if show_need_space else 0
         self._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 1 if show_follow_me else 0
         self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if show_explanation else 0
 
@@ -414,6 +418,8 @@ class MuseumEnv(gym.Env):
         self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
 
     def _get_robot_text_label(self):
+        if self.fear_active:
+            return "I_need_more_space"
         if self._has_any_distracted_human():
             return "Please_follow_me"
         if self.robot.speaker_active:

@@ -77,7 +77,7 @@ Info schema (current):
 
 Robot emotion rule:
 
-- fear: any ATTACK human with distance < 0.5m
+- fear: any ATTACK human with distance < 0.8m
 - sad: any human is DISTRACTED or OVERWHELMED
 - happy: triggered by callback_forced_recovery for 1 second
 - natural: otherwise
@@ -85,8 +85,9 @@ Robot emotion rule:
 - note: fear overrides happy/sad; happy timer pauses during fear
 - speaker_active: True when listen_wait_active is True (yellow speaking halo visible)
 - robot text label priority:
-  - any DISTRACTED human -> `Please_follow_me` (site group 4)
-  - speaker_active (and no DISTRACTED) -> `explanation` (site group 3)
+  - fear_active -> `I_need_more_space` (site group 5)
+  - any DISTRACTED human (and no fear) -> `Please_follow_me` (site group 4)
+  - speaker_active (and no fear, no DISTRACTED) -> `explanation` (site group 3)
   - otherwise -> none
 
 - info["humans"]
