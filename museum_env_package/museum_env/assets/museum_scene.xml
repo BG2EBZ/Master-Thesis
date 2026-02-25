@@ -88,6 +88,9 @@
 
                   <!-- Speaking text label site (shown via mjLABEL_SITE when speaker is active). -->
                   <site name="explanation" pos="0 0 0.72" size="0.005" rgba="1 1 1 1" group="3"/>
+
+                  <!-- Sad-state follow-me label site (shown when robot emotion is sad). -->
+                  <site name="Please_follow_me" pos="0 0 0.78" size="0.005" rgba="1 1 1 1" group="4"/>
             </body>
 
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->

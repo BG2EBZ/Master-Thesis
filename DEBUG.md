@@ -64,6 +64,7 @@ Info schema (current):
   - fear_attacker_idx
   - fear_distance_threshold
   - speaker_active
+  - robot_text_label
   - terminated_reason
 
 - info["robot"]
@@ -83,8 +84,10 @@ Robot emotion rule:
 - priority: fear > sad > happy > natural
 - note: fear overrides happy/sad; happy timer pauses during fear
 - speaker_active: True when listen_wait_active is True (yellow speaking halo visible)
-- when speaker_active is True, MuJoCo also shows the 3D site label text `explanation`
-  above the robot (site group 3)
+- robot text label priority:
+  - any DISTRACTED human -> `Please_follow_me` (site group 4)
+  - speaker_active (and no DISTRACTED) -> `explanation` (site group 3)
+  - otherwise -> none
 
 - info["humans"]
   - pose_xy, goal_xy

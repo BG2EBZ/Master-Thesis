@@ -42,6 +42,7 @@ HUMAN1_DISTRACTED_PROB = 0.0005
 HUMAN5_IMPATIENT_PROB = 0.0005
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
+ROBOT_FOLLOWME_LABEL_GROUP = 4
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
@@ -49,7 +50,7 @@ CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
-ROBOT_FEAR_DISTANCE_THRESHOLD = 0.5
+ROBOT_FEAR_DISTANCE_THRESHOLD = 0.8
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
@@ -198,7 +199,7 @@ class MuseumEnv(gym.Env):
         self._label_scene_option = self._build_label_scene_option()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
-        self._sync_explanation_label_visibility()
+        self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
     def _log_event(self, msg: str):
@@ -219,6 +220,7 @@ class MuseumEnv(gym.Env):
         opt.sitegroup[:] = 0
         opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
         opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
+        opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
         return opt
 
     def _apply_label_options_to_viewer(self):
@@ -396,14 +398,27 @@ class MuseumEnv(gym.Env):
     def _sync_robot_speaker_state(self):
         self.robot.set_speaker_active(bool(self.listen_wait_active))
 
-    def _sync_explanation_label_visibility(self):
-        self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if self.robot.speaker_active else 0
+    def _has_any_distracted_human(self):
+        return any(h.mode == HumanMode.DISTRACTED for h in self.humans)
+
+    def _sync_robot_text_label_visibility(self):
+        show_follow_me = self._has_any_distracted_human()
+        show_explanation = (not show_follow_me) and bool(self.robot.speaker_active)
+        self._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 1 if show_follow_me else 0
+        self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if show_explanation else 0
 
     def _apply_robot_speaking_halo_visual(self):
         if self.robot.speaker_active:
             self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_ON
             return
         self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
+
+    def _get_robot_text_label(self):
+        if self._has_any_distracted_human():
+            return "Please_follow_me"
+        if self.robot.speaker_active:
+            return "explanation"
+        return "none"
 
     def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy):
         fear_before = bool(self.fear_active)
@@ -462,7 +477,7 @@ class MuseumEnv(gym.Env):
         self._configure_human_following_variants()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
-        self._sync_explanation_label_visibility()
+        self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
         obs = self._get_obs()
@@ -618,7 +633,7 @@ class MuseumEnv(gym.Env):
             human_xy=human_xy,
         )
         self._sync_robot_speaker_state()
-        self._sync_explanation_label_visibility()
+        self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -806,14 +821,14 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
         events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
-        self._sync_robot_speaker_state()
-        self._sync_explanation_label_visibility()
-        self._apply_robot_speaking_halo_visual()
         self._update_robot_emotion_and_visual(
             events=events,
             robot_xy=np.array([rx, ry], dtype=np.float32),
             human_xy=human_xy,
         )
+        self._sync_robot_speaker_state()
+        self._sync_robot_text_label_visibility()
+        self._apply_robot_speaking_halo_visual()
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -1062,6 +1077,7 @@ class MuseumEnv(gym.Env):
                 "fear_attacker_idx": int(self.fear_attacker_idx) if self.fear_attacker_idx is not None else None,
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
+                "robot_text_label": self._get_robot_text_label(),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,
