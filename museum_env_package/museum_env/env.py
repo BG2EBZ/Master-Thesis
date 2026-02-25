@@ -48,9 +48,11 @@ CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
+ROBOT_FEAR_DISTANCE_THRESHOLD = 0.5
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
+ROBOT_COLOR_FEAR = np.array([0.62, 0.36, 0.88, 1.0], dtype=np.float32)
 
 
 class MuseumEnv(gym.Env):
@@ -156,6 +158,8 @@ class MuseumEnv(gym.Env):
         self.callback_active_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
+        self.fear_active = False
+        self.fear_attacker_idx = None
 
         # --- Initialize humans ---
         self.humans = [
@@ -235,6 +239,8 @@ class MuseumEnv(gym.Env):
             "callback_forced_recovery": False,
             "happy_triggered": False,
             "happy_completed": False,
+            "fear_triggered": False,
+            "fear_completed": False,
             "move_back_triggered": False,
             "move_back_completed": False,
         }
@@ -368,6 +374,9 @@ class MuseumEnv(gym.Env):
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
     def _apply_robot_base_color_from_robot_emotion(self):
+        if self.robot.emotion == RobotEmotion.FEAR:
+            self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_FEAR
+            return
         if self.robot.emotion == RobotEmotion.SAD:
             self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_SAD
             return
@@ -376,12 +385,22 @@ class MuseumEnv(gym.Env):
             return
         self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_NATURAL
 
-    def _update_robot_emotion_and_visual(self, events):
+    def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy):
+        fear_before = bool(self.fear_active)
+        threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
+        fear_now = bool(threat is not None and threat["dist"] < ROBOT_FEAR_DISTANCE_THRESHOLD)
+        self.fear_active = fear_now
+        self.fear_attacker_idx = int(threat["idx"]) if fear_now else None
+        if (not fear_before) and fear_now:
+            events["fear_triggered"] = True
+        elif fear_before and (not fear_now):
+            events["fear_completed"] = True
+
         happy_before = int(self.robot.happy_hold_steps_remaining)
         sad_now = any(h.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED) for h in self.humans)
-        self.robot.update_emotion([h.mode for h in self.humans])
+        self.robot.update_emotion([h.mode for h in self.humans], fear_active=self.fear_active)
         happy_after = int(self.robot.happy_hold_steps_remaining)
-        if happy_before > 0 and happy_after == 0 and not sad_now:
+        if happy_before > 0 and happy_after == 0 and (not sad_now) and (not self.fear_active):
             events["happy_completed"] = True
         self._apply_robot_base_color_from_robot_emotion()
 
@@ -414,6 +433,8 @@ class MuseumEnv(gym.Env):
         self.callback_active_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
+        self.fear_active = False
+        self.fear_attacker_idx = None
 
         # Reset humans
         for human in self.humans:
@@ -568,7 +589,11 @@ class MuseumEnv(gym.Env):
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
 
-        self._update_robot_emotion_and_visual(events)
+        self._update_robot_emotion_and_visual(
+            events=events,
+            robot_xy=np.array([rx, ry], dtype=np.float32),
+            human_xy=human_xy,
+        )
 
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
         human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -755,7 +780,11 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
         events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
-        self._update_robot_emotion_and_visual(events)
+        self._update_robot_emotion_and_visual(
+            events=events,
+            robot_xy=np.array([rx, ry], dtype=np.float32),
+            human_xy=human_xy,
+        )
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -969,6 +998,8 @@ class MuseumEnv(gym.Env):
                 "callback_forced_recovery": bool(events["callback_forced_recovery"]),
                 "happy_triggered": bool(events["happy_triggered"]),
                 "happy_completed": bool(events["happy_completed"]),
+                "fear_triggered": bool(events["fear_triggered"]),
+                "fear_completed": bool(events["fear_completed"]),
                 "move_back_triggered": bool(events["move_back_triggered"]),
                 "move_back_completed": bool(events["move_back_completed"]),
             },
@@ -998,6 +1029,9 @@ class MuseumEnv(gym.Env):
                 "robot_emotion": str(self.robot.emotion),
                 "happy_remaining_steps": int(self.robot.happy_hold_steps_remaining),
                 "happy_hold_seconds": float(ROBOT_HAPPY_HOLD_SECONDS),
+                "fear_active": bool(self.fear_active),
+                "fear_attacker_idx": int(self.fear_attacker_idx) if self.fear_attacker_idx is not None else None,
+                "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

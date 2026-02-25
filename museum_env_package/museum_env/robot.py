@@ -19,6 +19,7 @@ class RobotEmotion:
     NATURAL = "natural"
     SAD = "sad"
     HAPPY = "happy"
+    FEAR = "fear"
 
 
 class Robot:
@@ -198,7 +199,10 @@ class Robot:
 
         return action
 
-    def update_emotion(self, human_modes):
+    def update_emotion(self, human_modes, fear_active=False):
+        if fear_active:
+            self.emotion = RobotEmotion.FEAR
+            return self.emotion
         for mode in human_modes:
             if mode in ("distracted", "overwhelmed"):
                 self.emotion = RobotEmotion.SAD

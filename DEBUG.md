@@ -46,6 +46,8 @@ Info schema (current):
   - callback_forced_recovery
   - happy_triggered
   - happy_completed
+  - fear_triggered
+  - fear_completed
   - move_back_triggered
   - move_back_completed
 
@@ -58,6 +60,9 @@ Info schema (current):
   - robot_emotion
   - happy_remaining_steps
   - happy_hold_seconds
+  - fear_active
+  - fear_attacker_idx
+  - fear_distance_threshold
   - terminated_reason
 
 - info["robot"]
@@ -70,10 +75,12 @@ Info schema (current):
 
 Robot emotion rule:
 
+- fear: any ATTACK human with distance < 0.5m
 - sad: any human is DISTRACTED or OVERWHELMED
 - happy: triggered by callback_forced_recovery for 1 second
 - natural: otherwise
-- priority: sad overrides happy (happy timer pauses during sad)
+- priority: fear > sad > happy > natural
+- note: fear overrides happy/sad; happy timer pauses during fear
 
 - info["humans"]
   - pose_xy, goal_xy
