@@ -41,6 +41,7 @@ DIST_EPS = 1e-8
 HUMAN1_DISTRACTED_PROB = 0.0005
 HUMAN5_IMPATIENT_PROB = 0.0005
 HUMAN_LABEL_SITE_GROUP = 2
+ROBOT_EXPLANATION_LABEL_GROUP = 3
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
@@ -197,6 +198,7 @@ class MuseumEnv(gym.Env):
         self._label_scene_option = self._build_label_scene_option()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
+        self._sync_explanation_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
     def _log_event(self, msg: str):
@@ -216,6 +218,7 @@ class MuseumEnv(gym.Env):
         opt.label = HUMAN_LABEL_MODE
         opt.sitegroup[:] = 0
         opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
+        opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
         return opt
 
     def _apply_label_options_to_viewer(self):
@@ -393,6 +396,9 @@ class MuseumEnv(gym.Env):
     def _sync_robot_speaker_state(self):
         self.robot.set_speaker_active(bool(self.listen_wait_active))
 
+    def _sync_explanation_label_visibility(self):
+        self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if self.robot.speaker_active else 0
+
     def _apply_robot_speaking_halo_visual(self):
         if self.robot.speaker_active:
             self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_ON
@@ -456,6 +462,7 @@ class MuseumEnv(gym.Env):
         self._configure_human_following_variants()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
+        self._sync_explanation_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
         obs = self._get_obs()
@@ -611,6 +618,7 @@ class MuseumEnv(gym.Env):
             human_xy=human_xy,
         )
         self._sync_robot_speaker_state()
+        self._sync_explanation_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -799,6 +807,7 @@ class MuseumEnv(gym.Env):
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
         events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
         self._sync_robot_speaker_state()
+        self._sync_explanation_label_visibility()
         self._apply_robot_speaking_halo_visual()
         self._update_robot_emotion_and_visual(
             events=events,

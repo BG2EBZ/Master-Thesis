@@ -85,6 +85,9 @@
 
                   <!-- Optional: a site for easy tracking (goal distances, etc.) -->
                   <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
+
+                  <!-- Speaking text label site (shown via mjLABEL_SITE when speaker is active). -->
+                  <site name="explanation" pos="0 0 0.72" size="0.005" rgba="1 1 1 1" group="3"/>
             </body>
 
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
