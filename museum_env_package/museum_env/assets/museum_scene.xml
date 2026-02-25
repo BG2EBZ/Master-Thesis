@@ -80,6 +80,9 @@
                   <!-- Nose: small box in front to show orientation (front/back) -->
                   <geom name="robot_nose" type="box" pos="0.18 0 0.03" size="0.03 0.06 0.03" rgba="0.95 0.25 0.25 1" contype="0" conaffinity="0"/>
 
+                  <!-- Visual-only speaking halo (shown via env control when robot is speaking). -->
+                  <geom name="robot_speaking_halo" type="cylinder" pos="0 0 -0.055" size="0.34 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
+
                   <!-- Optional: a site for easy tracking (goal distances, etc.) -->
                   <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
             </body>

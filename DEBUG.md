@@ -63,6 +63,7 @@ Info schema (current):
   - fear_active
   - fear_attacker_idx
   - fear_distance_threshold
+  - speaker_active
   - terminated_reason
 
 - info["robot"]
@@ -81,6 +82,7 @@ Robot emotion rule:
 - natural: otherwise
 - priority: fear > sad > happy > natural
 - note: fear overrides happy/sad; happy timer pauses during fear
+- speaker_active: True when listen_wait_active is True (yellow speaking halo visible)
 
 - info["humans"]
   - pose_xy, goal_xy

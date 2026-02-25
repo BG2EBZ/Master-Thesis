@@ -53,6 +53,8 @@ ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
 ROBOT_COLOR_FEAR = np.array([0.62, 0.36, 0.88, 1.0], dtype=np.float32)
+SPEAKING_HALO_RGBA_ON = np.array([1.0, 0.9, 0.2, 0.35], dtype=np.float32)
+SPEAKING_HALO_RGBA_OFF = np.array([1.0, 0.9, 0.2, 0.0], dtype=np.float32)
 
 
 class MuseumEnv(gym.Env):
@@ -190,9 +192,12 @@ class MuseumEnv(gym.Env):
         # Cache MuJoCo body ids (static across episodes).
         self.robot_body_id = self.model.body("robot").id
         self.robot_base_geom_id = self.model.geom("robot_base").id
+        self.robot_speaking_halo_geom_id = self.model.geom("robot_speaking_halo").id
         self.human_body_ids = [self.model.body(human.body_name).id for human in self.humans]
         self._label_scene_option = self._build_label_scene_option()
         self._apply_robot_base_color_from_robot_emotion()
+        self._sync_robot_speaker_state()
+        self._apply_robot_speaking_halo_visual()
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -385,6 +390,15 @@ class MuseumEnv(gym.Env):
             return
         self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_NATURAL
 
+    def _sync_robot_speaker_state(self):
+        self.robot.set_speaker_active(bool(self.listen_wait_active))
+
+    def _apply_robot_speaking_halo_visual(self):
+        if self.robot.speaker_active:
+            self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_ON
+            return
+        self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
+
     def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy):
         fear_before = bool(self.fear_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
@@ -441,6 +455,8 @@ class MuseumEnv(gym.Env):
             human.reset_episode_state()
         self._configure_human_following_variants()
         self._apply_robot_base_color_from_robot_emotion()
+        self._sync_robot_speaker_state()
+        self._apply_robot_speaking_halo_visual()
 
         obs = self._get_obs()
         info = {}
@@ -594,6 +610,8 @@ class MuseumEnv(gym.Env):
             robot_xy=np.array([rx, ry], dtype=np.float32),
             human_xy=human_xy,
         )
+        self._sync_robot_speaker_state()
+        self._apply_robot_speaking_halo_visual()
 
         human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
         human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
@@ -780,6 +798,8 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
         events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
+        self._sync_robot_speaker_state()
+        self._apply_robot_speaking_halo_visual()
         self._update_robot_emotion_and_visual(
             events=events,
             robot_xy=np.array([rx, ry], dtype=np.float32),
@@ -1032,6 +1052,7 @@ class MuseumEnv(gym.Env):
                 "fear_active": bool(self.fear_active),
                 "fear_attacker_idx": int(self.fear_attacker_idx) if self.fear_attacker_idx is not None else None,
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
+                "speaker_active": bool(self.robot.speaker_active),
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

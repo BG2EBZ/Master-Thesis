@@ -52,6 +52,7 @@ class Robot:
         self.callback_turn_done = False
         self.emotion = RobotEmotion.NATURAL
         self.happy_hold_steps_remaining = 0
+        self.speaker_active = False
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
@@ -67,6 +68,7 @@ class Robot:
         self._reset_callback_state()
         self.emotion = RobotEmotion.NATURAL
         self.happy_hold_steps_remaining = 0
+        self.speaker_active = False
 
     def _reset_callback_state(self):
         self.callback_active = False
@@ -217,6 +219,9 @@ class Robot:
     def trigger_happy(self, hold_steps: int):
         self.happy_hold_steps_remaining = max(1, int(hold_steps))
 
+    def set_speaker_active(self, active: bool) -> None:
+        self.speaker_active = bool(active)
+
     def step(self, robot_pose, human_xyz, callback_request=None):
         """
         Main robot decision step.
@@ -254,6 +259,7 @@ class Robot:
                 "mode": RobotMode.CALLBACK,
                 "enter_listen": False,
                 "emotion": str(self.emotion),
+                "speaker_active": bool(self.speaker_active),
             }
 
         # base waypoint action
@@ -281,6 +287,7 @@ class Robot:
             "mode": str(self.mode),
             "enter_listen": bool(enter_listen),
             "emotion": str(self.emotion),
+            "speaker_active": bool(self.speaker_active),
         }
 
     def on_listening_complete(self):
