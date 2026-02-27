@@ -115,6 +115,9 @@ class Human:
 
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(1000, 1500)
+        self.callback_response_mode = None  # None | "stay" | "ignore"
+        self.callback_stay_steps_remaining = 0
+        self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
 
         self.can_be_impatient = False
         self.impatient_duration = 800
@@ -159,6 +162,7 @@ class Human:
             self._stop_impatient()
         if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
             self.distracted_timer = 0
+            self._clear_callback_response_state()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
             self.reset_overwhelmed_state()
         if prev_mode == HumanMode.ATTACK and next_mode != HumanMode.ATTACK:
@@ -167,6 +171,7 @@ class Human:
     def _on_enter_mode(self, prev_mode: Optional[str], next_mode: str, reason: Optional[str] = None):
         if next_mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
+            self._clear_callback_response_state()
         if next_mode == HumanMode.ATTACK:
             self.attack_hit_this_step = False
 
@@ -201,6 +206,7 @@ class Human:
 
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(1000, 1500)
+        self._clear_callback_response_state()
 
         self.impatient_timer = 0
         self.impatient_original_max_speed = None
@@ -302,6 +308,11 @@ class Human:
         self.impatient_original_max_speed = None
         self.impatient_timer = 0
 
+    def _clear_callback_response_state(self):
+        self.callback_response_mode = None
+        self.callback_stay_steps_remaining = 0
+        self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
+
     def start_attack(self):
         if not self.can_attack:
             return False
@@ -311,11 +322,26 @@ class Human:
         return True
 
     def force_recover_from_callback(self) -> bool:
+        return self.apply_callback_response(response="rejoin", stay_steps=0)
+
+    def apply_callback_response(self, response: str, stay_steps: int = 0) -> bool:
         if self.mode != HumanMode.DISTRACTED:
             return False
-        self.transition_to(HumanMode.FOLLOWING, reason="callback_forced_recovery")
-        self.distracted_timer = 0
-        return True
+
+        if response == "rejoin":
+            self.transition_to(HumanMode.FOLLOWING, reason="callback_rejoin")
+            return True
+
+        if response == "stay":
+            self.callback_response_mode = "stay"
+            self.callback_stay_steps_remaining = max(1, int(stay_steps))
+            return True
+
+        if response == "ignore":
+            self.callback_response_mode = "ignore"
+            return True
+
+        raise ValueError(f"Unknown callback response: {response}")
 
     def _maybe_trigger_following_variant(self):
         if self.following_variant_mode is None or self.following_variant_probability <= 0.0:
@@ -522,30 +548,73 @@ class Human:
         - Recover automatically after duration
         """
 
-        # Increment internal timer (also used by env callback trigger logic).
-        self.distracted_timer += 1
+        if self.callback_response_mode == "stay":
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            self.callback_stay_steps_remaining = max(0, int(self.callback_stay_steps_remaining) - 1)
+            if self.callback_stay_steps_remaining <= 0:
+                self.callback_response_mode = None
+            return np.zeros(3, dtype=np.float32)
 
-        # On first distracted step → choose a new random waypoint
-        if self.distracted_timer == 1:
-            self.current_waypoint = self._random_waypoint()
+        if self.callback_response_mode == "ignore":
+            self.distracted_timer += 1
 
-        # Create modified context that ignores robot
-        distracted_ctx = ctx.copy()
-        distracted_ctx["robot_xy"] = None  # disable human-robot attraction
+            robot_xy = ctx.get("robot_xy", None)
+            if robot_xy is not None:
+                away = np.array([x - float(robot_xy[0]), y - float(robot_xy[1])], dtype=np.float32)
+            else:
+                away = np.array(self.callback_ignore_last_dir, dtype=np.float32)
 
-        # Reuse wandering behavior
-        action = self._step_wandering(data, distracted_ctx)
+            away_norm = float(np.linalg.norm(away))
+            if away_norm > NORM_EPS:
+                away_dir = away / away_norm
+            else:
+                last_norm = float(np.linalg.norm(self.callback_ignore_last_dir))
+                if last_norm > NORM_EPS:
+                    away_dir = self.callback_ignore_last_dir / last_norm
+                else:
+                    away_dir = np.array([np.cos(yaw), np.sin(yaw)], dtype=np.float32)
 
-        # Slow down movement to make distraction visible
-        action[0:2] *= DISTRACTED_SPEED_SCALE  # reduce translation speed
+            self.callback_ignore_last_dir = np.array(away_dir, dtype=np.float32)
+            v_away = float(DISTRACTED_SPEED_SCALE * self.max_speed) * away_dir
+            v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
+            v_total = v_away + v_repulsion
+            speed = float(np.linalg.norm(v_total))
+            if speed > self.max_speed and speed > NORM_EPS:
+                v_total = v_total / speed * self.max_speed
+                speed = float(np.linalg.norm(v_total))
 
-        # Optional: slight random yaw noise for realism
-        action[2] += np.random.uniform(DISTRACTED_YAW_NOISE_MIN, DISTRACTED_YAW_NOISE_MAX)
+            desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > NORM_EPS else yaw
+            yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+            self.last_v_follow = np.array(v_away, dtype=np.float32)
+            self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        else:
+            # Increment internal timer (also used by env callback trigger logic).
+            self.distracted_timer += 1
+
+            # On first distracted step → choose a new random waypoint
+            if self.distracted_timer == 1:
+                self.current_waypoint = self._random_waypoint()
+
+            # Create modified context that ignores robot
+            distracted_ctx = ctx.copy()
+            distracted_ctx["robot_xy"] = None  # disable human-robot attraction
+
+            # Reuse wandering behavior
+            action = self._step_wandering(data, distracted_ctx)
+
+            # Slow down movement to make distraction visible
+            action[0:2] *= DISTRACTED_SPEED_SCALE  # reduce translation speed
+
+            # Optional: slight random yaw noise for realism
+            action[2] += np.random.uniform(DISTRACTED_YAW_NOISE_MIN, DISTRACTED_YAW_NOISE_MAX)
 
         # Recover after duration
         if self.distracted_timer > self.distracted_duration:
             self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
-            self.distracted_timer = 0
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
         return action

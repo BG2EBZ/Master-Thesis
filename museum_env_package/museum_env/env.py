@@ -48,6 +48,10 @@ HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
 CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
+CALLBACK_REJOIN_PROB = 0.4
+CALLBACK_STAY_PROB = 0.3
+CALLBACK_IGNORE_PROB = 0.3
+CALLBACK_STAY_STEPS = 400
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
@@ -161,6 +165,8 @@ class MuseumEnv(gym.Env):
         self.callback_target_whitelist = set(CALLBACK_TARGET_WHITELIST_DEFAULT)
         self.callback_triggered_for_current_distracted = []
         self.callback_active_target_idx = None
+        self.callback_last_response = None
+        self.callback_last_response_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
         self.fear_active = False
@@ -249,6 +255,9 @@ class MuseumEnv(gym.Env):
             "callback_triggered": False,
             "callback_completed": False,
             "callback_forced_recovery": False,
+            "callback_response_rejoin": False,
+            "callback_response_stay": False,
+            "callback_response_ignore": False,
             "happy_triggered": False,
             "happy_completed": False,
             "fear_triggered": False,
@@ -385,6 +394,20 @@ class MuseumEnv(gym.Env):
         v_xy = MOVE_BACK_SPEED * direction
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
+    @staticmethod
+    def _sample_callback_response():
+        u = float(np.random.rand())
+        rejoin_threshold = CALLBACK_REJOIN_PROB
+        stay_threshold = rejoin_threshold + CALLBACK_STAY_PROB
+        ignore_threshold = stay_threshold + CALLBACK_IGNORE_PROB
+        if u < rejoin_threshold:
+            return "rejoin"
+        if u < stay_threshold:
+            return "stay"
+        if u < ignore_threshold:
+            return "ignore"
+        return "ignore"
+
     def _apply_robot_base_color_from_robot_emotion(self):
         if self.robot.emotion == RobotEmotion.FEAR:
             self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_FEAR
@@ -472,6 +495,8 @@ class MuseumEnv(gym.Env):
         self.attack_hit_once = False
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
         self.callback_active_target_idx = None
+        self.callback_last_response = None
+        self.callback_last_response_target_idx = None
         self.move_back_active = False
         self.move_back_attacker_idx = None
         self.fear_active = False
@@ -755,8 +780,25 @@ class MuseumEnv(gym.Env):
             recover_idx = self.callback_active_target_idx
             if recover_idx is not None and 0 <= recover_idx < len(self.humans):
                 recover_human = self.humans[recover_idx]
-                recovered = recover_human.force_recover_from_callback()
-                if recovered:
+                if recover_human.mode == HumanMode.DISTRACTED:
+                    callback_response = self._sample_callback_response()
+                    recovered = recover_human.apply_callback_response(
+                        response=callback_response,
+                        stay_steps=CALLBACK_STAY_STEPS,
+                    )
+                else:
+                    callback_response = None
+                    recovered = False
+
+                if recovered and callback_response is not None:
+                    self.callback_last_response = str(callback_response)
+                    self.callback_last_response_target_idx = int(recover_idx)
+                    events[f"callback_response_{callback_response}"] = True
+                    self._log_event(
+                        f">>> person{recover_idx + 1} callback response: {callback_response}."
+                    )
+
+                if recovered and callback_response == "rejoin":
                     events["callback_forced_recovery"] = True
                     hold_steps = max(1, int(round(ROBOT_HAPPY_HOLD_SECONDS / float(self.timestep))))
                     self.robot.trigger_happy(hold_steps)
@@ -1045,6 +1087,9 @@ class MuseumEnv(gym.Env):
                 "callback_triggered": bool(events["callback_triggered"]),
                 "callback_completed": bool(events["callback_completed"]),
                 "callback_forced_recovery": bool(events["callback_forced_recovery"]),
+                "callback_response_rejoin": bool(events["callback_response_rejoin"]),
+                "callback_response_stay": bool(events["callback_response_stay"]),
+                "callback_response_ignore": bool(events["callback_response_ignore"]),
                 "happy_triggered": bool(events["happy_triggered"]),
                 "happy_completed": bool(events["happy_completed"]),
                 "fear_triggered": bool(events["fear_triggered"]),
@@ -1069,6 +1114,16 @@ class MuseumEnv(gym.Env):
                     else None
                 ),
                 "callback_hold_remaining": int(self.robot.callback_hold_steps_remaining),
+                "callback_last_response": (
+                    str(self.callback_last_response)
+                    if self.callback_last_response is not None
+                    else None
+                ),
+                "callback_last_response_target_idx": (
+                    int(self.callback_last_response_target_idx)
+                    if self.callback_last_response_target_idx is not None
+                    else None
+                ),
                 "move_back_active": bool(self.move_back_active),
                 "move_back_attacker_idx": (
                     int(self.move_back_attacker_idx) if self.move_back_attacker_idx is not None else None
