@@ -1,5 +1,7 @@
 import numpy as np
 
+from .human import HumanMode
+
 ROBOT_WAYPOINT_REACHED_DIST = 0.2
 ROBOT_YAW_RATE_LIMIT = 50.0
 ROBOT_TURN_DONE_YAW_ERR = 0.05
@@ -206,7 +208,7 @@ class Robot:
             self.emotion = RobotEmotion.FEAR
             return self.emotion
         for mode in human_modes:
-            if mode in ("distracted", "overwhelmed"):
+            if mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
                 self.emotion = RobotEmotion.SAD
                 return self.emotion
         if self.happy_hold_steps_remaining > 0:

@@ -95,7 +95,7 @@ class Human:
         self.waypoint_threshold = waypoint_threshold
         # If True, current_waypoint is managed externally (e.g., follow robot)
         self.external_waypoint = False
-        self.mode = HumanMode.WANDERING
+        setattr(self, "mode", None)
 
         self.context = HumanContext()
         self.enable_event_logs = True
@@ -139,8 +139,10 @@ class Human:
         self.attack_speed = ATTACK_DEFAULT_SPEED
         self.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
         self.attack_hit_this_step = False
+        self.transition_to(HumanMode.WANDERING, reason="init", force=True)
 
-    def set_mode(self, mode: str):
+    @staticmethod
+    def _validate_mode(mode: str):
         if mode not in (
             HumanMode.WANDERING,
             HumanMode.FOLLOWING,
@@ -152,9 +154,35 @@ class Human:
         ):
             raise ValueError(f"Unknown human mode: {mode}")
 
-        if self.mode == HumanMode.IMPATIENT and mode != HumanMode.IMPATIENT:
+    def _on_exit_mode(self, prev_mode: str, next_mode: str, reason: Optional[str] = None):
+        if prev_mode == HumanMode.IMPATIENT and next_mode != HumanMode.IMPATIENT:
             self._stop_impatient()
-        self.mode = mode
+        if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
+            self.distracted_timer = 0
+        if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
+            self.reset_overwhelmed_state()
+        if prev_mode == HumanMode.ATTACK and next_mode != HumanMode.ATTACK:
+            self.attack_hit_this_step = False
+
+    def _on_enter_mode(self, prev_mode: Optional[str], next_mode: str, reason: Optional[str] = None):
+        if next_mode == HumanMode.DISTRACTED:
+            self.distracted_timer = 0
+        if next_mode == HumanMode.ATTACK:
+            self.attack_hit_this_step = False
+
+    def transition_to(self, next_mode: str, reason: Optional[str] = None, force: bool = False) -> bool:
+        self._validate_mode(next_mode)
+        prev_mode = self.mode
+        if (not force) and prev_mode == next_mode:
+            return False
+        if prev_mode is not None:
+            self._on_exit_mode(prev_mode=prev_mode, next_mode=next_mode, reason=reason)
+        self.mode = next_mode
+        self._on_enter_mode(prev_mode=prev_mode, next_mode=next_mode, reason=reason)
+        return True
+
+    def set_mode(self, mode: str):
+        self.transition_to(mode, reason="set_mode")
 
     def reset_overwhelmed_state(self):
         self.overwhelmed_stage = None
@@ -167,7 +195,7 @@ class Human:
         """Reset per-episode dynamic state while keeping static config."""
         self.step_count = 0
         self.external_waypoint = False
-        self.mode = HumanMode.WANDERING
+        self.transition_to(HumanMode.WANDERING, reason="episode_reset", force=True)
         self.context = HumanContext()
         self.current_waypoint = self._random_waypoint()
 
@@ -236,7 +264,7 @@ class Human:
         else:
             leave_dir = diff / dist
 
-        self.mode = HumanMode.OVERWHELMED
+        self.transition_to(HumanMode.OVERWHELMED, reason="trigger_overwhelmed")
         self.overwhelmed_stage = "backoff"
         self.overwhelmed_leave_timer = 0
         self.overwhelmed_leave_dir = leave_dir.astype(np.float32)
@@ -262,7 +290,7 @@ class Human:
         self.impatient_original_max_speed = float(self.max_speed)
         self.max_speed = float(self.impatient_original_max_speed * self.impatient_speed_multiplier)
         self.impatient_timer = 0
-        self.mode = HumanMode.IMPATIENT
+        self.transition_to(HumanMode.IMPATIENT, reason="trigger_impatient")
         self._log_event(f">>> {self.name} became IMPATIENT!")
         return True
 
@@ -277,9 +305,16 @@ class Human:
     def start_attack(self):
         if not self.can_attack:
             return False
-        self.mode = HumanMode.ATTACK
+        self.transition_to(HumanMode.ATTACK, reason="trigger_attack")
         self.attack_hit_this_step = False
         self._log_event(f">>> {self.name} became ATTACK!")
+        return True
+
+    def force_recover_from_callback(self) -> bool:
+        if self.mode != HumanMode.DISTRACTED:
+            return False
+        self.transition_to(HumanMode.FOLLOWING, reason="callback_forced_recovery")
+        self.distracted_timer = 0
         return True
 
     def _maybe_trigger_following_variant(self):
@@ -381,8 +416,7 @@ class Human:
                     return self._step_impatient(data, ctx)
 
             if variant == HumanMode.DISTRACTED:
-                self.mode = HumanMode.DISTRACTED
-                self.distracted_timer = 0
+                self.transition_to(HumanMode.DISTRACTED, reason="following_variant_distracted")
                 self._log_event(f">>> {self.name} became DISTRACTED!")
                 return self._step_distracted(data, ctx)
 
@@ -510,7 +544,7 @@ class Human:
 
         # Recover after duration
         if self.distracted_timer > self.distracted_duration:
-            self.mode = HumanMode.FOLLOWING
+            self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
             self.distracted_timer = 0
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
@@ -524,8 +558,7 @@ class Human:
         self.last_v_hr = np.zeros(2, dtype=np.float32)
 
         if self.overwhelmed_stage is None:
-            self.mode = HumanMode.FOLLOWING
-            self.reset_overwhelmed_state()
+            self.transition_to(HumanMode.FOLLOWING, reason="overwhelmed_invalid_stage_recover")
             return np.zeros(3, dtype=np.float32)
 
         leave_dir = np.array(self.overwhelmed_leave_dir, dtype=np.float32)
@@ -578,8 +611,7 @@ class Human:
         self.overwhelmed_leave_timer += 1
 
         if self.overwhelmed_leave_timer >= self.overwhelmed_leave_duration:
-            self.mode = HumanMode.FOLLOWING
-            self.reset_overwhelmed_state()
+            self.transition_to(HumanMode.FOLLOWING, reason="overwhelmed_timeout_recover")
             self._log_event(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
 
         return np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
@@ -610,7 +642,7 @@ class Human:
 
         if dist <= float(self.attack_hit_distance):
             self.attack_hit_this_step = True
-            self.mode = HumanMode.LISTENING
+            self.transition_to(HumanMode.LISTENING, reason="attack_hit_recover")
             self.last_v_follow = np.zeros(2, dtype=np.float32)
             self.last_v_repulsion = np.zeros(2, dtype=np.float32)
             self.last_v_hr = np.zeros(2, dtype=np.float32)

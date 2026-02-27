@@ -755,9 +755,8 @@ class MuseumEnv(gym.Env):
             recover_idx = self.callback_active_target_idx
             if recover_idx is not None and 0 <= recover_idx < len(self.humans):
                 recover_human = self.humans[recover_idx]
-                if recover_human.mode == HumanMode.DISTRACTED:
-                    recover_human.set_mode(HumanMode.FOLLOWING)
-                    recover_human.distracted_timer = 0
+                recovered = recover_human.force_recover_from_callback()
+                if recovered:
                     events["callback_forced_recovery"] = True
                     hold_steps = max(1, int(round(ROBOT_HAPPY_HOLD_SECONDS / float(self.timestep))))
                     self.robot.trigger_happy(hold_steps)
