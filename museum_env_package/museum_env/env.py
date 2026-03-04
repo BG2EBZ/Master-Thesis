@@ -56,6 +56,9 @@ MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
 ROBOT_FEAR_DISTANCE_THRESHOLD = 0.8
+FEAR_RESPONSE_MOVE_BACK_PROB = 0.4
+FEAR_RESPONSE_STAY_PROB = 0.3
+FEAR_RESPONSE_CONTINUE_HIT_PROB = 0.3
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
@@ -171,6 +174,10 @@ class MuseumEnv(gym.Env):
         self.move_back_attacker_idx = None
         self.fear_active = False
         self.fear_attacker_idx = None
+        self.fear_current_response_mode = None
+        self.fear_current_response_target_idx = None
+        self.fear_last_response = None
+        self.fear_last_response_target_idx = None
 
         # --- Initialize humans ---
         self.humans = [
@@ -262,6 +269,9 @@ class MuseumEnv(gym.Env):
             "happy_completed": False,
             "fear_triggered": False,
             "fear_completed": False,
+            "fear_response_move_back": False,
+            "fear_response_stay": False,
+            "fear_response_continue_hit": False,
             "move_back_triggered": False,
             "move_back_completed": False,
         }
@@ -408,6 +418,68 @@ class MuseumEnv(gym.Env):
             return "ignore"
         return "ignore"
 
+    @staticmethod
+    def _sample_fear_response():
+        u = float(np.random.rand())
+        move_back_threshold = FEAR_RESPONSE_MOVE_BACK_PROB
+        stay_threshold = move_back_threshold + FEAR_RESPONSE_STAY_PROB
+        continue_hit_threshold = stay_threshold + FEAR_RESPONSE_CONTINUE_HIT_PROB
+        if u < move_back_threshold:
+            return "move_back"
+        if u < stay_threshold:
+            return "stay"
+        if u < continue_hit_threshold:
+            return "continue_hit"
+        return "continue_hit"
+
+    def _apply_fear_response_on_trigger(self, events):
+        if not events.get("fear_triggered", False):
+            return
+
+        idx = self.fear_attacker_idx
+        if idx is None or idx < 0 or idx >= len(self.humans):
+            return
+
+        human = self.humans[idx]
+        if human.mode != HumanMode.ATTACK:
+            return
+
+        response = self._sample_fear_response()
+        if response == "move_back":
+            anchor = human.attack_origin_listen_waypoint
+            if anchor is not None:
+                human.current_waypoint = np.array(anchor, dtype=np.float32)
+            human.transition_to(HumanMode.LISTENING, reason="fear_response_move_back")
+        elif response == "stay":
+            # Keep ATTACK mode and freeze movement while fear is active.
+            pass
+        elif response == "continue_hit":
+            # Keep ATTACK behavior unchanged.
+            pass
+        else:
+            raise ValueError(f"Unknown fear response: {response}")
+
+        events[f"fear_response_{response}"] = True
+        self.fear_current_response_mode = str(response)
+        self.fear_current_response_target_idx = int(idx)
+        self.fear_last_response = str(response)
+        self.fear_last_response_target_idx = int(idx)
+        self._log_event(f">>> person{idx + 1} fear response: {response}.")
+
+    def _resolve_fear_response_on_complete(self, events):
+        if not events.get("fear_completed", False):
+            return
+
+        if self.fear_current_response_mode == "stay":
+            idx = self.fear_current_response_target_idx
+            if idx is not None and 0 <= idx < len(self.humans):
+                human = self.humans[idx]
+                if human.mode == HumanMode.ATTACK:
+                    human.transition_to(HumanMode.LISTENING, reason="fear_stay_resolve_to_listening")
+
+        self.fear_current_response_mode = None
+        self.fear_current_response_target_idx = None
+
     def _apply_robot_base_color_from_robot_emotion(self):
         if self.robot.emotion == RobotEmotion.FEAR:
             self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_FEAR
@@ -501,6 +573,10 @@ class MuseumEnv(gym.Env):
         self.move_back_attacker_idx = None
         self.fear_active = False
         self.fear_attacker_idx = None
+        self.fear_current_response_mode = None
+        self.fear_current_response_target_idx = None
+        self.fear_last_response = None
+        self.fear_last_response_target_idx = None
 
         # Reset humans
         for human in self.humans:
@@ -565,24 +641,46 @@ class MuseumEnv(gym.Env):
                 ctrl_idx = 3 + tgt_idx * 3
                 self.data.ctrl[ctrl_idx:ctrl_idx + 3] = tgt_action
 
-        # Allow attack human to move in attack mode during explanation
+        # Allow attack human behavior during explanation (attack/listen move-back).
         attack_idx = self.attack_target_idx
         if 0 <= attack_idx < len(self.humans):
             attack_human = self.humans[attack_idx]
+            attack_ctx = {
+                "robot_xy": robot_xy,
+                "robot_yaw": ryaw,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "stand_threshold": self.listen_stand_threshold,
+            }
             if attack_human.mode == HumanMode.ATTACK:
-                attack_ctx = {
-                    "robot_xy": robot_xy,
-                    "robot_yaw": ryaw,
-                    "repulsion": np.zeros(2, dtype=np.float32),
-                    "stand_threshold": self.listen_stand_threshold,
-                }
-                attack_action = attack_human.step(self.model, self.data, attack_ctx)
+                should_stay_freeze = bool(
+                    self.fear_active
+                    and self.fear_current_response_mode == "stay"
+                    and self.fear_current_response_target_idx == attack_idx
+                )
+                if should_stay_freeze:
+                    attack_action = np.zeros(3, dtype=np.float32)
+                    attack_human.attack_hit_this_step = False
+                    attack_human.last_v_follow = np.zeros(2, dtype=np.float32)
+                    attack_human.last_v_repulsion = np.zeros(2, dtype=np.float32)
+                    attack_human.last_v_hr = np.zeros(2, dtype=np.float32)
+                else:
+                    attack_action = attack_human.step(self.model, self.data, attack_ctx)
+                    if attack_human.attack_hit_this_step and not self.attack_hit_once:
+                        events["attack_hit"] = True
+                        self.attack_hit_once = True
                 human_actions[attack_idx] = attack_action
                 attack_ctrl_idx = 3 + attack_idx * 3
                 self.data.ctrl[attack_ctrl_idx:attack_ctrl_idx + 3] = attack_action
-                if attack_human.attack_hit_this_step and not self.attack_hit_once:
-                    events["attack_hit"] = True
-                    self.attack_hit_once = True
+            elif attack_human.mode == HumanMode.LISTENING:
+                is_move_back_response = bool(
+                    (self.fear_current_response_mode == "move_back" and self.fear_current_response_target_idx == attack_idx)
+                    or (self.fear_last_response == "move_back" and self.fear_last_response_target_idx == attack_idx)
+                )
+                if is_move_back_response:
+                    attack_action = attack_human.step(self.model, self.data, attack_ctx)
+                    human_actions[attack_idx] = attack_action
+                    attack_ctrl_idx = 3 + attack_idx * 3
+                    self.data.ctrl[attack_ctrl_idx:attack_ctrl_idx + 3] = attack_action
 
         move_back_was_active = bool(self.move_back_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
@@ -663,6 +761,8 @@ class MuseumEnv(gym.Env):
             robot_xy=np.array([rx, ry], dtype=np.float32),
             human_xy=human_xy,
         )
+        self._apply_fear_response_on_trigger(events)
+        self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
@@ -873,6 +973,8 @@ class MuseumEnv(gym.Env):
             robot_xy=np.array([rx, ry], dtype=np.float32),
             human_xy=human_xy,
         )
+        self._apply_fear_response_on_trigger(events)
+        self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
@@ -1094,6 +1196,9 @@ class MuseumEnv(gym.Env):
                 "happy_completed": bool(events["happy_completed"]),
                 "fear_triggered": bool(events["fear_triggered"]),
                 "fear_completed": bool(events["fear_completed"]),
+                "fear_response_move_back": bool(events["fear_response_move_back"]),
+                "fear_response_stay": bool(events["fear_response_stay"]),
+                "fear_response_continue_hit": bool(events["fear_response_continue_hit"]),
                 "move_back_triggered": bool(events["move_back_triggered"]),
                 "move_back_completed": bool(events["move_back_completed"]),
             },
@@ -1135,6 +1240,16 @@ class MuseumEnv(gym.Env):
                 "happy_hold_seconds": float(ROBOT_HAPPY_HOLD_SECONDS),
                 "fear_active": bool(self.fear_active),
                 "fear_attacker_idx": int(self.fear_attacker_idx) if self.fear_attacker_idx is not None else None,
+                "fear_last_response": (
+                    str(self.fear_last_response)
+                    if self.fear_last_response is not None
+                    else None
+                ),
+                "fear_last_response_target_idx": (
+                    int(self.fear_last_response_target_idx)
+                    if self.fear_last_response_target_idx is not None
+                    else None
+                ),
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),

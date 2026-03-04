@@ -31,6 +31,13 @@ distance to humans)
 learning phase
 
 
+Potential robot behaviors:
+
+- Change to Silent Mode if someone is sensory overload?
+- Yield or Give Way when someone is impatient?
+- Quiet Zone Guidance for overwhelmed person?
+
+
 Info schema (current):
 
 - info["events"]

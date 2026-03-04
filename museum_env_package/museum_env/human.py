@@ -142,6 +142,7 @@ class Human:
         self.attack_speed = ATTACK_DEFAULT_SPEED
         self.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
         self.attack_hit_this_step = False
+        self.attack_origin_listen_waypoint = None
         self.transition_to(HumanMode.WANDERING, reason="init", force=True)
 
     @staticmethod
@@ -218,6 +219,7 @@ class Human:
         self.max_speed = float(self.base_max_speed)
         self.reset_overwhelmed_state()
         self.attack_hit_this_step = False
+        self.attack_origin_listen_waypoint = None
 
     def set_event_logging(self, enabled: bool):
         self.enable_event_logs = bool(enabled)
@@ -316,6 +318,7 @@ class Human:
     def start_attack(self):
         if not self.can_attack:
             return False
+        self.attack_origin_listen_waypoint = np.array(self.current_waypoint, dtype=np.float32)
         self.transition_to(HumanMode.ATTACK, reason="trigger_attack")
         self.attack_hit_this_step = False
         self._log_event(f">>> {self.name} became ATTACK!")
