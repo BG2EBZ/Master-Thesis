@@ -51,10 +51,16 @@ Info schema (current):
   - callback_triggered
   - callback_completed
   - callback_forced_recovery
+  - callback_response_rejoin
+  - callback_response_stay
+  - callback_response_ignore
   - happy_triggered
   - happy_completed
   - fear_triggered
   - fear_completed
+  - fear_response_move_back
+  - fear_response_stay
+  - fear_response_continue_hit
   - move_back_triggered
   - move_back_completed
 
@@ -63,15 +69,18 @@ Info schema (current):
   - listen_mode
   - listen_wait: active/counter/steps/remaining/is_final
   - callback_active/callback_target_idx/callback_hold_remaining
+  - callback_last_response/callback_last_response_target_idx
   - move_back_active/move_back_attacker_idx/move_back_safe_distance/move_back_speed
   - robot_emotion
   - happy_remaining_steps
   - happy_hold_seconds
   - fear_active
   - fear_attacker_idx
+  - fear_last_response/fear_last_response_target_idx
   - fear_distance_threshold
   - speaker_active
   - robot_text_label
+  - external_action_received/external_action_used
   - terminated_reason
 
 - info["robot"]
@@ -117,3 +126,18 @@ print(info["status"]["listen_wait"]["remaining"])
 print(info["robot"]["action"]["vx"])
 print(info["humans"]["all_reached"])
 ```
+
+FSM modules (decoupled transition tables):
+
+- `museum_env/robot_fsm.py`
+  - `Transition` + `apply_transitions(...)`
+  - robot transition table for `move/callback/stop/wait/listen/move_back`
+  - used for waiting-branch MOVE_BACK switching and active-branch shadow check
+
+- `museum_env/human_fsm.py`
+  - `Transition` + `apply_transitions(...)`
+  - human transition table for env-level mode switching (follow/listen/wandering)
+  - includes callback/fear transition entries for testable rule definition
+
+- `MuseumEnv(enable_fsm_shadow_check=True)`
+  - enables legacy-vs-FSM shadow mismatch logs (`[FSM_SHADOW][...]`)

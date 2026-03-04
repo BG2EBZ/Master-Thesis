@@ -8,7 +8,12 @@ import numpy as np
 from gymnasium import spaces
 
 from .human import Human, HumanMode
+from .human_fsm import build_transition_table as build_human_fsm_transition_table
+from .human_fsm import decide_mode as decide_human_fsm_mode
 from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotEmotion, RobotMode
+from .robot_fsm import ROBOT_STATE_WAIT as ROBOT_FSM_WAIT_STATE
+from .robot_fsm import build_transition_table as build_robot_fsm_transition_table
+from .robot_fsm import decide_mode as decide_robot_fsm_mode
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -80,10 +85,12 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
+        enable_fsm_shadow_check: bool = False,
     ):
         super().__init__()
         self.enable_event_logs = bool(enable_event_logs)
         self.strict_action_validation = bool(strict_action_validation)
+        self.enable_fsm_shadow_check = bool(enable_fsm_shadow_check)
         logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
 
         if xml_path is None:
@@ -135,6 +142,8 @@ class MuseumEnv(gym.Env):
 
         # Robot agent
         self.robot = Robot(waypoints=waypoints, v_max=1.5, k_v=20.0, k_yaw=20.0)
+        self.robot_fsm_table = build_robot_fsm_transition_table()
+        self.human_fsm_table = build_human_fsm_transition_table()
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
@@ -343,6 +352,45 @@ class MuseumEnv(gym.Env):
         for idx, human in enumerate(self.humans):
             if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
                 self.callback_triggered_for_current_distracted[idx] = False
+
+    def _log_fsm_shadow_mismatch(self, tag: str, msg: str):
+        if not self.enable_fsm_shadow_check:
+            return
+        self._log_event(f"[FSM_SHADOW][{tag}] {msg}")
+
+    @staticmethod
+    def _legacy_wait_robot_decision(move_back_was_active: bool, threat_exists: bool, threat_too_close: bool):
+        if not threat_exists:
+            return "stop", "clear_move_back"
+        if threat_too_close:
+            return "move_back", "set_move_back"
+        if move_back_was_active:
+            return "move_back", "hold_move_back"
+        return "stop", "clear_move_back"
+
+    def _legacy_active_human_target_mode(self, mode: str):
+        if self.robot.listen_mode:
+            if mode != HumanMode.OVERWHELMED:
+                return HumanMode.LISTENING
+            return mode
+
+        if mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
+            return HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING
+        return mode
+
+    def _build_active_human_fsm_ctx(self):
+        return {
+            "follow_enabled": bool(self.follow_humans),
+            "robot_listen_mode": bool(self.robot.listen_mode),
+            "variant_trigger": None,
+            "distracted_timeout": False,
+            "callback_response": None,
+            "fear_response": None,
+            "fear_completed": False,
+            "fear_stay_active": False,
+            "attack_hit": False,
+            "impatient_timeout": False,
+        }
 
     def _build_callback_request(self, human_xy, robot_pose):
         if not self._is_robot_in_move_stage(robot_pose):
@@ -684,14 +732,50 @@ class MuseumEnv(gym.Env):
 
         move_back_was_active = bool(self.move_back_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
-        if threat is None:
-            self.move_back_active = False
-            self.move_back_attacker_idx = None
-            self.robot.mode = RobotMode.STOP
-            if move_back_was_active:
-                events["move_back_completed"] = True
-                self._log_event(">>> Robot MOVE_BACK completed (attack ended).")
-        elif threat["dist"] < MOVE_BACK_SAFE_DISTANCE:
+        threat_exists = bool(threat is not None)
+        threat_dist = float(threat["dist"]) if threat_exists else None
+        threat_too_close = bool(threat_exists and threat_dist < MOVE_BACK_SAFE_DISTANCE)
+
+        wait_current_mode = RobotMode.MOVE_BACK if move_back_was_active else ROBOT_FSM_WAIT_STATE
+        wait_robot_fsm_ctx = {
+            "callback_request_exists": False,
+            "callback_done": False,
+            "reached_display": False,
+            "turn_done": False,
+            "listen_mode": bool(self.robot.listen_mode),
+            "callback_active": bool(self.robot.callback_active),
+            "threat_exists": threat_exists,
+            "threat_dist": threat_dist,
+            "move_back_safe_distance": float(MOVE_BACK_SAFE_DISTANCE),
+            "listen_wait_active": bool(self.listen_wait_active),
+            "listen_wait_done": False,
+            "final_listen_ready": False,
+        }
+        wait_robot_fsm = decide_robot_fsm_mode(
+            current_mode=wait_current_mode,
+            ctx=wait_robot_fsm_ctx,
+            table=self.robot_fsm_table,
+        )
+        wait_effects = wait_robot_fsm["effects"]
+
+        if self.enable_fsm_shadow_check:
+            legacy_mode, legacy_effect = self._legacy_wait_robot_decision(
+                move_back_was_active=move_back_was_active,
+                threat_exists=threat_exists,
+                threat_too_close=threat_too_close,
+            )
+            effect_key = next(iter(wait_effects.keys()), None)
+            if legacy_mode != wait_robot_fsm["next_mode"] or legacy_effect != effect_key:
+                self._log_fsm_shadow_mismatch(
+                    "robot-wait",
+                    (
+                        f"legacy=({legacy_mode}, {legacy_effect}) "
+                        f"fsm=({wait_robot_fsm['next_mode']}, {effect_key}) "
+                        f"events={wait_robot_fsm['events']}"
+                    ),
+                )
+
+        if wait_effects.get("set_move_back", False) and threat is not None:
             self.move_back_active = True
             self.move_back_attacker_idx = int(threat["idx"])
             self.robot.mode = RobotMode.MOVE_BACK
@@ -702,9 +786,13 @@ class MuseumEnv(gym.Env):
                     f">>> Robot MOVE_BACK triggered by person{self.move_back_attacker_idx + 1} "
                     f"(dist={threat['dist']:.3f}m)."
                 )
+        elif wait_effects.get("hold_move_back", False) and threat is not None:
+            self.move_back_active = True
+            self.move_back_attacker_idx = int(threat["idx"])
+            self.robot.mode = RobotMode.MOVE_BACK
         else:
-            # Attack is ongoing but safety distance is satisfied: hold position.
-            if move_back_was_active:
+            if (not wait_effects) and move_back_was_active and threat_exists and (not threat_too_close):
+                # Safety fallback: keep legacy "hold MOVE_BACK" semantics even if FSM table is incomplete.
                 self.move_back_active = True
                 self.move_back_attacker_idx = int(threat["idx"])
                 self.robot.mode = RobotMode.MOVE_BACK
@@ -712,6 +800,9 @@ class MuseumEnv(gym.Env):
                 self.move_back_active = False
                 self.move_back_attacker_idx = None
                 self.robot.mode = RobotMode.STOP
+                if move_back_was_active and (not threat_exists):
+                    events["move_back_completed"] = True
+                    self._log_event(">>> Robot MOVE_BACK completed (attack ended).")
 
         self.data.ctrl[0:3] = rb_action
 
@@ -854,6 +945,7 @@ class MuseumEnv(gym.Env):
         robot_pose = self._get_robot_pose()
         self._refresh_callback_rearm_flags()
         callback_request = self._build_callback_request(human_xy=human_xy, robot_pose=robot_pose)
+        robot_mode_before_step = str(self.robot.mode)
         callback_active_before_step = bool(self.robot.callback_active)
         robot_out = self.robot.step(
             robot_pose=robot_pose,
@@ -906,6 +998,45 @@ class MuseumEnv(gym.Env):
                     self._log_event(f">>> person{recover_idx + 1} forced recovery by CALLBACK -> FOLLOWING.")
             self.callback_active_target_idx = None
             self._log_event(">>> Robot CALLBACK completed.")
+
+        if self.enable_fsm_shadow_check:
+            active_robot_fsm_ctx = {
+                "callback_request_exists": callback_request is not None,
+                "callback_done": bool(callback_active_before_step and (not self.robot.callback_active)),
+                "reached_display": bool(float(dist) < ROBOT_WAYPOINT_REACHED_DIST),
+                "turn_done": bool(self.robot.turn_done),
+                "listen_mode": bool(self.robot.listen_mode),
+                "callback_active": bool(self.robot.callback_active),
+                "threat_exists": False,
+                "threat_dist": None,
+                "move_back_safe_distance": float(MOVE_BACK_SAFE_DISTANCE),
+                "listen_wait_active": bool(self.listen_wait_active),
+                "listen_wait_done": False,
+                "final_listen_ready": False,
+            }
+            active_robot_fsm = decide_robot_fsm_mode(
+                current_mode=robot_mode_before_step,
+                ctx=active_robot_fsm_ctx,
+                table=self.robot_fsm_table,
+            )
+            if active_robot_fsm["next_mode"] != str(robot_mode):
+                self._log_fsm_shadow_mismatch(
+                    "robot-active",
+                    (
+                        f"legacy_mode={robot_mode} fsm_mode={active_robot_fsm['next_mode']} "
+                        f"events={active_robot_fsm['events']}"
+                    ),
+                )
+            legacy_enter_listen = bool(enter_listen)
+            fsm_enter_listen = bool(active_robot_fsm["effects"].get("enter_listen", False))
+            if legacy_enter_listen != fsm_enter_listen:
+                self._log_fsm_shadow_mismatch(
+                    "robot-active-enter-listen",
+                    (
+                        f"legacy_enter_listen={legacy_enter_listen} "
+                        f"fsm_enter_listen={fsm_enter_listen} events={active_robot_fsm['events']}"
+                    ),
+                )
 
         # If robot just entered listen, assign listen targets
         if enter_listen:
@@ -1031,6 +1162,7 @@ class MuseumEnv(gym.Env):
         human_actions = []
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
+        human_fsm_base_ctx = self._build_active_human_fsm_ctx()
 
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
@@ -1042,24 +1174,38 @@ class MuseumEnv(gym.Env):
                 "stand_threshold": self.listen_stand_threshold,
             }
 
-            if self.robot.listen_mode:
-                if human.mode != HumanMode.OVERWHELMED:
-                    human.set_mode(HumanMode.LISTENING)
-            else:
-                if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
-                    human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
+            mode_before = str(human.mode)
+            human_fsm = decide_human_fsm_mode(
+                current_mode=mode_before,
+                ctx=human_fsm_base_ctx,
+                table=self.human_fsm_table,
+            )
+            mode_after = str(human_fsm["next_mode"])
+            if mode_after != mode_before:
+                human.transition_to(mode_after, reason="env_human_fsm")
 
-                if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
-                    human.set_context(
-                        index=i,
-                        n_humans=n_humans,
-                        robot_pose=(rx, ry, ryaw),
-                        follow_radius=follow_radius,
-                        fan_half_angle=self.follow_fan_half_angle,
-                        impatient_front_offset=human.impatient_front_offset,
-                        robot_xy=np.array([rx, ry], dtype=np.float32),
-                        robot_yaw=ryaw,
+            if self.enable_fsm_shadow_check:
+                legacy_mode = str(self._legacy_active_human_target_mode(mode_before))
+                if mode_after != legacy_mode:
+                    self._log_fsm_shadow_mismatch(
+                        "human-active",
+                        (
+                            f"person={i+1} legacy_mode={legacy_mode} "
+                            f"fsm_mode={mode_after} from={mode_before} events={human_fsm['events']}"
+                        ),
                     )
+
+            if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
+                human.set_context(
+                    index=i,
+                    n_humans=n_humans,
+                    robot_pose=(rx, ry, ryaw),
+                    follow_radius=follow_radius,
+                    fan_half_angle=self.follow_fan_half_angle,
+                    impatient_front_offset=human.impatient_front_offset,
+                    robot_xy=np.array([rx, ry], dtype=np.float32),
+                    robot_yaw=ryaw,
+                )
 
             human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
