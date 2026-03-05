@@ -3,7 +3,6 @@ from typing import Callable, Iterable, Optional, Sequence
 
 
 ROBOT_STATE_WAIT = "wait"
-ROBOT_STATE_LISTEN = "listen"
 
 
 @dataclass(frozen=True)
@@ -64,12 +63,6 @@ def build_transition_table() -> list[Transition]:
             effects=lambda c: {"set_move_back": True},
         ),
         Transition(
-            src=ROBOT_STATE_LISTEN,
-            event="threat_too_close",
-            dst="move_back",
-            effects=lambda c: {"set_move_back": True},
-        ),
-        Transition(
             src="move_back",
             event="threat_too_close",
             dst="move_back",
@@ -88,12 +81,6 @@ def build_transition_table() -> list[Transition]:
             effects=lambda c: {"clear_move_back": True},
         ),
         Transition(
-            src=ROBOT_STATE_LISTEN,
-            event="threat_exists",
-            dst="stop",
-            effects=lambda c: {"clear_move_back": True},
-        ),
-        Transition(
             src="move_back",
             event="threat_cleared",
             dst="stop",
@@ -101,12 +88,6 @@ def build_transition_table() -> list[Transition]:
         ),
         Transition(
             src=ROBOT_STATE_WAIT,
-            event="threat_cleared",
-            dst="stop",
-            effects=lambda c: {"clear_move_back": True},
-        ),
-        Transition(
-            src=ROBOT_STATE_LISTEN,
             event="threat_cleared",
             dst="stop",
             effects=lambda c: {"clear_move_back": True},
@@ -125,10 +106,6 @@ def collect_events(ctx: dict) -> list[str]:
         events.append("reached_display")
     if ctx.get("turn_done", False):
         events.append("turn_done")
-    if ctx.get("listen_wait_done", False):
-        events.append("listen_wait_done")
-    if ctx.get("final_listen_ready", False):
-        events.append("final_listen_ready")
 
     threat_exists = bool(ctx.get("threat_exists", False))
     threat_dist = ctx.get("threat_dist", None)

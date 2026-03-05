@@ -1,5 +1,3 @@
 **/__pycache__/
 *.pyc
 **/videos/
-museum_env_package/museum_env/rules.py
-tests/

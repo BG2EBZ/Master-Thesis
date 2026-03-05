@@ -131,13 +131,30 @@ FSM modules (decoupled transition tables):
 
 - `museum_env/robot_fsm.py`
   - `Transition` + `apply_transitions(...)`
-  - robot transition table for `move/callback/stop/wait/listen/move_back`
-  - used for waiting-branch MOVE_BACK switching and active-branch shadow check
+  - robot transition table for `move/callback/stop/wait/move_back`
+  - used by env waiting branch for MOVE_BACK switching
 
 - `museum_env/human_fsm.py`
   - `Transition` + `apply_transitions(...)`
-  - human transition table for env-level mode switching (follow/listen/wandering)
-  - includes callback/fear transition entries for testable rule definition
+  - human transition table for env-level mode switching
+  - callback/fear response transitions provide effects consumed by env
 
-- `MuseumEnv(enable_fsm_shadow_check=True)`
-  - enables legacy-vs-FSM shadow mismatch logs (`[FSM_SHADOW][...]`)
+Env structure modules:
+
+- `museum_env/env_stepflows.py`
+  - waiting/active step flow orchestration
+- `museum_env/env_transitions.py`
+  - callback/fear/move_back transition helpers and FSM effects application
+- `museum_env/env_visuals.py`
+  - robot emotion color, text label visibility, speaking halo sync
+- `museum_env/env_info.py`
+  - event defaults, snapshot collection, info schema build
+- `museum_env/env_runtime.py`
+  - runtime state dataclass used by reset initialization
+
+Current execution closure:
+
+- robot wait branch: FSM decision + FSM effects (`set_move_back/hold_move_back/clear_move_back`)
+- human callback branch: FSM decision + FSM effects (`set_callback_submode/callback_stay_steps`)
+- human fear branch: FSM decision + FSM effects (`restore_listen_anchor/freeze_attack`)
+- no shadow/legacy comparison path in env runtime
