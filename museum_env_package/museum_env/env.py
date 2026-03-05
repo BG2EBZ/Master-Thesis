@@ -27,19 +27,19 @@ FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
 LISTEN_FAN_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.2
-LISTEN_WAIT_STEPS_DEFAULT = 1000
-OVERWHELMED_TARGET_IDX_DEFAULT = 1
-OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT = 200
-ATTACK_TARGET_IDX_DEFAULT = 2
-ATTACK_TRIGGER_WAIT_STEP_DEFAULT = OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT
+LISTEN_WAIT_STEPS_DEFAULT = 2000
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.67
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
-HUMAN1_DISTRACTED_PROB = 0.0005
-HUMAN5_IMPATIENT_PROB = 0.0005
+DISTRACTED_PROB_DEFAULT = 0.0005
+IMPATIENT_PROB_DEFAULT = 0.0005
+OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.003
+ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.003
+MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
+MAX_CONCURRENT_ATTACK_DEFAULT = 5
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
@@ -47,11 +47,10 @@ ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 1.0
-CALLBACK_TARGET_WHITELIST_DEFAULT = (0,)
 CALLBACK_REJOIN_PROB = 0.4
 CALLBACK_STAY_PROB = 0.3
 CALLBACK_IGNORE_PROB = 0.3
-CALLBACK_STAY_STEPS = 400
+CALLBACK_STAY_STEPS = 500
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
@@ -80,6 +79,10 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
+        distracted_prob: float = DISTRACTED_PROB_DEFAULT,
+        impatient_prob: float = IMPATIENT_PROB_DEFAULT,
+        overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
+        attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
     ):
         super().__init__()
         self.enable_event_logs = bool(enable_event_logs)
@@ -158,14 +161,15 @@ class MuseumEnv(gym.Env):
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self.listen_session_count = 0
-        self.overwhelmed_triggered_once = False
-        self.overwhelmed_target_idx = OVERWHELMED_TARGET_IDX_DEFAULT  # person2
-        self.overwhelmed_trigger_wait_step = OVERWHELMED_TRIGGER_WAIT_STEP_DEFAULT
-        self.attack_target_idx = ATTACK_TARGET_IDX_DEFAULT  # person3
-        self.attack_trigger_wait_step = ATTACK_TRIGGER_WAIT_STEP_DEFAULT
-        self.attack_triggered_once = False
+        self.distracted_prob = float(distracted_prob)
+        self.impatient_prob = float(impatient_prob)
+        self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
+        self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
+        self.max_concurrent_overwhelmed = MAX_CONCURRENT_OVERWHELMED_DEFAULT
+        self.max_concurrent_attack = MAX_CONCURRENT_ATTACK_DEFAULT
+        self.last_overwhelmed_trigger_indices = []
+        self.last_attack_trigger_indices = []
         self.attack_hit_once = False
-        self.callback_target_whitelist = set(CALLBACK_TARGET_WHITELIST_DEFAULT)
         self.callback_triggered_for_current_distracted = []
         self.callback_active_target_idx = None
         self.callback_last_response = None
@@ -195,15 +199,16 @@ class MuseumEnv(gym.Env):
 
         self._configure_human_following_variants()
 
-        self.humans[1].can_be_overwhelmed = True
-        if len(self.humans) > 2:
-            self.humans[2].can_attack = True
-            self.humans[2].attack_speed = ATTACK_SPEED_DEFAULT
-            self.humans[2].attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
-        if len(self.humans) > 4:
-            self.humans[4].impatient_duration = 2000
-            self.humans[4].impatient_speed_multiplier = 1.5
-            self.humans[4].impatient_front_offset = 1.0
+        # Set human parameters related to behaviors
+        for human in self.humans:
+            human.can_be_overwhelmed = True
+            human.can_attack = True
+            human.can_be_impatient = True
+            human.attack_speed = ATTACK_SPEED_DEFAULT
+            human.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
+            human.impatient_duration = 2000
+            human.impatient_speed_multiplier = 1.5
+            human.impatient_front_offset = 1.0
 
         # Cache MuJoCo body ids (static across episodes).
         self.robot_body_id = self.model.body("robot").id
@@ -222,11 +227,8 @@ class MuseumEnv(gym.Env):
 
     def _configure_human_following_variants(self):
         for human in self.humans:
-            human.configure_following_variant(None, 0.0)
-        if len(self.humans) > 0:
-            self.humans[0].configure_following_variant(HumanMode.DISTRACTED, HUMAN1_DISTRACTED_PROB)
-        if len(self.humans) > 4:
-            self.humans[4].configure_following_variant(HumanMode.IMPATIENT, HUMAN5_IMPATIENT_PROB)
+            human.following_distracted_probability = float(self.distracted_prob)
+            human.following_impatient_probability = float(self.impatient_prob)
 
     def _build_label_scene_option(self):
         opt = mujoco.MjvOption()
@@ -344,14 +346,15 @@ class MuseumEnv(gym.Env):
             if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
                 self.callback_triggered_for_current_distracted[idx] = False
 
+    # Callback the longest-distracted human
     def _build_callback_request(self, human_xy, robot_pose):
         if not self._is_robot_in_move_stage(robot_pose):
             return None
         hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
-        for idx in sorted(self.callback_target_whitelist):
-            if idx < 0 or idx >= len(self.humans):
+        candidates = []
+        for idx, human in enumerate(self.humans):
+            if idx >= human_xy.shape[0]:
                 continue
-            human = self.humans[idx]
             if human.mode != HumanMode.DISTRACTED:
                 continue
             if human.distracted_timer < CALLBACK_DISTRACTED_TRIGGER_STEPS:
@@ -359,14 +362,18 @@ class MuseumEnv(gym.Env):
             if idx < len(self.callback_triggered_for_current_distracted):
                 if self.callback_triggered_for_current_distracted[idx]:
                     continue
-            if idx >= human_xy.shape[0]:
-                continue
-            return {
-                "target_idx": int(idx),
-                "target_xy": np.array(human_xy[idx], dtype=np.float32),
-                "hold_steps": int(hold_steps),
-            }
-        return None
+            # Earliest distracted = largest distracted_timer.
+            candidates.append((int(human.distracted_timer), int(idx)))
+
+        if not candidates:
+            return None
+
+        _, target_idx = max(candidates, key=lambda item: (item[0], -item[1]))
+        return {
+            "target_idx": int(target_idx),
+            "target_xy": np.array(human_xy[target_idx], dtype=np.float32),
+            "hold_steps": int(hold_steps),
+        }
 
     def _get_nearest_attack_threat(self, robot_xy, human_xy):
         if human_xy.size == 0:
@@ -404,9 +411,8 @@ class MuseumEnv(gym.Env):
         v_xy = MOVE_BACK_SPEED * direction
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
-    @staticmethod
-    def _sample_callback_response():
-        u = float(np.random.rand())
+    def _sample_callback_response(self):
+        u = float(self.np_random.random())
         rejoin_threshold = CALLBACK_REJOIN_PROB
         stay_threshold = rejoin_threshold + CALLBACK_STAY_PROB
         ignore_threshold = stay_threshold + CALLBACK_IGNORE_PROB
@@ -418,9 +424,8 @@ class MuseumEnv(gym.Env):
             return "ignore"
         return "ignore"
 
-    @staticmethod
-    def _sample_fear_response():
-        u = float(np.random.rand())
+    def _sample_fear_response(self):
+        u = float(self.np_random.random())
         move_back_threshold = FEAR_RESPONSE_MOVE_BACK_PROB
         stay_threshold = move_back_threshold + FEAR_RESPONSE_STAY_PROB
         continue_hit_threshold = stay_threshold + FEAR_RESPONSE_CONTINUE_HIT_PROB
@@ -562,9 +567,9 @@ class MuseumEnv(gym.Env):
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self.listen_session_count = 0
-        self.overwhelmed_triggered_once = False
-        self.attack_triggered_once = False
         self.attack_hit_once = False
+        self.last_overwhelmed_trigger_indices = []
+        self.last_attack_trigger_indices = []
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
         self.callback_active_target_idx = None
         self.callback_last_response = None
@@ -611,76 +616,87 @@ class MuseumEnv(gym.Env):
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
 
         robot_xy = np.array([rx, ry], dtype=np.float32)
-        events["overwhelmed_triggered"] = self._maybe_trigger_overwhelmed_in_wait(
+
+        # Check if any overwhelmed/attack triggers are activated
+        overwhelmed_trigger_indices = self._maybe_trigger_overwhelmed_in_wait(
             robot_xy=robot_xy,
             human_xy=human_xy,
         )
-        events["attack_triggered"] = self._maybe_trigger_attack_in_wait(
+        attack_trigger_indices = self._maybe_trigger_attack_in_wait(
             robot_xy=robot_xy,
             human_xy=human_xy,
         )
+        self.last_overwhelmed_trigger_indices = list(overwhelmed_trigger_indices)
+        self.last_attack_trigger_indices = list(attack_trigger_indices)
+        events["overwhelmed_triggered"] = len(overwhelmed_trigger_indices) > 0
+        events["attack_triggered"] = len(attack_trigger_indices) > 0
 
         # Freeze everyone during explanation window.
         self.data.ctrl[:] = 0.0
         rb_action = np.zeros(3, dtype=np.float32)
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
 
-        # Let special states move during explanation window.
-        tgt_idx = self.overwhelmed_target_idx
-        if 0 <= tgt_idx < len(self.humans):
-            tgt_human = self.humans[tgt_idx]
-            if tgt_human.mode == HumanMode.OVERWHELMED:
-                ctx = {
-                    "robot_xy": robot_xy,
-                    "robot_yaw": ryaw,
-                    "repulsion": np.zeros(2, dtype=np.float32),
-                    "stand_threshold": self.listen_stand_threshold,
-                }
-                tgt_action = tgt_human.step(self.model, self.data, ctx)
-                human_actions[tgt_idx] = tgt_action
-                ctrl_idx = 3 + tgt_idx * 3
-                self.data.ctrl[ctrl_idx:ctrl_idx + 3] = tgt_action
+        # Let overwhelmed humans move during explanation.
+        for idx, human in enumerate(self.humans):
+            if human.mode != HumanMode.OVERWHELMED:
+                continue
+            ctx = {
+                "robot_xy": robot_xy,
+                "robot_yaw": ryaw,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "stand_threshold": self.listen_stand_threshold,
+            }
+            action = human.step(self.model, self.data, ctx)
+            human_actions[idx] = action
+            ctrl_idx = 3 + idx * 3
+            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
 
-        # Allow attack human behavior during explanation (attack/listen move-back).
-        attack_idx = self.attack_target_idx
-        if 0 <= attack_idx < len(self.humans):
-            attack_human = self.humans[attack_idx]
+        # Allow different humans behavior during explanation.
+        for idx, human in enumerate(self.humans):
             attack_ctx = {
                 "robot_xy": robot_xy,
                 "robot_yaw": ryaw,
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "stand_threshold": self.listen_stand_threshold,
             }
-            if attack_human.mode == HumanMode.ATTACK:
+            if human.mode == HumanMode.ATTACK:
                 should_stay_freeze = bool(
                     self.fear_active
                     and self.fear_current_response_mode == "stay"
-                    and self.fear_current_response_target_idx == attack_idx
+                    and self.fear_current_response_target_idx == idx
                 )
                 if should_stay_freeze:
-                    attack_action = np.zeros(3, dtype=np.float32)
-                    attack_human.attack_hit_this_step = False
-                    attack_human.last_v_follow = np.zeros(2, dtype=np.float32)
-                    attack_human.last_v_repulsion = np.zeros(2, dtype=np.float32)
-                    attack_human.last_v_hr = np.zeros(2, dtype=np.float32)
+                    action = np.zeros(3, dtype=np.float32)
+                    human.attack_hit_this_step = False
+                    human.last_v_follow = np.zeros(2, dtype=np.float32)
+                    human.last_v_repulsion = np.zeros(2, dtype=np.float32)
+                    human.last_v_hr = np.zeros(2, dtype=np.float32)
                 else:
-                    attack_action = attack_human.step(self.model, self.data, attack_ctx)
-                    if attack_human.attack_hit_this_step and not self.attack_hit_once:
+                    action = human.step(self.model, self.data, attack_ctx)
+                    if human.attack_hit_this_step and not self.attack_hit_once:
                         events["attack_hit"] = True
                         self.attack_hit_once = True
-                human_actions[attack_idx] = attack_action
-                attack_ctrl_idx = 3 + attack_idx * 3
-                self.data.ctrl[attack_ctrl_idx:attack_ctrl_idx + 3] = attack_action
-            elif attack_human.mode == HumanMode.LISTENING:
+                human_actions[idx] = action
+                ctrl_idx = 3 + idx * 3
+                self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
+                continue
+
+            if human.mode == HumanMode.LISTENING:
                 is_move_back_response = bool(
-                    (self.fear_current_response_mode == "move_back" and self.fear_current_response_target_idx == attack_idx)
-                    or (self.fear_last_response == "move_back" and self.fear_last_response_target_idx == attack_idx)
+                    (
+                        self.fear_current_response_mode == "move_back"
+                        and self.fear_current_response_target_idx == idx
+                    )
+                    or (
+                        self.fear_last_response == "move_back"
+                        and self.fear_last_response_target_idx == idx
+                    )
                 )
                 if is_move_back_response:
-                    attack_action = attack_human.step(self.model, self.data, attack_ctx)
-                    human_actions[attack_idx] = attack_action
-                    attack_ctrl_idx = 3 + attack_idx * 3
-                    self.data.ctrl[attack_ctrl_idx:attack_ctrl_idx + 3] = attack_action
+                    action = human.step(self.model, self.data, attack_ctx)
+                    human_actions[idx] = action
+                    ctrl_idx = 3 + idx * 3
+                    self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
 
         move_back_was_active = bool(self.move_back_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
@@ -800,51 +816,77 @@ class MuseumEnv(gym.Env):
         )
 
     def _maybe_trigger_overwhelmed_in_wait(self, robot_xy, human_xy):
-        # Trigger on the 200th waiting step of the first listen session only once per episode.
-        if self.overwhelmed_triggered_once:
-            return False
-        if self.listen_session_count != 1:
-            return False
-        if (self.listen_wait_counter + 1) != self.overwhelmed_trigger_wait_step:
-            return False
+        active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED]
+        slots = int(self.max_concurrent_overwhelmed) - len(active_indices)
+        if slots <= 0:
+            return []
 
-        idx = self.overwhelmed_target_idx
-        if idx < 0 or idx >= len(self.humans) or idx >= human_xy.shape[0]:
-            return False
+        candidates = []
+        for idx, human in enumerate(self.humans):
+            if idx >= human_xy.shape[0]:
+                continue
+            if not human.can_be_overwhelmed:
+                continue
+            if human.mode in (HumanMode.OVERWHELMED, HumanMode.ATTACK):
+                continue
+            candidates.append(idx)
 
-        human = self.humans[idx]
-        if not human.can_be_overwhelmed:
-            return False
+        if not candidates:
+            return []
 
-        human.start_overwhelmed(robot_xy=robot_xy, current_xy=human_xy[idx])
-        self.overwhelmed_triggered_once = True
-        return True
+        if self.overwhelmed_wait_trigger_prob <= 0.0:
+            return []
+
+        # trigger_prob means each candidate independently triggers at this step
+        self.np_random.shuffle(candidates)
+        triggered = []
+        for idx in candidates:
+            if float(self.np_random.random()) >= float(self.overwhelmed_wait_trigger_prob):
+                continue
+            self.humans[idx].start_overwhelmed(robot_xy=robot_xy, current_xy=human_xy[idx])
+            triggered.append(int(idx))
+            if len(triggered) >= slots:
+                break
+        return triggered
 
     def _maybe_trigger_attack_in_wait(self, robot_xy, human_xy):
-        if self.attack_triggered_once:
-            return False
-        if self.listen_session_count != 1:
-            return False
-        if (self.listen_wait_counter + 1) != self.attack_trigger_wait_step:
-            return False
+        active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.ATTACK]
+        slots = int(self.max_concurrent_attack) - len(active_indices)
+        if slots <= 0:
+            return []
 
-        idx = self.attack_target_idx
-        if idx < 0 or idx >= len(self.humans) or idx >= human_xy.shape[0]:
-            return False
+        candidates = []
+        for idx, human in enumerate(self.humans):
+            if idx >= human_xy.shape[0]:
+                continue
+            if not human.can_attack:
+                continue
+            if human.mode in (HumanMode.ATTACK, HumanMode.OVERWHELMED):
+                continue
+            candidates.append(idx)
 
-        human = self.humans[idx]
-        if not human.can_attack:
-            return False
+        if not candidates:
+            return []
 
-        started = human.start_attack()
-        if not started:
-            return False
+        if self.attack_wait_trigger_prob <= 0.0:
+            return []
 
-        self.attack_triggered_once = True
-        return True
+        # trigger_prob means each candidate independently triggers at this step
+        self.np_random.shuffle(candidates)
+        triggered = []
+        for idx in candidates:
+            if float(self.np_random.random()) >= float(self.attack_wait_trigger_prob):
+                continue
+            if self.humans[idx].start_attack():
+                triggered.append(int(idx))
+                if len(triggered) >= slots:
+                    break
+        return triggered
 
     def _step_active_branch(self, external_action_received=False):
         events = self._default_events()
+        self.last_overwhelmed_trigger_indices = []
+        self.last_attack_trigger_indices = []
 
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
@@ -1167,6 +1209,12 @@ class MuseumEnv(gym.Env):
         listen_wait_remaining = (
             max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
         )
+        active_overwhelmed_indices = [
+            int(idx) for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED
+        ]
+        active_attack_indices = [
+            int(idx) for idx, human in enumerate(self.humans) if human.mode == HumanMode.ATTACK
+        ]
 
         terminated_reason = None
         if events["final_listen_ready"]:
@@ -1253,6 +1301,14 @@ class MuseumEnv(gym.Env):
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
+                "active_overwhelmed_indices": active_overwhelmed_indices,
+                "active_attack_indices": active_attack_indices,
+                "last_overwhelmed_trigger_indices": [
+                    int(idx) for idx in self.last_overwhelmed_trigger_indices
+                ],
+                "last_attack_trigger_indices": [
+                    int(idx) for idx in self.last_attack_trigger_indices
+                ],
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

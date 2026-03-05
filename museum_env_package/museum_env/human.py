@@ -125,8 +125,8 @@ class Human:
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
-        self.following_variant_mode = None
-        self.following_variant_probability = 0.0
+        self.following_distracted_probability = 0.0
+        self.following_impatient_probability = 0.0
 
         self.can_be_overwhelmed = False
         self.overwhelmed_stage = None  # "backoff" | "leave"
@@ -232,9 +232,27 @@ class Human:
         p = float(probability)
         if p < 0.0 or p > 1.0:
             raise ValueError(f"following variant probability must be in [0, 1], got {probability}")
-        self.following_variant_mode = variant_mode
-        self.following_variant_probability = p
-        self.can_be_impatient = variant_mode == HumanMode.IMPATIENT
+        if variant_mode is None:
+            self.following_distracted_probability = 0.0
+            self.following_impatient_probability = 0.0
+            return
+        if variant_mode == HumanMode.DISTRACTED:
+            self.following_distracted_probability = p
+            self.following_impatient_probability = 0.0
+            return
+        self.following_distracted_probability = 0.0
+        self.following_impatient_probability = p
+
+    def configure_following_variant_probs(self, distracted_prob, impatient_prob):
+        # In the simplified setup, use impatient_prob=0.0 to model "distracted-only".
+        p_d = float(distracted_prob)
+        p_i = float(impatient_prob)
+        if p_d < 0.0 or p_d > 1.0:
+            raise ValueError(f"distracted probability must be in [0, 1], got {distracted_prob}")
+        if p_i < 0.0 or p_i > 1.0:
+            raise ValueError(f"impatient probability must be in [0, 1], got {impatient_prob}")
+        self.following_distracted_probability = p_d
+        self.following_impatient_probability = p_i
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -347,10 +365,20 @@ class Human:
         raise ValueError(f"Unknown callback response: {response}")
 
     def _maybe_trigger_following_variant(self):
-        if self.following_variant_mode is None or self.following_variant_probability <= 0.0:
-            return None
-
-        return self.following_variant_mode if np.random.rand() < self.following_variant_probability else None
+        trigger_distracted = (
+            self.following_distracted_probability > 0.0
+            and np.random.rand() < self.following_distracted_probability
+        )
+        trigger_impatient = (
+            self.following_impatient_probability > 0.0
+            and self.can_be_impatient
+            and np.random.rand() < self.following_impatient_probability
+        )
+        if trigger_distracted:
+            return HumanMode.DISTRACTED
+        if trigger_impatient:
+            return HumanMode.IMPATIENT
+        return None
 
 
     def set_context(self, **kwargs):
