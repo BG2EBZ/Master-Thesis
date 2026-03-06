@@ -30,6 +30,8 @@ HR_ATTRACTION_GAIN = 0.8
 NORM_EPS = 1e-6
 ATTACK_DEFAULT_SPEED = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
+WALL_CLEARANCE = 0.20
+MIN_SPEED_EPS = 1e-6
 
 @dataclass
 class HumanContext:
@@ -648,7 +650,7 @@ class Human:
             self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
-        return action
+        return self._apply_wall_constraint_to_action(action, data, ctx)
 
     def _step_overwhelmed(self, data, ctx):
         x, y, yaw = self._get_pose(data)
@@ -702,7 +704,8 @@ class Human:
                 v_xy = np.zeros(2, dtype=np.float32)
 
             yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-            return np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+            action = np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+            return self._apply_wall_constraint_to_action(action, data, ctx)
 
         # Leave stage: keep moving away for a fixed duration.
         leave_speed = min(self.overwhelmed_leave_speed, self.max_speed)
@@ -714,7 +717,8 @@ class Human:
             self.transition_to(HumanMode.FOLLOWING, reason="overwhelmed_timeout_recover")
             self._log_event(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
 
-        return np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        action = np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        return self._apply_wall_constraint_to_action(action, data, ctx)
 
     def _step_impatient(self, data, ctx):
         self.impatient_timer += 1
@@ -761,7 +765,8 @@ class Human:
 
         desired_yaw = np.arctan2(v_follow[1], v_follow[0]) if float(np.linalg.norm(v_follow)) > NORM_EPS else yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-        return np.array([v_follow[0], v_follow[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        action = np.array([v_follow[0], v_follow[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        return self._apply_wall_constraint_to_action(action, data, ctx)
 
 
     def _move(self, dx, dy, yaw, data, ctx):
@@ -814,11 +819,103 @@ class Human:
         #     # data.qvel[self.y_dof_idx] = 0.0
         #     return np.array([0.0, 0.0, 20.0 * yaw_err])
 
-        return np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err])
+        action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        return self._apply_wall_constraint_to_action(action, data, ctx)
     
     # -------------------------
     # Helpers
     # -------------------------
+
+    @staticmethod
+    def _walkable_rects(margin: float):
+        m = max(0.0, float(margin))
+        rects = [
+            # Room A: x[0,10], y[0,10]
+            (0.0 + m, 10.0 - m, 0.0 + m, 10.0 - m),
+            # Corridor: x[7,10], y[-10,0]
+            (7.0 + m, 10.0 - m, -10.0 + m, 0.0 - m),
+            # Room B: x[7,12], y[-15,-10]
+            (7.0 + m, 12.0 - m, -15.0 + m, -10.0 - m),
+            # Opening near y=0 between room A and corridor.
+            (7.0 + m, 10.0 - m, -m, m),
+            # Opening near y=-10 between corridor and room B.
+            (7.0 + m, 10.0 - m, -10.0 - m, -10.0 + m),
+        ]
+        valid = []
+        for xmin, xmax, ymin, ymax in rects:
+            if xmin <= xmax and ymin <= ymax:
+                valid.append((xmin, xmax, ymin, ymax))
+        return valid
+
+    @staticmethod
+    def _is_point_in_rect(x: float, y: float, rect) -> bool:
+        xmin, xmax, ymin, ymax = rect
+        return bool((xmin <= x <= xmax) and (ymin <= y <= ymax))
+
+    def _is_point_in_walkable(self, xy, margin: float) -> bool:
+        x = float(xy[0])
+        y = float(xy[1])
+        return any(self._is_point_in_rect(x, y, rect) for rect in self._walkable_rects(margin))
+
+    def _project_point_to_walkable(self, xy, margin: float):
+        point = np.array(xy, dtype=np.float32)
+        rects = self._walkable_rects(margin)
+        if not rects:
+            return point
+        if self._is_point_in_walkable(point, margin):
+            return point
+
+        best_proj = None
+        best_dist_sq = None
+        for xmin, xmax, ymin, ymax in rects:
+            proj_x = float(np.clip(point[0], xmin, xmax))
+            proj_y = float(np.clip(point[1], ymin, ymax))
+            proj = np.array([proj_x, proj_y], dtype=np.float32)
+            dist_sq = float(np.sum((proj - point) ** 2))
+            if best_dist_sq is None or dist_sq < best_dist_sq:
+                best_dist_sq = dist_sq
+                best_proj = proj
+        if best_proj is None:
+            return point
+        return best_proj
+
+    def _constrain_velocity_with_walkable(self, x: float, y: float, v_xy, dt: float, margin: float):
+        v_xy = np.array(v_xy, dtype=np.float32)
+        speed = float(np.linalg.norm(v_xy))
+        if speed > self.max_speed and speed > MIN_SPEED_EPS:
+            v_xy = v_xy / speed * float(self.max_speed)
+
+        dt = float(dt)
+        if dt <= MIN_SPEED_EPS:
+            return v_xy
+
+        current_xy = np.array([float(x), float(y)], dtype=np.float32)
+        next_xy = current_xy + dt * v_xy
+        if self._is_point_in_walkable(next_xy, margin):
+            return v_xy
+
+        projected_xy = self._project_point_to_walkable(next_xy, margin)
+        safe_v = (projected_xy - current_xy) / dt
+        safe_speed = float(np.linalg.norm(safe_v))
+        if safe_speed > self.max_speed and safe_speed > MIN_SPEED_EPS:
+            safe_v = safe_v / safe_speed * float(self.max_speed)
+        return np.array(safe_v, dtype=np.float32)
+
+    def _apply_wall_constraint_to_action(self, action, data, ctx):
+        constrained_action = np.array(action, dtype=np.float32)
+        if constrained_action.shape[0] < 2:
+            return constrained_action
+
+        x, y, _ = self._get_pose(data)
+        dt = float(ctx.get("dt", 0.002))
+        constrained_action[0:2] = self._constrain_velocity_with_walkable(
+            x=x,
+            y=y,
+            v_xy=constrained_action[0:2],
+            dt=dt,
+            margin=WALL_CLEARANCE,
+        )
+        return constrained_action
 
     def _get_pose(self, data):
         x = float(data.xpos[self.body_id, 0])
@@ -827,14 +924,27 @@ class Human:
         return x, y, yaw
 
     def _random_waypoint(self):
-        """Generate random waypoint within museum bounds"""
-        # Room A: x[0,10], y[0,10]
-        # Corridor: x[7,10], y[-10,0]
-        # Room B: x[7,12], y[-15,-10]
+        """Generate random waypoint within walkable museum bounds."""
+        rects = self._walkable_rects(WALL_CLEARANCE)
+        if not rects:
+            return np.array([0.0, 0.0], dtype=np.float32)
 
-        wx = np.random.uniform(1, 9)
-        wy = np.random.uniform(1, 9)        
-        
+        areas = np.array(
+            [
+                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
+                for xmin, xmax, ymin, ymax in rects
+            ],
+            dtype=np.float64,
+        )
+        if float(np.sum(areas)) <= 0.0:
+            xmin, xmax, ymin, ymax = rects[0]
+            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
+
+        probs = areas / float(np.sum(areas))
+        rect_idx = int(np.random.choice(len(rects), p=probs))
+        xmin, xmax, ymin, ymax = rects[rect_idx]
+        wx = float(np.random.uniform(xmin, xmax))
+        wy = float(np.random.uniform(ymin, ymax))
         return np.array([wx, wy], dtype=np.float32)
     
     def _wrap_to_pi(self, ang):

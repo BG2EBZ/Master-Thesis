@@ -645,6 +645,7 @@ class MuseumEnv(gym.Env):
                 "robot_yaw": ryaw,
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "stand_threshold": self.listen_stand_threshold,
+                "dt": float(self.timestep),
             }
             action = human.step(self.model, self.data, ctx)
             human_actions[idx] = action
@@ -658,6 +659,7 @@ class MuseumEnv(gym.Env):
                 "robot_yaw": ryaw,
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "stand_threshold": self.listen_stand_threshold,
+                "dt": float(self.timestep),
             }
             if human.mode == HumanMode.ATTACK:
                 should_stay_freeze = bool(
@@ -1082,6 +1084,7 @@ class MuseumEnv(gym.Env):
                 "robot_yaw": ryaw,
                 "repulsion": repulsion_vec,
                 "stand_threshold": self.listen_stand_threshold,
+                "dt": float(self.timestep),
             }
 
             if self.robot.listen_mode:
