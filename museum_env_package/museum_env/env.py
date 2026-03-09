@@ -27,7 +27,7 @@ REPULSION_GAIN_DEFAULT = 4.0
 FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
 LISTEN_FAN_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
-LISTEN_STAND_THRESHOLD_DEFAULT = 0.2
+LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTEN_WAIT_STEPS_DEFAULT = 2000
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
@@ -53,9 +53,12 @@ ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 0.8
-CALLBACK_REJOIN_PROB = 0.4
-CALLBACK_STAY_PROB = 0.3
-CALLBACK_IGNORE_PROB = 0.3
+CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.60
+CALLBACK_STAY_PROB_NORMAL_DEFAULT = 0.25
+CALLBACK_IGNORE_PROB_NORMAL_DEFAULT = 0.15
+CALLBACK_REJOIN_PROB_ND_DEFAULT = 0.35
+CALLBACK_STAY_PROB_ND_DEFAULT = 0.40
+CALLBACK_IGNORE_PROB_ND_DEFAULT = 0.25
 CALLBACK_STAY_STEPS = 500
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
@@ -95,6 +98,12 @@ class MuseumEnv(gym.Env):
         impatient_prob: float = IMPATIENT_PROB_DEFAULT,
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
+        callback_rejoin_prob_normal: float = CALLBACK_REJOIN_PROB_NORMAL_DEFAULT,
+        callback_stay_prob_normal: float = CALLBACK_STAY_PROB_NORMAL_DEFAULT,
+        callback_ignore_prob_normal: float = CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
+        callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
+        callback_stay_prob_nd: float = CALLBACK_STAY_PROB_ND_DEFAULT,
+        callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
     ):
         """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
         super().__init__()
@@ -183,6 +192,24 @@ class MuseumEnv(gym.Env):
         self.impatient_prob = float(impatient_prob)
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
+        self.callback_rejoin_prob_normal = float(callback_rejoin_prob_normal)
+        self.callback_stay_prob_normal = float(callback_stay_prob_normal)
+        self.callback_ignore_prob_normal = float(callback_ignore_prob_normal)
+        self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
+        self.callback_stay_prob_nd = float(callback_stay_prob_nd)
+        self.callback_ignore_prob_nd = float(callback_ignore_prob_nd)
+        self.callback_response_profile_probs = {
+            HumanProfile.NORMAL: {
+                "rejoin": self.callback_rejoin_prob_normal,
+                "stay": self.callback_stay_prob_normal,
+                "ignore": self.callback_ignore_prob_normal,
+            },
+            HumanProfile.NEURODIVERGENT: {
+                "rejoin": self.callback_rejoin_prob_nd,
+                "stay": self.callback_stay_prob_nd,
+                "ignore": self.callback_ignore_prob_nd,
+            },
+        }
         self.max_concurrent_overwhelmed = MAX_CONCURRENT_OVERWHELMED_DEFAULT
         self.max_concurrent_attack = MAX_CONCURRENT_ATTACK_DEFAULT
         self.last_overwhelmed_trigger_indices = []
@@ -466,12 +493,16 @@ class MuseumEnv(gym.Env):
         v_xy = MOVE_BACK_SPEED * direction
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
-    def _sample_callback_response(self):
-        """Sample distracted human response to callback using configured probabilities."""
+    def _sample_callback_response(self, profile: str):
+        """Sample callback response from profile-specific probability distribution."""
         u = float(self.np_random.random())
-        rejoin_threshold = CALLBACK_REJOIN_PROB
-        stay_threshold = rejoin_threshold + CALLBACK_STAY_PROB
-        ignore_threshold = stay_threshold + CALLBACK_IGNORE_PROB
+        profile_probs = self.callback_response_profile_probs.get(
+            profile,
+            self.callback_response_profile_probs[HumanProfile.NORMAL],
+        )
+        rejoin_threshold = float(profile_probs["rejoin"])
+        stay_threshold = rejoin_threshold + float(profile_probs["stay"])
+        ignore_threshold = stay_threshold + float(profile_probs["ignore"])
         if u < rejoin_threshold:
             return "rejoin"
         if u < stay_threshold:
@@ -1000,7 +1031,7 @@ class MuseumEnv(gym.Env):
             if recover_idx is not None and 0 <= recover_idx < len(self.humans):
                 recover_human = self.humans[recover_idx]
                 if recover_human.mode == HumanMode.DISTRACTED:
-                    callback_response = self._sample_callback_response()
+                    callback_response = self._sample_callback_response(profile=recover_human.profile)
                     recovered = recover_human.apply_callback_response(
                         response=callback_response,
                         stay_steps=CALLBACK_STAY_STEPS,

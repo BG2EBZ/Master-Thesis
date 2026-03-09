@@ -7,6 +7,14 @@ from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
 from museum_env.human import HumanMode, HumanProfile
 
 
+class _FixedRandom:
+    def __init__(self, value):
+        self.value = float(value)
+
+    def random(self):
+        return self.value
+
+
 class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def _make_env(self, **kwargs):
         defaults = {
@@ -45,6 +53,104 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(env.humans[0].profile, HumanProfile.NEURODIVERGENT)
             for human in env.humans[1:]:
                 self.assertEqual(human.profile, HumanProfile.NORMAL)
+        finally:
+            env.close()
+
+    def test_callback_response_defaults_are_profile_specific(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            self.assertAlmostEqual(env.callback_rejoin_prob_normal, 0.60)
+            self.assertAlmostEqual(env.callback_stay_prob_normal, 0.25)
+            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.15)
+            self.assertAlmostEqual(env.callback_rejoin_prob_nd, 0.35)
+            self.assertAlmostEqual(env.callback_stay_prob_nd, 0.40)
+            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.25)
+
+            env.np_random = _FixedRandom(0.59)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "rejoin")
+            env.np_random = _FixedRandom(0.60)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "stay")
+            env.np_random = _FixedRandom(0.85)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "ignore")
+
+            env.np_random = _FixedRandom(0.34)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "rejoin")
+            env.np_random = _FixedRandom(0.35)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "stay")
+            env.np_random = _FixedRandom(0.75)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "ignore")
+        finally:
+            env.close()
+
+    def test_callback_response_can_be_overridden_via_constructor(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+            callback_rejoin_prob_normal=0.10,
+            callback_stay_prob_normal=0.20,
+            callback_ignore_prob_normal=0.70,
+            callback_rejoin_prob_nd=0.80,
+            callback_stay_prob_nd=0.10,
+            callback_ignore_prob_nd=0.10,
+        )
+        try:
+            self.assertAlmostEqual(env.callback_rejoin_prob_normal, 0.10)
+            self.assertAlmostEqual(env.callback_stay_prob_normal, 0.20)
+            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.70)
+            self.assertAlmostEqual(env.callback_rejoin_prob_nd, 0.80)
+            self.assertAlmostEqual(env.callback_stay_prob_nd, 0.10)
+            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.10)
+
+            env.np_random = _FixedRandom(0.15)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "stay")
+            env.np_random = _FixedRandom(0.95)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "ignore")
+            env.np_random = _FixedRandom(0.05)
+            self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "rejoin")
+        finally:
+            env.close()
+
+    def test_callback_completion_samples_by_target_human_profile(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            for idx in (0, 1):
+                with self.subTest(target_index=idx):
+                    env.reset(seed=200 + idx)
+                    env.callback_active_target_idx = idx
+                    env.robot.callback_active = True
+                    env.humans[idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+
+                    def _robot_step_stub(*_args, **_kwargs):
+                        env.robot.callback_active = False
+                        return {
+                            "action": np.zeros(3, dtype=np.float32),
+                            "dist": 1.0,
+                            "desired_yaw": 0.0,
+                            "actual_yaw": 0.0,
+                            "mode": "move",
+                            "enter_listen": False,
+                            "emotion": str(env.robot.emotion),
+                            "speaker_active": bool(env.robot.speaker_active),
+                        }
+
+                    with patch.object(env.robot, "step", side_effect=_robot_step_stub), \
+                         patch.object(env, "_build_callback_request", return_value=None), \
+                         patch.object(env, "_compute_social_repulsion", return_value=[
+                             np.zeros(2, dtype=np.float32) for _ in env.humans
+                         ]), \
+                         patch.object(env, "_update_humans_and_apply_ctrl", return_value=np.zeros((len(env.humans), 3), dtype=np.float32)), \
+                         patch.object(env, "_sample_callback_response", return_value="ignore") as callback_sampler:
+                        env._step_active_branch(external_action_received=False)
+                        callback_sampler.assert_called_once_with(profile=env.humans[idx].profile)
         finally:
             env.close()
 
