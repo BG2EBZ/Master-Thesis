@@ -133,6 +133,8 @@ class Human:
         self.callback_response_mode = None  # None | "stay" | "ignore"
         self.callback_stay_steps_remaining = 0
         self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
+        self.callback_stay_rejoin_probability = 0.0
+        self.callback_stay_rejoin_this_step = False
 
         self.can_be_impatient = False
         self.impatient_duration = 800
@@ -243,6 +245,7 @@ class Human:
         self.distracted_timer = 0
         self.distracted_duration = np.random.randint(1000, 1500)
         self._clear_callback_response_state()
+        self.callback_stay_rejoin_this_step = False
 
         self.impatient_timer = 0
         self.impatient_original_max_speed = None
@@ -693,6 +696,7 @@ class Human:
     def _step_distracted(self, data, ctx):
         """DISTRACTED: local wandering / callback response until timeout recovery."""
         x, y, yaw = self._get_pose(data)
+        self.callback_stay_rejoin_this_step = False
 
         # Distracted behavior:
         # - ignore robot attraction,
@@ -706,7 +710,12 @@ class Human:
             self.last_v_hr = np.zeros(2, dtype=np.float32)
             self.callback_stay_steps_remaining = max(0, int(self.callback_stay_steps_remaining) - 1)
             if self.callback_stay_steps_remaining <= 0:
-                self.callback_response_mode = None
+                if np.random.rand() < float(self.callback_stay_rejoin_probability):
+                    self.transition_to(HumanMode.FOLLOWING, reason="callback_stay_rejoin")
+                    self.callback_stay_rejoin_this_step = True
+                else:
+                    # Keep DISTRACTED and return to standard distracted branch next step.
+                    self.callback_response_mode = None
             return np.zeros(3, dtype=np.float32)
 
         if self.callback_response_mode == "ignore":
