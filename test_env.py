@@ -23,7 +23,7 @@ DEFAULT_VIDEO_FPS = 500
 # 1.0 means target real-time, <1.0 means faster than real-time, >1.0 means slower than real-time 
 DEFAULT_SLEEP_SCALE = 1.0
 # my timestep="0.002" in .xml files, so 500 steps ~ 1 second of sim time 
-DEFAULT_RTF_PRINT_EVERY = 500
+DEFAULT_RTF_PRINT_EVERY = 2500
 # resolution (in pixels) for the simulation window and the recorded video. 
 DEFAULT_RENDER_WIDTH = 640
 DEFAULT_RENDER_HEIGHT = 480
@@ -63,22 +63,28 @@ def _build_video_folder(video_root, use_timestamp_subfolder, name_prefix):
     return str(folder)
 
 
-def _report_step(step, terminated, truncated, info):
+def _report_step(step, terminated, truncated, info, wall_start=None, sim_dt=None):
+    time_str = ""
+    if wall_start is not None and sim_dt is not None:
+        real_time = time.perf_counter() - wall_start
+        sim_time = step * sim_dt
+        time_str = f", sim_time={sim_time:.3f}s, real_time={real_time:.3f}s"
+
     if info["events"]["final_listen_ready"]:
         print(
             f"[step {step}] >>> Termination gate met: "
-            "final waypoint reached + all humans reached final listen goals."
+            "final waypoint reached + all humans reached final listen goals." + time_str
         )
 
     if terminated:
         print(
             f"Episode terminated at step {step}. "
-            f"final_listen_ready={info['events']['final_listen_ready']}"
+            f"final_listen_ready={info['events']['final_listen_ready']}" + time_str
         )
         return True
 
     if truncated:
-        print(f"Episode truncated at step {step}.")
+        print(f"Episode truncated at step {step}." + time_str)
         return True
 
     return False
@@ -89,10 +95,38 @@ def _print_rtf(tag, steps_done, sim_dt, wall_start, extra=""):
     sim_time = steps_done * sim_dt
     rtf = sim_time / real_time
     suffix = f", {extra}" if extra else ""
-    # print(
-    #     f"[{tag}] steps={steps_done}, sim_time={sim_time:.3f}s, "
-    #     f"real_time={real_time:.3f}s, rtf={rtf:.3f}{suffix}"
-    # )
+    print(
+        f"[{tag}] steps={steps_done}, sim_time={sim_time:.3f}s, "
+        f"real_time={real_time:.3f}s, rtf={rtf:.3f}{suffix}"
+    )
+
+
+def _build_distracted_progress_extra(base_env, info, sim_dt):
+    if info is None:
+        return ""
+    if base_env is None or not hasattr(base_env, "humans"):
+        return ""
+
+    humans_info = info.get("humans", {})
+    status_info = info.get("status", {})
+    following_steps = humans_info.get("following_steps", None)
+    if following_steps is None:
+        return ""
+
+    try:
+        step_list = [int(v) for v in following_steps]
+    except TypeError:
+        return ""
+
+    window_active = bool(status_info.get("distracted_follow_window_active", False))
+    chunks = []
+    for i, human in enumerate(base_env.humans):
+        steps_i = step_list[i] if i < len(step_list) else 0
+        follow_sec = float(steps_i) * float(sim_dt)
+        ramp_start_sec = float(getattr(human, "following_distracted_ramp_start_seconds", 0.0))
+        chunks.append(f"h{i+1}:{follow_sec:.1f}/{ramp_start_sec:.1f}s")
+
+    return f"distr_win={int(window_active)}, follow_eff/start=[{', '.join(chunks)}]"
 
 
 def _configure_base_env(base_env, args):
@@ -151,6 +185,7 @@ def _handle_pause_toggle_if_any(pause_toggle_event, paused):
 
 
 def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=None):
+    base_env = env.unwrapped
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
@@ -192,10 +227,16 @@ def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
             steps_done += 1
 
             if steps_done % args.rtf_print_every == 0:
-                _print_rtf("demo-stable", steps_done, sim_dt, wall_start)
+                _print_rtf(
+                    "demo-stable",
+                    steps_done,
+                    sim_dt,
+                    wall_start,
+                    extra=_build_distracted_progress_extra(base_env, info, sim_dt),
+                )
 
             # Checks if the goal was met or the simulation ended during these steps.
-            if _report_step(steps_done - 1, terminated, truncated, info):
+            if _report_step(steps_done - 1, terminated, truncated, info, wall_start, sim_dt):
                 break
 
         env.render()
@@ -212,6 +253,7 @@ def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
 
 
 def _run_demo_strict(env, args, sim_dt, reset_event=None, pause_toggle_event=None):
+    base_env = env.unwrapped
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
@@ -270,14 +312,15 @@ def _run_demo_strict(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
                 steps_done,
                 sim_dt,
                 wall_start,
-                extra=f"lag_steps={lag_steps}",
+                extra=f"lag_steps={lag_steps}, {_build_distracted_progress_extra(base_env, info, sim_dt)}",
             )
 
-        if _report_step(steps_done - 1, terminated, truncated, info):
+        if _report_step(steps_done - 1, terminated, truncated, info, wall_start, sim_dt):
             break
 
 
 def _run_fast_loop(env, args, sim_dt, tag):
+    base_env = env.unwrapped
     obs, _ = env.reset()
     _print_initial_obs_and_goal(env, obs)
 
@@ -286,7 +329,13 @@ def _run_fast_loop(env, args, sim_dt, tag):
         obs, reward, terminated, truncated, info = env.step(None)
 
         if (step + 1) % args.rtf_print_every == 0:
-            _print_rtf(tag, step + 1, sim_dt, wall_start)
+            _print_rtf(
+                tag,
+                step + 1,
+                sim_dt,
+                wall_start,
+                extra=_build_distracted_progress_extra(base_env, info, sim_dt),
+            )
 
         if _report_step(step, terminated, truncated, info):
             break

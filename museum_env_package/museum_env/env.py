@@ -1,4 +1,5 @@
 import logging
+import warnings
 from importlib import resources
 
 import gymnasium as gym
@@ -7,7 +8,7 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 
-from .human import Human, HumanMode
+from .human import Human, HumanMode, HumanProfile
 from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotEmotion, RobotMode
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ ACTION_HIGH = 1.0
 MAX_STEPS_DEFAULT = 100000
 HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
 SOCIAL_DISTANCE_DEFAULT = 0.8
-REPULSION_GAIN_DEFAULT = 6.0
+REPULSION_GAIN_DEFAULT = 4.0
 FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
 LISTEN_FAN_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
@@ -34,10 +35,16 @@ HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
-DISTRACTED_PROB_DEFAULT = 0.0001
-IMPATIENT_PROB_DEFAULT = 0.0001
-OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.0005
-ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.0005
+DISTRACTED_PROB_DEFAULT = 0.001
+IMPATIENT_PROB_DEFAULT = 0.000
+DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
+DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
+DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
+DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
+DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
+DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
+OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
+ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
 MAX_CONCURRENT_ATTACK_DEFAULT = 5
 HUMAN_LABEL_SITE_GROUP = 2
@@ -79,7 +86,13 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
-        distracted_prob: float = DISTRACTED_PROB_DEFAULT,
+        distracted_prob: float | None = None,
+        distracted_lambda_max_nd_per_sec: float = DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
+        distracted_lambda_max_normal_per_sec: float = DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
+        distracted_ramp_start_nd_seconds: float = DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
+        distracted_ramp_start_normal_seconds: float = DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
+        distracted_rise_nd_seconds: float = DISTRACTED_RISE_ND_SECONDS_DEFAULT,
+        distracted_rise_normal_seconds: float = DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
         impatient_prob: float = IMPATIENT_PROB_DEFAULT,
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
@@ -161,7 +174,46 @@ class MuseumEnv(gym.Env):
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self.listen_session_count = 0
-        self.distracted_prob = float(distracted_prob)
+        if distracted_prob is not None:
+            warnings.warn(
+                "`distracted_prob` is deprecated and ignored. Use "
+                "`distracted_lambda_max_nd_per_sec`, `distracted_lambda_max_normal_per_sec`, "
+                "`distracted_ramp_start_nd_seconds`, `distracted_ramp_start_normal_seconds`, "
+                "`distracted_rise_nd_seconds`, and `distracted_rise_normal_seconds` instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self.distracted_prob = None if distracted_prob is None else float(distracted_prob)
+        self.distracted_lambda_max_nd_per_sec = float(distracted_lambda_max_nd_per_sec)
+        self.distracted_lambda_max_normal_per_sec = float(distracted_lambda_max_normal_per_sec)
+        self.distracted_ramp_start_nd_seconds = float(distracted_ramp_start_nd_seconds)
+        self.distracted_ramp_start_normal_seconds = float(distracted_ramp_start_normal_seconds)
+        self.distracted_rise_nd_seconds = float(distracted_rise_nd_seconds)
+        self.distracted_rise_normal_seconds = float(distracted_rise_normal_seconds)
+        if self.distracted_lambda_max_nd_per_sec < 0.0:
+            raise ValueError(
+                f"distracted_lambda_max_nd_per_sec must be >= 0, got {distracted_lambda_max_nd_per_sec}"
+            )
+        if self.distracted_lambda_max_normal_per_sec < 0.0:
+            raise ValueError(
+                "distracted_lambda_max_normal_per_sec must be >= 0, "
+                f"got {distracted_lambda_max_normal_per_sec}"
+            )
+        if self.distracted_ramp_start_nd_seconds < 0.0:
+            raise ValueError(
+                f"distracted_ramp_start_nd_seconds must be >= 0, got {distracted_ramp_start_nd_seconds}"
+            )
+        if self.distracted_ramp_start_normal_seconds < 0.0:
+            raise ValueError(
+                "distracted_ramp_start_normal_seconds must be >= 0, "
+                f"got {distracted_ramp_start_normal_seconds}"
+            )
+        if self.distracted_rise_nd_seconds <= 0.0:
+            raise ValueError(f"distracted_rise_nd_seconds must be > 0, got {distracted_rise_nd_seconds}")
+        if self.distracted_rise_normal_seconds <= 0.0:
+            raise ValueError(
+                f"distracted_rise_normal_seconds must be > 0, got {distracted_rise_normal_seconds}"
+            )
         self.impatient_prob = float(impatient_prob)
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
@@ -191,6 +243,7 @@ class MuseumEnv(gym.Env):
             Human("person4", "person4", qpos_idx=12, max_speed=HUMAN_MAX_SPEED_DEFAULT),
             Human("person5", "person5", qpos_idx=15, max_speed=HUMAN_MAX_SPEED_DEFAULT),
         ]
+        self.humans[0].set_profile(HumanProfile.NEURODIVERGENT)
         for human in self.humans:
             human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
@@ -227,8 +280,26 @@ class MuseumEnv(gym.Env):
 
     def _configure_human_following_variants(self):
         for human in self.humans:
-            human.following_distracted_probability = float(self.distracted_prob)
+            if human.profile == HumanProfile.NEURODIVERGENT:
+                human.configure_distracted_follow_hazard(
+                    lambda_max_per_sec=self.distracted_lambda_max_nd_per_sec,
+                    ramp_start_seconds=self.distracted_ramp_start_nd_seconds,
+                    rise_seconds=self.distracted_rise_nd_seconds,
+                )
+            else:
+                human.configure_distracted_follow_hazard(
+                    lambda_max_per_sec=self.distracted_lambda_max_normal_per_sec,
+                    ramp_start_seconds=self.distracted_ramp_start_normal_seconds,
+                    rise_seconds=self.distracted_rise_normal_seconds,
+                )
             human.following_impatient_probability = float(self.impatient_prob)
+
+    def _is_distracted_follow_window_active(self):
+        return bool(
+            self.robot.listen_done
+            and (not self.robot.listen_mode)
+            and (not self.listen_wait_active)
+        )
 
     def _build_label_scene_option(self):
         opt = mujoco.MjvOption()
@@ -1075,6 +1146,7 @@ class MuseumEnv(gym.Env):
         human_actions = []
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
+        distracted_follow_window_active = self._is_distracted_follow_window_active()
 
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
@@ -1105,6 +1177,14 @@ class MuseumEnv(gym.Env):
                         robot_xy=np.array([rx, ry], dtype=np.float32),
                         robot_yaw=ryaw,
                     )
+
+            eligible_following = bool(
+                distracted_follow_window_active
+                and self.follow_humans
+                and human.mode == HumanMode.FOLLOWING
+            )
+            human.set_following_distracted_window_active(distracted_follow_window_active)
+            human.update_following_duration(eligible_following=eligible_following)
 
             human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
@@ -1190,7 +1270,9 @@ class MuseumEnv(gym.Env):
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "human_mode": [h.mode for h in self.humans],
+            "human_profile": [h.profile for h in self.humans],
             "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
+            "human_following_steps": np.array([h.following_steps for h in self.humans], dtype=np.int32),
             "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
             "human_overwhelmed_leave_timer": np.array(
                 [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
@@ -1304,6 +1386,7 @@ class MuseumEnv(gym.Env):
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
+                "distracted_follow_window_active": bool(self._is_distracted_follow_window_active()),
                 "active_overwhelmed_indices": active_overwhelmed_indices,
                 "active_attack_indices": active_attack_indices,
                 "last_overwhelmed_trigger_indices": [
@@ -1337,7 +1420,9 @@ class MuseumEnv(gym.Env):
                 "actual_yaw": snapshot["human_actual_yaw"],
                 "desired_yaw": snapshot["human_desired_yaw"],
                 "mode": snapshot["human_mode"],
+                "profile": snapshot["human_profile"],
                 "distracted_timer": snapshot["human_distracted_timer"],
+                "following_steps": snapshot["human_following_steps"],
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
                 "impatient_timer": snapshot["human_impatient_timer"],

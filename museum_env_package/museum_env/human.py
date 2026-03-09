@@ -21,12 +21,17 @@ HUMAN_ROTATION_STOP_DEG = 3.0
 DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_NOISE_MIN = -2.0
 DISTRACTED_YAW_NOISE_MAX = 2.0
+DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
+DISTRACTED_HAZARD_SIGMOID_K = float(2.0 * np.log(9.0))
+DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
+DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
+DISTRACTED_RISE_SECONDS_DEFAULT = 20.0
 OVERWHELMED_FALLBACK_X_OFFSET = 1.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
 HR_DISTANCE_MAX = 2.0
-HR_REPULSION_GAIN = 6.0
-HR_ATTRACTION_GAIN = 0.8
+HR_REPULSION_GAIN = 4.0
+HR_ATTRACTION_GAIN = 2.0
 NORM_EPS = 1e-6
 ATTACK_DEFAULT_SPEED = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
@@ -66,6 +71,11 @@ class HumanMode:
     OVERWHELMED = "overwhelmed"
     IMPATIENT = "impatient"
     ATTACK = "attack"
+
+
+class HumanProfile:
+    NORMAL = "normal"
+    NEURODIVERGENT = "neurodivergent"
 
 
 class Human:
@@ -129,6 +139,12 @@ class Human:
         self.impatient_original_max_speed = None
         self.following_distracted_probability = 0.0
         self.following_impatient_probability = 0.0
+        self.following_distracted_lambda_max_per_sec = DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT
+        self.following_distracted_ramp_start_seconds = DISTRACTED_RAMP_START_SECONDS_DEFAULT
+        self.following_distracted_rise_seconds = DISTRACTED_RISE_SECONDS_DEFAULT
+        self.profile = HumanProfile.NORMAL
+        self.following_steps = 0
+        self.following_distracted_window_active = False
 
         self.can_be_overwhelmed = False
         self.overwhelmed_stage = None  # "backoff" | "leave"
@@ -160,12 +176,19 @@ class Human:
         ):
             raise ValueError(f"Unknown human mode: {mode}")
 
+    @staticmethod
+    def _validate_profile(profile: str):
+        if profile not in (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT):
+            raise ValueError(f"Unknown human profile: {profile}")
+
     def _on_exit_mode(self, prev_mode: str, next_mode: str, reason: Optional[str] = None):
         if prev_mode == HumanMode.IMPATIENT and next_mode != HumanMode.IMPATIENT:
             self._stop_impatient()
         if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
             self.distracted_timer = 0
             self._clear_callback_response_state()
+        if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
+            self.reset_following_duration()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
             self.reset_overwhelmed_state()
         if prev_mode == HumanMode.ATTACK and next_mode != HumanMode.ATTACK:
@@ -219,6 +242,8 @@ class Human:
         self.last_v_hr = np.zeros(2, dtype=np.float32)
 
         self.max_speed = float(self.base_max_speed)
+        self.reset_following_duration()
+        self.following_distracted_window_active = False
         self.reset_overwhelmed_state()
         self.attack_hit_this_step = False
         self.attack_origin_listen_waypoint = None
@@ -226,6 +251,22 @@ class Human:
     def set_event_logging(self, enabled: bool):
         self.enable_event_logs = bool(enabled)
         logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
+
+    def set_profile(self, profile: str):
+        self._validate_profile(profile)
+        self.profile = profile
+
+    def reset_following_duration(self):
+        self.following_steps = 0
+
+    def set_following_distracted_window_active(self, active: bool):
+        self.following_distracted_window_active = bool(active)
+
+    def update_following_duration(self, eligible_following: bool):
+        if eligible_following:
+            self.following_steps += 1
+            return
+        self.reset_following_duration()
 
     def configure_following_variant(self, variant_mode, probability):
         allowed = (None, HumanMode.DISTRACTED, HumanMode.IMPATIENT)
@@ -236,13 +277,17 @@ class Human:
             raise ValueError(f"following variant probability must be in [0, 1], got {probability}")
         if variant_mode is None:
             self.following_distracted_probability = 0.0
+            self.following_distracted_lambda_max_per_sec = 0.0
             self.following_impatient_probability = 0.0
             return
         if variant_mode == HumanMode.DISTRACTED:
             self.following_distracted_probability = p
+            # Backward compatibility for legacy callers using probability-based API.
+            self.following_distracted_lambda_max_per_sec = p
             self.following_impatient_probability = 0.0
             return
         self.following_distracted_probability = 0.0
+        self.following_distracted_lambda_max_per_sec = 0.0
         self.following_impatient_probability = p
 
     def configure_following_variant_probs(self, distracted_prob, impatient_prob):
@@ -254,7 +299,29 @@ class Human:
         if p_i < 0.0 or p_i > 1.0:
             raise ValueError(f"impatient probability must be in [0, 1], got {impatient_prob}")
         self.following_distracted_probability = p_d
+        # Backward compatibility for legacy callers using probability-based API.
+        self.following_distracted_lambda_max_per_sec = p_d
         self.following_impatient_probability = p_i
+
+    # Use sigmoid-based hazard increase probability over time
+    def configure_distracted_follow_hazard(
+        self,
+        lambda_max_per_sec: float,
+        ramp_start_seconds: float,
+        rise_seconds: float,
+    ):
+        lambda_max = float(lambda_max_per_sec)
+        ramp_start = float(ramp_start_seconds)
+        rise = float(rise_seconds)
+        if lambda_max < 0.0:
+            raise ValueError(f"distracted lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
+        if ramp_start < 0.0:
+            raise ValueError(f"distracted ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
+        if rise <= 0.0:
+            raise ValueError(f"distracted rise_seconds must be > 0, got {rise_seconds}")
+        self.following_distracted_lambda_max_per_sec = lambda_max
+        self.following_distracted_ramp_start_seconds = ramp_start
+        self.following_distracted_rise_seconds = rise
 
     def _log_event(self, msg: str):
         if self.enable_event_logs:
@@ -366,21 +433,62 @@ class Human:
 
         raise ValueError(f"Unknown callback response: {response}")
 
-    def _maybe_trigger_following_variant(self):
-        trigger_distracted = (
-            self.following_distracted_probability > 0.0
-            and np.random.rand() < self.following_distracted_probability
+    def _get_distracted_follow_threshold_steps(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> int:
+        dt_safe = max(float(dt), MIN_SPEED_EPS)
+        return int(np.floor(self.following_distracted_ramp_start_seconds / dt_safe))
+
+    # Compute current distracted follow lambda
+    def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
+        dt_safe = max(float(dt), MIN_SPEED_EPS)
+        if self.following_distracted_lambda_max_per_sec <= 0.0:
+            return 0.0
+        follow_seconds = float(self.following_steps) * dt_safe
+        if follow_seconds <= self.following_distracted_ramp_start_seconds:
+            return 0.0
+        x = (
+            (follow_seconds - self.following_distracted_ramp_start_seconds)
+            / self.following_distracted_rise_seconds
         )
+        z = np.clip(-DISTRACTED_HAZARD_SIGMOID_K * (x - 0.5), -60.0, 60.0)
+        sig = 1.0 / (1.0 + np.exp(z))
+        progress = float(np.clip((sig - 0.1) / 0.8, 0.0, 1.0))
+        return float(self.following_distracted_lambda_max_per_sec * progress)
+
+    # change per-step probability based on current lambda
+    def _compute_distracted_follow_step_probability(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
+        dt_safe = max(float(dt), MIN_SPEED_EPS)
+        lambda_t = self._compute_distracted_follow_lambda_per_sec(dt=dt_safe)
+        if lambda_t <= 0.0:
+            return 0.0
+        return float(1.0 - np.exp(-lambda_t * dt_safe))
+
+    # whether to trigger distracted following variant based on current probability
+    def _maybe_trigger_distracted_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
+        step_prob = self._compute_distracted_follow_step_probability(dt=dt)
+        trigger_distracted = (
+            self.following_distracted_window_active
+            and step_prob > 0.0
+            and np.random.rand() < step_prob
+        )
+        if trigger_distracted:
+            return HumanMode.DISTRACTED
+        return None
+
+    def _maybe_trigger_impatient_following_variant(self):
         trigger_impatient = (
             self.following_impatient_probability > 0.0
             and self.can_be_impatient
             and np.random.rand() < self.following_impatient_probability
         )
-        if trigger_distracted:
-            return HumanMode.DISTRACTED
         if trigger_impatient:
             return HumanMode.IMPATIENT
         return None
+
+    def _maybe_trigger_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
+        distracted_variant = self._maybe_trigger_distracted_following_variant(dt=dt)
+        if distracted_variant is not None:
+            return distracted_variant
+        return self._maybe_trigger_impatient_following_variant()
 
 
     def set_context(self, **kwargs):
@@ -458,7 +566,7 @@ class Human:
 
         if self.mode == HumanMode.FOLLOWING:
             # may trigger a variant behavior (e.g., distracted or impatient)
-            variant = self._maybe_trigger_following_variant()
+            variant = self._maybe_trigger_following_variant(dt=float(ctx.get("dt", DEFAULT_SIM_TIMESTEP_SECONDS)))
             if variant == HumanMode.IMPATIENT:
                 robot_xy = self.context.robot_xy if self.context.robot_xy is not None else ctx.get("robot_xy")
                 robot_yaw = self.context.robot_yaw if self.context.robot_yaw is not None else ctx.get("robot_yaw", 0.0)
