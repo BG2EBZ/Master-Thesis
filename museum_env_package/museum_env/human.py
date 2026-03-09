@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+# Human agent state machine and local motion logic.
+# Env owns high-level scheduling; this class turns mode/context into low-level actions.
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     _handler = logging.StreamHandler()
@@ -52,6 +54,7 @@ class HumanContext:
 
     @classmethod
     def from_kwargs(cls, **kwargs):
+        """Create context from kwargs and reject unknown fields early."""
         allowed = {f.name for f in fields(cls)}
         unknown = set(kwargs.keys()) - allowed
         if unknown:
@@ -164,6 +167,7 @@ class Human:
 
     @staticmethod
     def _validate_mode(mode: str):
+        """Validate that mode belongs to HumanMode."""
         if mode not in (
             HumanMode.WANDERING,
             HumanMode.FOLLOWING,
@@ -177,10 +181,12 @@ class Human:
 
     @staticmethod
     def _validate_profile(profile: str):
+        """Validate that profile belongs to HumanProfile."""
         if profile not in (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT):
             raise ValueError(f"Unknown human profile: {profile}")
 
     def _on_exit_mode(self, prev_mode: str, next_mode: str, reason: Optional[str] = None):
+        """Run cleanup hooks when leaving a mode."""
         if prev_mode == HumanMode.IMPATIENT and next_mode != HumanMode.IMPATIENT:
             self._stop_impatient()
         if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
@@ -194,6 +200,7 @@ class Human:
             self.attack_hit_this_step = False
 
     def _on_enter_mode(self, prev_mode: Optional[str], next_mode: str, reason: Optional[str] = None):
+        """Run initialization hooks when entering a mode."""
         if next_mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
             self._clear_callback_response_state()
@@ -201,6 +208,8 @@ class Human:
             self.attack_hit_this_step = False
 
     def transition_to(self, next_mode: str, reason: Optional[str] = None, force: bool = False) -> bool:
+        """Switch mode and execute enter/exit side-effects."""
+        # Centralized mode transition so enter/exit side-effects stay in one place.
         self._validate_mode(next_mode)
         prev_mode = self.mode
         if (not force) and prev_mode == next_mode:
@@ -212,9 +221,11 @@ class Human:
         return True
 
     def set_mode(self, mode: str):
+        """Public wrapper for mode switch."""
         self.transition_to(mode, reason="set_mode")
 
     def reset_overwhelmed_state(self):
+        """Clear internal state used by overwhelmed behavior."""
         self.overwhelmed_stage = None
         self.overwhelmed_leave_timer = 0
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
@@ -248,20 +259,25 @@ class Human:
         self.attack_origin_listen_waypoint = None
 
     def set_event_logging(self, enabled: bool):
+        """Enable/disable per-human event logs."""
         self.enable_event_logs = bool(enabled)
         logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
 
     def set_profile(self, profile: str):
+        """Set behavior profile (normal or neurodivergent)."""
         self._validate_profile(profile)
         self.profile = profile
 
     def reset_following_duration(self):
+        """Reset timer counting consecutive eligible following steps."""
         self.following_steps = 0
 
     def set_following_distracted_window_active(self, active: bool):
+        """Tell the human whether distracted-follow hazard should be active now."""
         self.following_distracted_window_active = bool(active)
 
     def update_following_duration(self, eligible_following: bool):
+        """Accumulate following duration only when current step is eligible."""
         if eligible_following:
             self.following_steps += 1
             return
@@ -274,6 +290,7 @@ class Human:
         ramp_start_seconds: float,
         rise_seconds: float,
     ):
+        """Configure time-varying hazard used to trigger distracted-from-following."""
         lambda_max = float(lambda_max_per_sec)
         ramp_start = float(ramp_start_seconds)
         rise = float(rise_seconds)
@@ -288,17 +305,20 @@ class Human:
         self.following_distracted_rise_seconds = rise
 
     def _log_event(self, msg: str):
+        """Emit log line only when logging is enabled."""
         if self.enable_event_logs:
             logger.info(msg)
 
     @staticmethod
     def _compute_fan_relative_angle(index, n_humans, fan_half_angle):
+        """Map human index to a symmetric angle inside the formation fan."""
         if n_humans > 1:
             return (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
         return 0.0
 
     @staticmethod
     def _compute_fan_target(robot_pose, radius, relative_angle, base_angle_offset):
+        """Compute Cartesian target around robot from polar fan parameters."""
         rx, ry, ryaw = robot_pose
         angle = ryaw + base_angle_offset + relative_angle
         return np.array(
@@ -307,6 +327,7 @@ class Human:
         )
 
     def start_overwhelmed(self, robot_xy, current_xy=None):
+        """Enter OVERWHELMED and initialize two-stage retreat state."""
         if not self.can_be_overwhelmed:
             return
 
@@ -332,6 +353,7 @@ class Human:
         self._log_event(f">>> {self.name} became OVERWHELMED!")
 
     def start_impatient(self, robot_pose=None, index=None, n_humans=None):
+        """Enter IMPATIENT and temporarily increase max speed."""
         if not self.can_be_impatient:
             return False
         if self.mode == HumanMode.IMPATIENT:
@@ -354,6 +376,7 @@ class Human:
         return True
 
     def _stop_impatient(self):
+        """Restore speed and timers when leaving impatient mode."""
         if self.impatient_original_max_speed is not None:
             self.max_speed = float(self.impatient_original_max_speed)
         else:
@@ -362,11 +385,13 @@ class Human:
         self.impatient_timer = 0
 
     def _clear_callback_response_state(self):
+        """Clear temporary state used by callback responses in distracted mode."""
         self.callback_response_mode = None
         self.callback_stay_steps_remaining = 0
         self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
 
     def start_attack(self):
+        """Enter ATTACK mode if this human is allowed to attack."""
         if not self.can_attack:
             return False
         self.attack_origin_listen_waypoint = np.array(self.current_waypoint, dtype=np.float32)
@@ -376,9 +401,11 @@ class Human:
         return True
 
     def force_recover_from_callback(self) -> bool:
+        """Force callback outcome to immediate rejoin."""
         return self.apply_callback_response(response="rejoin", stay_steps=0)
 
     def apply_callback_response(self, response: str, stay_steps: int = 0) -> bool:
+        """Apply callback response strategy while currently distracted."""
         if self.mode != HumanMode.DISTRACTED:
             return False
 
@@ -399,13 +426,16 @@ class Human:
 
     @staticmethod
     def _normalize_dt(dt: float) -> float:
+        """Clamp dt to a small positive epsilon to avoid numerical issues."""
         return max(float(dt), MIN_SPEED_EPS)
 
     def _get_distracted_follow_threshold_steps(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> int:
+        """Convert distracted ramp-start time (sec) to step threshold."""
         dt_safe = self._normalize_dt(dt)
         return int(np.floor(self.following_distracted_ramp_start_seconds / dt_safe))
 
     def _compute_distracted_follow_lambda_per_sec_with_dt_safe(self, dt_safe: float) -> float:
+        """Compute instantaneous distracted hazard rate (per second)."""
         if self.following_distracted_lambda_max_per_sec <= 0.0:
             return 0.0
         follow_seconds = float(self.following_steps) * dt_safe
@@ -422,12 +452,14 @@ class Human:
 
     # Compute current distracted follow lambda
     def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
+        """Wrapper to compute distracted hazard from raw dt."""
         return self._compute_distracted_follow_lambda_per_sec_with_dt_safe(
             dt_safe=self._normalize_dt(dt)
         )
 
     # change per-step probability based on current lambda
     def _compute_distracted_follow_step_probability(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
+        """Convert hazard rate to per-step Bernoulli trigger probability."""
         dt_safe = self._normalize_dt(dt)
         lambda_t = self._compute_distracted_follow_lambda_per_sec_with_dt_safe(dt_safe=dt_safe)
         if lambda_t <= 0.0:
@@ -436,6 +468,7 @@ class Human:
 
     # whether to trigger distracted following variant based on current probability
     def _maybe_trigger_distracted_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
+        """Sample whether FOLLOWING should switch to DISTRACTED at this step."""
         step_prob = self._compute_distracted_follow_step_probability(dt=dt)
         trigger_distracted = (
             self.following_distracted_window_active
@@ -447,6 +480,7 @@ class Human:
         return None
 
     def _maybe_trigger_impatient_following_variant(self):
+        """Sample whether FOLLOWING should switch to IMPATIENT at this step."""
         trigger_impatient = (
             self.following_impatient_probability > 0.0
             and self.can_be_impatient
@@ -457,6 +491,8 @@ class Human:
         return None
 
     def _maybe_trigger_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
+        """Sample higher-priority following variants in deterministic priority order."""
+        # Distracted has higher priority than impatient when both are eligible.
         distracted_variant = self._maybe_trigger_distracted_following_variant(dt=dt)
         if distracted_variant is not None:
             return distracted_variant
@@ -526,6 +562,7 @@ class Human:
             "repulsion": np.array([rx, ry]),
         }
         """
+        # Cache MuJoCo ids once; avoids repeated model lookups every step.
         if self.body_id is None:
             self.body_id = model.body(self.body_name).id
 
@@ -537,7 +574,7 @@ class Human:
             return self._step_wandering(data, ctx)
 
         if self.mode == HumanMode.FOLLOWING:
-            # may trigger a variant behavior (e.g., distracted or impatient)
+            # FOLLOWING may stochastically branch to IMPATIENT or DISTRACTED.
             variant = self._maybe_trigger_following_variant(dt=float(ctx.get("dt", DEFAULT_SIM_TIMESTEP_SECONDS)))
             if variant == HumanMode.IMPATIENT:
                 robot_xy = self.context.robot_xy if self.context.robot_xy is not None else ctx.get("robot_xy")
@@ -607,6 +644,7 @@ class Human:
 
 
     def _step_wandering(self, data, ctx):
+        """WANDERING: move to random waypoint, and resample when reached."""
         x, y, yaw = self._get_pose(data)
 
         dx = self.current_waypoint[0] - x
@@ -621,12 +659,14 @@ class Human:
         return self._move(dx, dy, yaw, data, ctx)
 
     def _step_following(self, data, ctx):
+        """FOLLOWING: move toward current follow target."""
         x, y, yaw = self._get_pose(data)
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
         return self._move(dx, dy, yaw, data, ctx)
     
     def _step_listening(self, data, ctx):
+        """LISTENING: approach listen slot, then rotate to face robot."""
         x, y, yaw = self._get_pose(data)
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
@@ -651,15 +691,14 @@ class Human:
         return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err])
     
     def _step_distracted(self, data, ctx):
+        """DISTRACTED: local wandering / callback response until timeout recovery."""
         x, y, yaw = self._get_pose(data)
 
-        """
-        Distracted behavior:
-        - Ignore robot attraction
-        - Wander locally
-        - Move slower than normal wandering
-        - Recover automatically after duration
-        """
+        # Distracted behavior:
+        # - ignore robot attraction,
+        # - wander locally at lower speed,
+        # - optionally respond to callback instructions,
+        # - recover automatically after timeout.
 
         if self.callback_response_mode == "stay":
             self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -733,6 +772,7 @@ class Human:
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
     def _step_overwhelmed(self, data, ctx):
+        """OVERWHELMED: first back off, then keep leaving for fixed duration."""
         x, y, yaw = self._get_pose(data)
         pos_xy = np.array([x, y], dtype=np.float32)
         self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -801,6 +841,7 @@ class Human:
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
     def _step_impatient(self, data, ctx):
+        """IMPATIENT: fast following toward front slot, with timeout recovery."""
         self.impatient_timer += 1
         self._assign_target_from_context()
         action = self._step_following(data, ctx)
@@ -812,6 +853,7 @@ class Human:
         return action
 
     def _step_attack(self, data, ctx):
+        """ATTACK: chase robot until hit distance, then return to listening."""
         self.attack_hit_this_step = False
         robot_xy = ctx.get("robot_xy", None)
         if robot_xy is None:
@@ -850,6 +892,7 @@ class Human:
 
 
     def _move(self, dx, dy, yaw, data, ctx):
+        """Shared low-level controller that fuses follow, repulsion and HR spacing forces."""
         robot_xy = ctx.get("robot_xy", None)
 
         repulsion = ctx.get("repulsion", np.zeros(2))
@@ -884,6 +927,8 @@ class Human:
         self.last_v_repulsion = v_repulsion.copy()
         self.last_v_hr = v_hr.copy()
 
+        # Final translational command is a blend of:
+        # (1) target following, (2) human-human repulsion, (3) human-robot spacing force.
         v_total = v_follow + v_repulsion + v_hr
         speed = np.linalg.norm(v_total)
 
@@ -908,6 +953,7 @@ class Human:
 
     @staticmethod
     def _walkable_rects(margin: float):
+        """Return walkable map rectangles after shrinking by safety margin."""
         m = max(0.0, float(margin))
         rects = [
             # Room A: x[0,10], y[0,10]
@@ -929,15 +975,18 @@ class Human:
 
     @staticmethod
     def _is_point_in_rect(x: float, y: float, rect) -> bool:
+        """Check if point lies inside one axis-aligned rectangle."""
         xmin, xmax, ymin, ymax = rect
         return bool((xmin <= x <= xmax) and (ymin <= y <= ymax))
 
     def _is_point_in_walkable(self, xy, margin: float) -> bool:
+        """Check if point belongs to any walkable rectangle."""
         x = float(xy[0])
         y = float(xy[1])
         return any(self._is_point_in_rect(x, y, rect) for rect in self._walkable_rects(margin))
 
     def _project_point_to_walkable(self, xy, margin: float):
+        """Project point to nearest point inside walkable region."""
         point = np.array(xy, dtype=np.float32)
         rects = self._walkable_rects(margin)
         if not rects:
@@ -960,6 +1009,8 @@ class Human:
         return best_proj
 
     def _constrain_velocity_with_walkable(self, x: float, y: float, v_xy, dt: float, margin: float):
+        """Adjust velocity so the next-step position stays in walkable area."""
+        # Project next-step position back to walkable area when command exits map bounds.
         v_xy = np.array(v_xy, dtype=np.float32)
         speed = float(np.linalg.norm(v_xy))
         if speed > self.max_speed and speed > MIN_SPEED_EPS:
@@ -982,6 +1033,7 @@ class Human:
         return np.array(safe_v, dtype=np.float32)
 
     def _apply_wall_constraint_to_action(self, action, data, ctx):
+        """Apply wall constraint to translational action components."""
         constrained_action = np.array(action, dtype=np.float32)
         if constrained_action.shape[0] < 2:
             return constrained_action
@@ -998,6 +1050,7 @@ class Human:
         return constrained_action
 
     def _get_pose(self, data):
+        """Read current (x, y, yaw) of this human from MuJoCo state."""
         x = float(data.xpos[self.body_id, 0])
         y = float(data.xpos[self.body_id, 1])
         yaw = float(data.qpos[self.qpos_idx + 2])
@@ -1028,5 +1081,6 @@ class Human:
         return np.array([wx, wy], dtype=np.float32)
     
     def _wrap_to_pi(self, ang):
+        """Normalize angle to [-pi, pi)."""
         return (ang + np.pi) % (2 * np.pi) - np.pi
     

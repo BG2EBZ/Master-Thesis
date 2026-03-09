@@ -10,6 +10,7 @@ from gymnasium import spaces
 from .human import Human, HumanMode, HumanProfile
 from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotEmotion, RobotMode
 
+# MuJoCo + Gym wrapper coordinating robot policy, human behaviors, and event bookkeeping.
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     _handler = logging.StreamHandler()
@@ -73,7 +74,8 @@ SPEAKING_HALO_RGBA_OFF = np.array([1.0, 0.9, 0.2, 0.0], dtype=np.float32)
 
 class MuseumEnv(gym.Env):
     """
-    Minimal runnable Gymnasium environment for a MuJoCo museum scene.
+    Gymnasium environment for the museum scenario.
+    It owns global orchestration: robot decision, human updates, and rich debug/info outputs.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
@@ -94,6 +96,7 @@ class MuseumEnv(gym.Env):
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
     ):
+        """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
         super().__init__()
         self.enable_event_logs = bool(enable_event_logs)
         self.strict_action_validation = bool(strict_action_validation)
@@ -238,10 +241,12 @@ class MuseumEnv(gym.Env):
         self._apply_robot_speaking_halo_visual()
 
     def _log_event(self, msg: str):
+        """Emit environment-level log message when logging is enabled."""
         if self.enable_event_logs:
             logger.info(msg)
 
     def _configure_human_following_variants(self):
+        """Apply profile-specific distracted/impatient parameters to all humans."""
         for human in self.humans:
             if human.profile == HumanProfile.NEURODIVERGENT:
                 human.configure_distracted_follow_hazard(
@@ -258,6 +263,7 @@ class MuseumEnv(gym.Env):
             human.following_impatient_probability = float(self.impatient_prob)
 
     def _is_distracted_follow_window_active(self):
+        """Return whether follow->distracted transitions are currently allowed."""
         return bool(
             self.robot.listen_done
             and (not self.robot.listen_mode)
@@ -265,6 +271,7 @@ class MuseumEnv(gym.Env):
         )
 
     def _build_label_scene_option(self):
+        """Create MuJoCo scene option object used to toggle site text labels."""
         opt = mujoco.MjvOption()
         opt.label = HUMAN_LABEL_MODE
         opt.sitegroup[:] = 0
@@ -275,18 +282,21 @@ class MuseumEnv(gym.Env):
         return opt
 
     def _apply_label_options_to_viewer(self):
+        """Push current label visibility options into live viewer."""
         if self.viewer is None:
             return
         self.viewer.opt.label = self._label_scene_option.label
         self.viewer.opt.sitegroup[:] = self._label_scene_option.sitegroup
 
     def set_viewer_key_callback(self, callback):
+        """Register optional viewer keyboard callback."""
         if callback is not None and not callable(callback):
             raise ValueError("viewer key callback must be callable or None.")
         self._viewer_key_callback = callback
 
     @staticmethod
     def _default_events():
+        """Create empty event flag dictionary for one environment step."""
         return {
             "entered_listen": False,
             "started_listen_wait": False,
@@ -313,6 +323,7 @@ class MuseumEnv(gym.Env):
         }
 
     def _validate_external_action(self, action):
+        """Validate optional external action shape/type; return whether provided."""
         if action is None:
             return False
         if not self.strict_action_validation:
@@ -336,6 +347,7 @@ class MuseumEnv(gym.Env):
         external_action_received,
         external_action_used=False,
     ):
+        """Build Gym step tuple (obs, reward, terminated, truncated, info)."""
         obs = self._get_obs()
         reward = -float(dist)
         truncated = self.step_count >= self.max_steps
@@ -349,12 +361,14 @@ class MuseumEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def _get_robot_pose(self):
+        """Read robot pose (x, y, yaw) from MuJoCo data."""
         x = float(self.data.xpos[self.robot_body_id, 0])
         y = float(self.data.xpos[self.robot_body_id, 1])
         yaw = float(self.data.qpos[2])
         return x, y, yaw
 
     def _get_human_poses(self):
+        """Read all human poses as array shaped [n_humans, 3]."""
         humans_xyz = []
         for human, human_body_id in zip(self.humans, self.human_body_ids):
             x = float(self.data.xpos[human_body_id, 0])
@@ -364,10 +378,12 @@ class MuseumEnv(gym.Env):
         return np.array(humans_xyz, dtype=np.float32)
 
     def _get_goal_xy(self):
+        """Return current robot waypoint coordinates."""
         goal_xy = self.robot.get_current_waypoint()
         return float(goal_xy[0]), float(goal_xy[1])
 
     def _is_robot_in_move_stage(self, robot_pose):
+        """Return True only when robot is in nominal moving phase."""
         if self.robot.listen_mode or self.listen_wait_active or self.robot.callback_active:
             return False
         rx, ry, _ = robot_pose
@@ -376,12 +392,15 @@ class MuseumEnv(gym.Env):
         return dist >= ROBOT_WAYPOINT_REACHED_DIST
 
     def _refresh_callback_rearm_flags(self):
+        """Re-arm callback eligibility once a human leaves distracted mode."""
         for idx, human in enumerate(self.humans):
             if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
                 self.callback_triggered_for_current_distracted[idx] = False
 
     # Callback the longest-distracted human
     def _build_callback_request(self, human_xy, robot_pose):
+        """Build callback request targeting the longest-distracted eligible human."""
+        # Callback targets the longest-distracted eligible human during robot move stage.
         if not self._is_robot_in_move_stage(robot_pose):
             return None
         hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
@@ -410,6 +429,7 @@ class MuseumEnv(gym.Env):
         }
 
     def _get_nearest_attack_threat(self, robot_xy, human_xy):
+        """Return nearest attacking human to robot, or None if no attack threat."""
         if human_xy.size == 0:
             return None
 
@@ -436,6 +456,7 @@ class MuseumEnv(gym.Env):
 
     @staticmethod
     def _compute_move_back_action(robot_xy, threat_xy):
+        """Compute robot velocity command moving away from current threat."""
         diff = np.array(robot_xy - threat_xy, dtype=np.float32)
         norm = float(np.linalg.norm(diff))
         if norm < DIST_EPS:
@@ -446,6 +467,7 @@ class MuseumEnv(gym.Env):
         return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
     def _sample_callback_response(self):
+        """Sample distracted human response to callback using configured probabilities."""
         u = float(self.np_random.random())
         rejoin_threshold = CALLBACK_REJOIN_PROB
         stay_threshold = rejoin_threshold + CALLBACK_STAY_PROB
@@ -459,6 +481,7 @@ class MuseumEnv(gym.Env):
         return "ignore"
 
     def _sample_fear_response(self):
+        """Sample response mode when fear is triggered by an attacking human."""
         u = float(self.np_random.random())
         move_back_threshold = FEAR_RESPONSE_MOVE_BACK_PROB
         stay_threshold = move_back_threshold + FEAR_RESPONSE_STAY_PROB
@@ -472,6 +495,7 @@ class MuseumEnv(gym.Env):
         return "continue_hit"
 
     def _apply_fear_response_on_trigger(self, events):
+        """Apply one-shot fear response policy right after fear becomes active."""
         if not events.get("fear_triggered", False):
             return
 
@@ -506,6 +530,7 @@ class MuseumEnv(gym.Env):
         self._log_event(f">>> person{idx + 1} fear response: {response}.")
 
     def _resolve_fear_response_on_complete(self, events):
+        """Resolve temporary fear response state when fear ends."""
         if not events.get("fear_completed", False):
             return
 
@@ -520,6 +545,7 @@ class MuseumEnv(gym.Env):
         self.fear_current_response_target_idx = None
 
     def _apply_robot_base_color_from_robot_emotion(self):
+        """Sync robot base color with current emotion."""
         if self.robot.emotion == RobotEmotion.FEAR:
             self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_FEAR
             return
@@ -532,12 +558,15 @@ class MuseumEnv(gym.Env):
         self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_NATURAL
 
     def _sync_robot_speaker_state(self):
+        """Update speaker on/off state from listening wait status."""
         self.robot.set_speaker_active(bool(self.listen_wait_active))
 
     def _has_any_distracted_human(self):
+        """Return True if any human is currently distracted."""
         return any(h.mode == HumanMode.DISTRACTED for h in self.humans)
 
     def _sync_robot_text_label_visibility(self):
+        """Toggle robot text labels with priority: need-space > follow-me > explanation."""
         show_need_space = bool(self.fear_active)
         show_follow_me = (not show_need_space) and self._has_any_distracted_human()
         show_explanation = (not show_need_space) and (not show_follow_me) and bool(self.robot.speaker_active)
@@ -546,12 +575,14 @@ class MuseumEnv(gym.Env):
         self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if show_explanation else 0
 
     def _apply_robot_speaking_halo_visual(self):
+        """Show/hide speaking halo geometry based on speaker state."""
         if self.robot.speaker_active:
             self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_ON
             return
         self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
 
     def _get_robot_text_label(self):
+        """Return semantic name of currently active robot text cue."""
         if self.fear_active:
             return "I_need_more_space"
         if self._has_any_distracted_human():
@@ -561,6 +592,7 @@ class MuseumEnv(gym.Env):
         return "none"
 
     def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy):
+        """Update fear/happy/sad states and apply corresponding robot visuals."""
         fear_before = bool(self.fear_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
         fear_now = bool(threat is not None and threat["dist"] < ROBOT_FEAR_DISTANCE_THRESHOLD)
@@ -580,6 +612,7 @@ class MuseumEnv(gym.Env):
         self._apply_robot_base_color_from_robot_emotion()
 
     def reset(self, seed=None, options=None):
+        """Reset MuJoCo state and all episode-level state machines."""
         super().reset(seed=seed)
 
         mujoco.mj_resetData(self.model, self.data)
@@ -632,7 +665,7 @@ class MuseumEnv(gym.Env):
 
     def step(self, action=None):
         """
-        Robot rule-based navigation (via Robot class) + human walking.
+        Run one environment step with robot policy + human state machines.
         """
         external_action_received = self._validate_external_action(action)
         self.step_count += 1
@@ -643,6 +676,9 @@ class MuseumEnv(gym.Env):
         return self._step_active_branch(external_action_received=external_action_received)
 
     def _step_waiting_branch(self, external_action_received=False):
+        """Step branch used during listening wait window (explanation phase)."""
+        # Branch used during explanation wait window after entering listening state.
+        # Most agents are frozen; only explicitly allowed modes keep moving.
         events = self._default_events()
 
         rx, ry, ryaw = self._get_robot_pose()
@@ -852,6 +888,7 @@ class MuseumEnv(gym.Env):
         )
 
     def _maybe_trigger_overwhelmed_in_wait(self, robot_xy, human_xy):
+        """Sample new overwhelmed humans during wait branch with concurrency cap."""
         active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED]
         slots = int(self.max_concurrent_overwhelmed) - len(active_indices)
         if slots <= 0:
@@ -886,6 +923,7 @@ class MuseumEnv(gym.Env):
         return triggered
 
     def _maybe_trigger_attack_in_wait(self, robot_xy, human_xy):
+        """Sample new attack humans during wait branch with concurrency cap."""
         active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.ATTACK]
         slots = int(self.max_concurrent_attack) - len(active_indices)
         if slots <= 0:
@@ -920,6 +958,8 @@ class MuseumEnv(gym.Env):
         return triggered
 
     def _step_active_branch(self, external_action_received=False):
+        """Main simulation branch outside wait window."""
+        # Main runtime branch: robot decision, human updates, MuJoCo step, and info assembly.
         events = self._default_events()
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
@@ -929,6 +969,7 @@ class MuseumEnv(gym.Env):
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
 
         # --- Robot decision ---
+        # External action is validated for API compatibility, but this env uses rule-based control.
         robot_pose = self._get_robot_pose()
         self._refresh_callback_rearm_flags()
         callback_request = self._build_callback_request(human_xy=human_xy, robot_pose=robot_pose)
@@ -1086,6 +1127,8 @@ class MuseumEnv(gym.Env):
         )
 
     def _compute_social_repulsion(self, human_xy):
+        """Compute pairwise short-range repulsion vectors for every human."""
+        # Pairwise short-range repulsion to prevent humans from collapsing into each other.
         if not human_xy.size:
             return [np.zeros(2, dtype=np.float32) for _ in self.humans]
 
@@ -1106,6 +1149,8 @@ class MuseumEnv(gym.Env):
         return repulsion_vectors
 
     def _update_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
+        """Update all humans and write their commands to control buffer."""
+        # Update each human mode/context, compute action, and write it into MuJoCo controls.
         human_actions = []
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
@@ -1160,6 +1205,7 @@ class MuseumEnv(gym.Env):
         return np.zeros((0, 3), dtype=np.float32)
 
     def _check_human_goals(self, human_xy, human_goals):
+        """Return indices of humans that are within goal threshold."""
         human_reached_goal = []
         for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
             dist_to_goal = float(np.linalg.norm(pos - goal))
@@ -1171,6 +1217,7 @@ class MuseumEnv(gym.Env):
         return human_reached_goal
 
     def _handle_listen_transitions(self, final_waypoint_reached, all_humans_reached):
+        """Handle transitions into listening wait window and emit related events."""
         events = {
             "started_listen_wait": False,
             "completed_listen_wait": False,
@@ -1207,6 +1254,8 @@ class MuseumEnv(gym.Env):
         final_waypoint_reached,
         all_humans_reached,
     ):
+        """Collect one-step snapshot used for building info diagnostics."""
+        # Single snapshot object consumed by _build_info and returned via info dict.
         rx, ry, _ = robot_pose
         gx, gy = self._get_goal_xy()
 
@@ -1254,6 +1303,8 @@ class MuseumEnv(gym.Env):
         external_action_received=False,
         external_action_used=False,
     ):
+        """Build structured info dict for debugging/training analysis."""
+        # Structured diagnostics for training/debugging dashboards.
         listen_wait_remaining = (
             max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
         )
@@ -1406,11 +1457,13 @@ class MuseumEnv(gym.Env):
         }
 
     def _get_obs(self):
+        """Build compact observation [robot_x, robot_y, goal_dx, goal_dy]."""
         x, y, yaw = self._get_robot_pose()
         gx, gy = self._get_goal_xy()
         return np.array([x, y, gx - x, gy - y], dtype=np.float32)
 
     def render(self):
+        """Render environment in human viewer or rgb array mode."""
         if self.render_mode == "human":
             if self.viewer is None:
                 self.viewer = mujoco.viewer.launch_passive(
@@ -1441,6 +1494,7 @@ class MuseumEnv(gym.Env):
         return None
 
     def close(self):
+        """Release MuJoCo viewer/renderer resources."""
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None

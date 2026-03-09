@@ -2,6 +2,7 @@ import numpy as np
 
 from .human import HumanMode
 
+# Robot-side finite-state controller used by MuseumEnv.
 ROBOT_WAYPOINT_REACHED_DIST = 0.2
 ROBOT_YAW_RATE_LIMIT = 50.0
 ROBOT_TURN_DONE_YAW_ERR = 0.05
@@ -34,6 +35,7 @@ class Robot:
     """
 
     def __init__(self, waypoints, v_max=3.0, k_v=20.0, k_yaw=20.0):
+        """Initialize waypoint controller and robot behavior state."""
         self.waypoints = list(waypoints)
         self.v_max = float(v_max)
         self.k_v = float(k_v)
@@ -58,9 +60,11 @@ class Robot:
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
+        """Normalize angle to [-pi, pi)."""
         return (ang + np.pi) % (2 * np.pi) - np.pi
 
     def reset(self):
+        """Reset full robot runtime state at episode start."""
         self.current_waypoint_idx = 0
         self.listen_mode = False
         self.listen_done = False
@@ -73,6 +77,7 @@ class Robot:
         self.speaker_active = False
 
     def _reset_callback_state(self):
+        """Clear callback-related transient state."""
         self.callback_active = False
         self.callback_target_idx = None
         self.callback_target_xy = None
@@ -80,9 +85,11 @@ class Robot:
         self.callback_turn_done = False
 
     def get_current_waypoint(self):
+        """Return current target waypoint (x, y)."""
         return self.waypoints[self.current_waypoint_idx]
 
     def _compute_waypoint_metrics(self, robot_pose):
+        """Compute distance and heading error reference to current waypoint."""
         x, y, yaw = robot_pose
         wx, wy = self.waypoints[self.current_waypoint_idx]
         dx = wx - x
@@ -104,7 +111,8 @@ class Robot:
         dy = wy - y
         dist = float(np.hypot(dx, dy) + 1e-8)
 
-        # Switch to next waypoint if close enough
+        # Switch to next waypoint if close enough.
+        # Waypoint 0 is gated until the first listening session is completed.
         if dist < ROBOT_WAYPOINT_REACHED_DIST and self.current_waypoint_idx < len(self.waypoints) - 1:
             
             # don't leave waypoint 0 before the first listening is done.
@@ -163,6 +171,8 @@ class Robot:
         return action
 
     def _start_callback(self, target_idx, target_xy, hold_steps):
+        """Activate callback mode toward one distracted target."""
+        # Callback mode: turn to distracted human and hold speaker for a short window.
         self.callback_active = True
         self.callback_target_idx = int(target_idx)
         self.callback_target_xy = np.array(target_xy, dtype=np.float32)
@@ -171,10 +181,13 @@ class Robot:
         self.mode = RobotMode.CALLBACK
 
     def _finish_callback(self):
+        """Exit callback mode and return to MOVE."""
         self._reset_callback_state()
         self.mode = RobotMode.MOVE
 
     def _callback_action(self, robot_pose):
+        """Generate control while callback mode is active."""
+        # Two-phase callback behavior: turn first, then hold heading for N steps.
         rx, ry, ryaw = robot_pose
         action = np.zeros(3, dtype=np.float32)
         if self.callback_target_xy is None:
@@ -204,6 +217,8 @@ class Robot:
         return action
 
     def update_emotion(self, human_modes, fear_active=False):
+        """Update robot emotion from fear/sad/happy rules."""
+        # Priority: FEAR > SAD > HAPPY (timed hold) > NATURAL.
         if fear_active:
             self.emotion = RobotEmotion.FEAR
             return self.emotion
@@ -219,9 +234,11 @@ class Robot:
         return self.emotion
 
     def trigger_happy(self, hold_steps: int):
+        """Start/refresh HAPPY emotion timer."""
         self.happy_hold_steps_remaining = max(1, int(hold_steps))
 
     def set_speaker_active(self, active: bool) -> None:
+        """Set whether robot speaker visual/text should be active."""
         self.speaker_active = bool(active)
 
     def step(self, robot_pose, human_xyz, callback_request=None):
@@ -239,6 +256,7 @@ class Robot:
               "enter_listen": bool
             }
         """
+        # Callback has priority over regular waypoint tracking.
         if (
             (not self.callback_active)
             and callback_request is not None
@@ -308,6 +326,7 @@ class Robot:
         self._reset_callback_state()
 
     def is_final_reached(self, dist: float):
+        """Return True when robot reached last waypoint within threshold."""
         return (
             dist < ROBOT_WAYPOINT_REACHED_DIST
             and self.current_waypoint_idx == len(self.waypoints) - 1
