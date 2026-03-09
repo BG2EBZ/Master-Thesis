@@ -1,5 +1,4 @@
 import logging
-import warnings
 from importlib import resources
 
 import gymnasium as gym
@@ -35,7 +34,6 @@ HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
-DISTRACTED_PROB_DEFAULT = 0.001
 IMPATIENT_PROB_DEFAULT = 0.000
 DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
 DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
@@ -86,7 +84,6 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
-        distracted_prob: float | None = None,
         distracted_lambda_max_nd_per_sec: float = DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
         distracted_lambda_max_normal_per_sec: float = DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
         distracted_ramp_start_nd_seconds: float = DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
@@ -174,46 +171,12 @@ class MuseumEnv(gym.Env):
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self.listen_session_count = 0
-        if distracted_prob is not None:
-            warnings.warn(
-                "`distracted_prob` is deprecated and ignored. Use "
-                "`distracted_lambda_max_nd_per_sec`, `distracted_lambda_max_normal_per_sec`, "
-                "`distracted_ramp_start_nd_seconds`, `distracted_ramp_start_normal_seconds`, "
-                "`distracted_rise_nd_seconds`, and `distracted_rise_normal_seconds` instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.distracted_prob = None if distracted_prob is None else float(distracted_prob)
         self.distracted_lambda_max_nd_per_sec = float(distracted_lambda_max_nd_per_sec)
         self.distracted_lambda_max_normal_per_sec = float(distracted_lambda_max_normal_per_sec)
         self.distracted_ramp_start_nd_seconds = float(distracted_ramp_start_nd_seconds)
         self.distracted_ramp_start_normal_seconds = float(distracted_ramp_start_normal_seconds)
         self.distracted_rise_nd_seconds = float(distracted_rise_nd_seconds)
         self.distracted_rise_normal_seconds = float(distracted_rise_normal_seconds)
-        if self.distracted_lambda_max_nd_per_sec < 0.0:
-            raise ValueError(
-                f"distracted_lambda_max_nd_per_sec must be >= 0, got {distracted_lambda_max_nd_per_sec}"
-            )
-        if self.distracted_lambda_max_normal_per_sec < 0.0:
-            raise ValueError(
-                "distracted_lambda_max_normal_per_sec must be >= 0, "
-                f"got {distracted_lambda_max_normal_per_sec}"
-            )
-        if self.distracted_ramp_start_nd_seconds < 0.0:
-            raise ValueError(
-                f"distracted_ramp_start_nd_seconds must be >= 0, got {distracted_ramp_start_nd_seconds}"
-            )
-        if self.distracted_ramp_start_normal_seconds < 0.0:
-            raise ValueError(
-                "distracted_ramp_start_normal_seconds must be >= 0, "
-                f"got {distracted_ramp_start_normal_seconds}"
-            )
-        if self.distracted_rise_nd_seconds <= 0.0:
-            raise ValueError(f"distracted_rise_nd_seconds must be > 0, got {distracted_rise_nd_seconds}")
-        if self.distracted_rise_normal_seconds <= 0.0:
-            raise ValueError(
-                f"distracted_rise_normal_seconds must be > 0, got {distracted_rise_normal_seconds}"
-            )
         self.impatient_prob = float(impatient_prob)
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)

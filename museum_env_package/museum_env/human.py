@@ -137,7 +137,6 @@ class Human:
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
-        self.following_distracted_probability = 0.0
         self.following_impatient_probability = 0.0
         self.following_distracted_lambda_max_per_sec = DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT
         self.following_distracted_ramp_start_seconds = DISTRACTED_RAMP_START_SECONDS_DEFAULT
@@ -267,41 +266,6 @@ class Human:
             self.following_steps += 1
             return
         self.reset_following_duration()
-
-    def configure_following_variant(self, variant_mode, probability):
-        allowed = (None, HumanMode.DISTRACTED, HumanMode.IMPATIENT)
-        if variant_mode not in allowed:
-            raise ValueError(f"Invalid following variant mode: {variant_mode}")
-        p = float(probability)
-        if p < 0.0 or p > 1.0:
-            raise ValueError(f"following variant probability must be in [0, 1], got {probability}")
-        if variant_mode is None:
-            self.following_distracted_probability = 0.0
-            self.following_distracted_lambda_max_per_sec = 0.0
-            self.following_impatient_probability = 0.0
-            return
-        if variant_mode == HumanMode.DISTRACTED:
-            self.following_distracted_probability = p
-            # Backward compatibility for legacy callers using probability-based API.
-            self.following_distracted_lambda_max_per_sec = p
-            self.following_impatient_probability = 0.0
-            return
-        self.following_distracted_probability = 0.0
-        self.following_distracted_lambda_max_per_sec = 0.0
-        self.following_impatient_probability = p
-
-    def configure_following_variant_probs(self, distracted_prob, impatient_prob):
-        # In the simplified setup, use impatient_prob=0.0 to model "distracted-only".
-        p_d = float(distracted_prob)
-        p_i = float(impatient_prob)
-        if p_d < 0.0 or p_d > 1.0:
-            raise ValueError(f"distracted probability must be in [0, 1], got {distracted_prob}")
-        if p_i < 0.0 or p_i > 1.0:
-            raise ValueError(f"impatient probability must be in [0, 1], got {impatient_prob}")
-        self.following_distracted_probability = p_d
-        # Backward compatibility for legacy callers using probability-based API.
-        self.following_distracted_lambda_max_per_sec = p_d
-        self.following_impatient_probability = p_i
 
     # Use sigmoid-based hazard increase probability over time
     def configure_distracted_follow_hazard(
@@ -433,13 +397,15 @@ class Human:
 
         raise ValueError(f"Unknown callback response: {response}")
 
+    @staticmethod
+    def _normalize_dt(dt: float) -> float:
+        return max(float(dt), MIN_SPEED_EPS)
+
     def _get_distracted_follow_threshold_steps(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> int:
-        dt_safe = max(float(dt), MIN_SPEED_EPS)
+        dt_safe = self._normalize_dt(dt)
         return int(np.floor(self.following_distracted_ramp_start_seconds / dt_safe))
 
-    # Compute current distracted follow lambda
-    def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
-        dt_safe = max(float(dt), MIN_SPEED_EPS)
+    def _compute_distracted_follow_lambda_per_sec_with_dt_safe(self, dt_safe: float) -> float:
         if self.following_distracted_lambda_max_per_sec <= 0.0:
             return 0.0
         follow_seconds = float(self.following_steps) * dt_safe
@@ -454,10 +420,16 @@ class Human:
         progress = float(np.clip((sig - 0.1) / 0.8, 0.0, 1.0))
         return float(self.following_distracted_lambda_max_per_sec * progress)
 
+    # Compute current distracted follow lambda
+    def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
+        return self._compute_distracted_follow_lambda_per_sec_with_dt_safe(
+            dt_safe=self._normalize_dt(dt)
+        )
+
     # change per-step probability based on current lambda
     def _compute_distracted_follow_step_probability(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
-        dt_safe = max(float(dt), MIN_SPEED_EPS)
-        lambda_t = self._compute_distracted_follow_lambda_per_sec(dt=dt_safe)
+        dt_safe = self._normalize_dt(dt)
+        lambda_t = self._compute_distracted_follow_lambda_per_sec_with_dt_safe(dt_safe=dt_safe)
         if lambda_t <= 0.0:
             return 0.0
         return float(1.0 - np.exp(-lambda_t * dt_safe))

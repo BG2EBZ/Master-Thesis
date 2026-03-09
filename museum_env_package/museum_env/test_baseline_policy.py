@@ -1,5 +1,4 @@
 import unittest
-import warnings
 from unittest.mock import patch
 
 import numpy as np
@@ -217,24 +216,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 self.assertEqual(human._maybe_trigger_following_variant(dt=dt), HumanMode.DISTRACTED)
         finally:
             env.close()
-
-    def test_distracted_prob_deprecated_warning_emitted(self):
-        env = None
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", DeprecationWarning)
-            env = self._make_env(
-                distracted_prob=0.25,
-                impatient_prob=0.0,
-                overwhelmed_wait_trigger_prob=0.0,
-                attack_wait_trigger_prob=0.0,
-            )
-        try:
-            env.reset(seed=81)
-            self.assertTrue(any(w.category is DeprecationWarning for w in caught))
-            self.assertTrue(any("distracted_prob" in str(w.message) for w in caught))
-        finally:
-            if env is not None:
-                env.close()
 
     def test_distracted_window_closes_once_final_listening_starts_or_waits(self):
         env = self._make_env(
