@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from museum_env.env import MuseumEnv
+from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
 from museum_env.human import HumanMode
 
 
@@ -14,6 +14,14 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             strict_action_validation=True,
             **kwargs,
         )
+
+    def test_robot_default_speed_and_move_back_speed(self):
+        env = self._make_env()
+        try:
+            self.assertEqual(env.robot.v_max, 1.0)
+            self.assertEqual(MOVE_BACK_SPEED, 0.6)
+        finally:
+            env.close()
 
     def _assert_in_walkable(self, human, xy, margin=0.20, tol=1e-5):
         xy_arr = np.array(xy, dtype=np.float32)

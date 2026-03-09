@@ -30,7 +30,7 @@ LISTEN_STAND_THRESHOLD_DEFAULT = 0.2
 LISTEN_WAIT_STEPS_DEFAULT = 2000
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
-HUMAN_MAX_SPEED_DEFAULT = 1.67
+HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.2
 DIST_EPS = 1e-8
@@ -137,7 +137,7 @@ class MuseumEnv(gym.Env):
         ]
 
         # Robot agent
-        self.robot = Robot(waypoints=waypoints, v_max=1.5, k_v=20.0, k_yaw=20.0)
+        self.robot = Robot(waypoints=waypoints, v_max=1.0, k_v=20.0, k_yaw=20.0)
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
@@ -207,7 +207,7 @@ class MuseumEnv(gym.Env):
             human.attack_speed = ATTACK_SPEED_DEFAULT
             human.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
             human.impatient_duration = 2000
-            human.impatient_speed_multiplier = 1.5
+            human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0
 
         # Cache MuJoCo body ids (static across episodes).
