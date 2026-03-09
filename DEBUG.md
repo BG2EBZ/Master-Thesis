@@ -1,41 +1,94 @@
-Human behaviors:
+# Human behaviors:
 
-- Following (walking towards to the robot)
-- Wandering (walking randomly)
-- Listening (stopping at target position and attending
-to robot's explanation of display)
-- Distracted (falling behind the group while
-following)
-- Overwhelmed (stepping back or leaving the area
-when experiencing sensory/information overload in
-listening stage)
-- Impatient (moving faster than the robot)
-- Attack (hitting the robot)
-- And more potential behaviors to be added before
-learning phase
+### Core Behaviors:
+- Following (walking in formation around the robot
+while moving between displays)
+
+- Wandering (walking randomly before joining the
+group)
+
+- Listening (stopping, and facing the robot during
+explanation)
+
+- Distracted (falling behind and temporarily ignoring
+the robot while following)
+
+- Overwhelmed (backing off, then leaving the area
+during listening-stage overload)
+
+- Impatient (moving faster and pushing ahead of
+normal following pace)
+
+- Attack (approaching and attempting to hit the
+robot)
+
+### Callback Response Behaviors:
+
+- Rejoin (return to following when robot calls back)
+
+- Stay (pause in place for a fixed time after callback)- Happy (short emotion expression after successful
+callback rejoin)
+
+- Ignore (continue moving away after callback)- Fear (when attacker is too close)
+
+### Fear Response Behaviors:
+
+- Move back (attacker returns to original position)
+
+- Stay (attacker freezes in place while robot is in
+fear state)
+
+- Continue hit (attacker keeps attacking even when
+robot shows fear)
 
 
 
-Robot behaviors:
+# Robot behaviors:
 
-- Move (proceed to next display/destination)
-- Stop (explain current display)
-- Slow down (reduce speed)
-- Speed up (increase speed)
-- Call back (robot stops and turns toward lagging
-person)
-- Move back (Step back and keep a greater social
-distance to humans)
-- Wait (stop and wait for people)
-- And more potential behaviors to be added before
-learning phase
+### Navigation Behaviors:
+
+- Move (proceed to the next waypoint/display)
+- Stop (stop at display and rotate to face the crowd)
+
+### Interaction Behaviors:
+
+- Explain (enter explanation phase after turning to
+people)
+
+- Wait (hold explanation window while humans
+settle and events unfold)
+
+- Call back (stop and turn toward a distracted
+person, and say "Please follow me")
+
+- Move back (step away from attack threat to
+maintain safety distance)
+
+### Emotion States:
+
+- Natural (default state)
+
+- Sad (when humans are distracted or
+overwhelmed)
+
+- Happy (short emotion expression after successful
+callback rejoin)
+- Fear (when attacker is too close)
 
 
-Potential robot behaviors:
+# Neurodivergent people behaviors profile parameters
 
-- Change to Silent Mode if someone is sensory overload?
-- Yield or Give Way when someone is impatient?
-- Quiet Zone Guidance for overwhelmed person?
+All range from 0 to 1
+
+- Sensory Sensitivity: Impact `Overwhelemed` trigger probability, `Overwhelemed` duration
+
+- Social Space Preference: Impact `safety social distance` between humans and robot
+
+- Attention Span: Impact `Distracted` trigger probability, `Distracted` duration, `Callback Response` probability
+
+- Interaction Style: Impact `Attack` probability, `Fear Response` probability
+
+
 
 
 Info schema (current):
