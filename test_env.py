@@ -20,8 +20,11 @@ DEFAULT_MAX_STEPS = 300000
 DEFAULT_RENDER_FPS = 60
 DEFAULT_VIDEO_FPS = 500
 
-# 1.0 means target real-time, <1.0 means faster than real-time, >1.0 means slower than real-time 
+# 1.0 means target real-time, >1.0 means faster than real-time, <1.0 means slower than real-time.
 DEFAULT_SLEEP_SCALE = 1.0
+SLEEP_SCALE_MIN = 0.0625
+SLEEP_SCALE_MAX = 16.0
+SLEEP_SCALE_STEP_FACTOR = 2.0
 # my timestep="0.002" in .xml files, so 500 steps ~ 1 second of sim time 
 DEFAULT_RTF_PRINT_EVERY = 2500
 # resolution (in pixels) for the simulation window and the recorded video. 
@@ -36,6 +39,8 @@ DEFAULT_VIDEO_ROOT = "videos"
 DEFAULT_NAME_PREFIX = "museum_full_run"
 R_KEYCODE_FALLBACKS = (ord("R"), ord("r"))
 P_KEYCODE_FALLBACKS = (ord("P"), ord("p"))
+SPEED_UP_KEYCODE_FALLBACKS = (ord("="), ord("+"))
+SPEED_DOWN_KEYCODE_FALLBACKS = (ord("-"), ord("_"))
 
 
 def _positive_int(value):
@@ -145,13 +150,28 @@ def _print_initial_obs_and_goal(env, obs):
         print(f"Initial robot goal_xy: ({gx:.3f}, {gy:.3f})")
 
 
-def _make_demo_key_callback(reset_event, pause_toggle_event):
+def _make_demo_key_callback(
+    reset_event,
+    pause_toggle_event,
+    speed_up_event=None,
+    speed_down_event=None,
+):
     reset_keycodes = set(R_KEYCODE_FALLBACKS)
     pause_keycodes = set(P_KEYCODE_FALLBACKS)
+    speed_up_keycodes = set(SPEED_UP_KEYCODE_FALLBACKS)
+    speed_down_keycodes = set(SPEED_DOWN_KEYCODE_FALLBACKS)
     if glfw is not None and hasattr(glfw, "KEY_R"):
         reset_keycodes.add(int(glfw.KEY_R))
     if glfw is not None and hasattr(glfw, "KEY_P"):
         pause_keycodes.add(int(glfw.KEY_P))
+    if glfw is not None and hasattr(glfw, "KEY_EQUAL"):
+        speed_up_keycodes.add(int(glfw.KEY_EQUAL))
+    if glfw is not None and hasattr(glfw, "KEY_KP_ADD"):
+        speed_up_keycodes.add(int(glfw.KEY_KP_ADD))
+    if glfw is not None and hasattr(glfw, "KEY_MINUS"):
+        speed_down_keycodes.add(int(glfw.KEY_MINUS))
+    if glfw is not None and hasattr(glfw, "KEY_KP_SUBTRACT"):
+        speed_down_keycodes.add(int(glfw.KEY_KP_SUBTRACT))
 
     def _on_key(keycode):
         try:
@@ -160,6 +180,10 @@ def _make_demo_key_callback(reset_event, pause_toggle_event):
                 reset_event.set()
             elif key in pause_keycodes:
                 pause_toggle_event.set()
+            elif speed_up_event is not None and key in speed_up_keycodes:
+                speed_up_event.set()
+            elif speed_down_event is not None and key in speed_down_keycodes:
+                speed_down_event.set()
         except (TypeError, ValueError):
             return
 
@@ -184,18 +208,46 @@ def _handle_pause_toggle_if_any(pause_toggle_event, paused):
     return paused
 
 
-def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=None):
+def _update_sleep_scale_from_events(current_sleep_scale, speed_up_event=None, speed_down_event=None):
+    speed_up = bool(speed_up_event is not None and speed_up_event.is_set())
+    speed_down = bool(speed_down_event is not None and speed_down_event.is_set())
+    if speed_up_event is not None:
+        speed_up_event.clear()
+    if speed_down_event is not None:
+        speed_down_event.clear()
+
+    new_sleep_scale = float(current_sleep_scale)
+    if speed_up and not speed_down:
+        new_sleep_scale *= SLEEP_SCALE_STEP_FACTOR
+    elif speed_down and not speed_up:
+        new_sleep_scale /= SLEEP_SCALE_STEP_FACTOR
+
+    new_sleep_scale = float(min(SLEEP_SCALE_MAX, max(SLEEP_SCALE_MIN, new_sleep_scale)))
+    if new_sleep_scale != float(current_sleep_scale):
+        print(f"[demo] speed x{new_sleep_scale:.3f} (sleep_scale={new_sleep_scale:.4f})")
+    return new_sleep_scale
+
+
+def _run_demo_stable(
+    env,
+    args,
+    sim_dt,
+    reset_event=None,
+    pause_toggle_event=None,
+    speed_up_event=None,
+    speed_down_event=None,
+):
     base_env = env.unwrapped
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
-    target_frame_sec = (steps_per_frame * sim_dt) / args.sleep_scale
+    current_sleep_scale = float(args.sleep_scale)
 
     obs, _ = env.reset()
     _print_initial_obs_and_goal(env, obs)
     print(
         f"[demo-stable] dt={sim_dt:.6f}s, render_fps={render_fps}, "
-        f"steps_per_frame={steps_per_frame}, target_frame={target_frame_sec:.6f}s"
+        f"steps_per_frame={steps_per_frame}, sleep_scale={current_sleep_scale:.4f}"
     )
 
     wall_start = time.perf_counter()
@@ -203,6 +255,11 @@ def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
     paused = False
 
     while steps_done < args.max_steps:
+        current_sleep_scale = _update_sleep_scale_from_events(
+            current_sleep_scale,
+            speed_up_event=speed_up_event,
+            speed_down_event=speed_down_event,
+        )
         paused = _handle_pause_toggle_if_any(pause_toggle_event, paused)
         if paused:
             _handle_requested_reset_if_any(env, reset_event)
@@ -243,6 +300,7 @@ def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
         if reset_happened:
             continue
         
+        target_frame_sec = (steps_per_frame * sim_dt) / current_sleep_scale
         elapsed = time.perf_counter() - frame_start
         sleep_sec = target_frame_sec - elapsed
         if sleep_sec > 0:
@@ -252,17 +310,26 @@ def _run_demo_stable(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
             break
 
 
-def _run_demo_strict(env, args, sim_dt, reset_event=None, pause_toggle_event=None):
+def _run_demo_strict(
+    env,
+    args,
+    sim_dt,
+    reset_event=None,
+    pause_toggle_event=None,
+    speed_up_event=None,
+    speed_down_event=None,
+):
     base_env = env.unwrapped
     sim_hz = 1.0 / sim_dt
     render_fps = max(1, args.render_fps)
     steps_per_frame = max(1, round(sim_hz / render_fps))
+    current_sleep_scale = float(args.sleep_scale)
 
     obs, _ = env.reset()
     _print_initial_obs_and_goal(env, obs)
     print(
         f"[demo-strict] dt={sim_dt:.6f}s, render_fps={render_fps}, "
-        f"steps_per_frame={steps_per_frame}, sleep_scale={args.sleep_scale:.3f}"
+        f"steps_per_frame={steps_per_frame}, sleep_scale={current_sleep_scale:.4f}"
     )
 
     wall_start = time.perf_counter()
@@ -280,6 +347,17 @@ def _run_demo_strict(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
             wall_start += time.perf_counter() - pause_started_wall
             pause_started_wall = None
 
+        prev_sleep_scale = current_sleep_scale
+        current_sleep_scale = _update_sleep_scale_from_events(
+            current_sleep_scale,
+            speed_up_event=speed_up_event,
+            speed_down_event=speed_down_event,
+        )
+        if current_sleep_scale != prev_sleep_scale:
+            wall_start = time.perf_counter() - (steps_done * sim_dt) / current_sleep_scale
+            if paused:
+                pause_started_wall = time.perf_counter()
+
         if paused:
             _handle_requested_reset_if_any(env, reset_event)
             env.render()
@@ -296,7 +374,7 @@ def _run_demo_strict(env, args, sim_dt, reset_event=None, pause_toggle_event=Non
         obs, reward, terminated, truncated, info = env.step(None)
         steps_done += 1
 
-        target_tick = wall_start + (steps_done * sim_dt) / args.sleep_scale
+        target_tick = wall_start + (steps_done * sim_dt) / current_sleep_scale
         sleep_sec = target_tick - time.perf_counter()
         if sleep_sec > 0:
             time.sleep(sleep_sec)
@@ -390,6 +468,8 @@ def run(args):
         sim_dt = float(base_env.timestep)
         demo_reset_event = None
         demo_pause_toggle_event = None
+        demo_speed_up_event = None
+        demo_speed_down_event = None
 
         if args.mode == "train":
             print(f"[train] dt={sim_dt:.6f}, no render, no sleep")
@@ -399,9 +479,17 @@ def run(args):
         if args.mode == "demo" and hasattr(base_env, "set_viewer_key_callback"):
             demo_reset_event = threading.Event()
             demo_pause_toggle_event = threading.Event()
+            demo_speed_up_event = threading.Event()
+            demo_speed_down_event = threading.Event()
             base_env.set_viewer_key_callback(
-                _make_demo_key_callback(demo_reset_event, demo_pause_toggle_event)
+                _make_demo_key_callback(
+                    demo_reset_event,
+                    demo_pause_toggle_event,
+                    demo_speed_up_event,
+                    demo_speed_down_event,
+                )
             )
+            print("[demo] keys: R reset, P pause/resume, =/+ faster, - slower")
 
         if args.realtime_policy == "strict":
             _run_demo_strict(
@@ -410,6 +498,8 @@ def run(args):
                 sim_dt,
                 reset_event=demo_reset_event,
                 pause_toggle_event=demo_pause_toggle_event,
+                speed_up_event=demo_speed_up_event,
+                speed_down_event=demo_speed_down_event,
             )
         else:
             _run_demo_stable(
@@ -418,6 +508,8 @@ def run(args):
                 sim_dt,
                 reset_event=demo_reset_event,
                 pause_toggle_event=demo_pause_toggle_event,
+                speed_up_event=demo_speed_up_event,
+                speed_down_event=demo_speed_down_event,
             )
     finally:
         if env is not None:
