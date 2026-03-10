@@ -42,6 +42,7 @@ DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
 DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
 DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
+MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
 OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
@@ -97,6 +98,7 @@ class MuseumEnv(gym.Env):
         distracted_ramp_start_normal_seconds: float = DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
         distracted_rise_nd_seconds: float = DISTRACTED_RISE_ND_SECONDS_DEFAULT,
         distracted_rise_normal_seconds: float = DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
+        max_distracted_duration_seconds: float = MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
         impatient_prob: float = IMPATIENT_PROB_DEFAULT,
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
@@ -191,6 +193,12 @@ class MuseumEnv(gym.Env):
         self.distracted_ramp_start_normal_seconds = float(distracted_ramp_start_normal_seconds)
         self.distracted_rise_nd_seconds = float(distracted_rise_nd_seconds)
         self.distracted_rise_normal_seconds = float(distracted_rise_normal_seconds)
+        self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
+        if self.max_distracted_duration_seconds <= 0.0:
+            raise ValueError(
+                "max_distracted_duration_seconds must be > 0, "
+                f"got {max_distracted_duration_seconds}"
+            )
         self.impatient_prob = float(impatient_prob)
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
@@ -247,6 +255,7 @@ class MuseumEnv(gym.Env):
             human.set_event_logging(self.enable_event_logs)
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
 
+        self._configure_human_distracted_duration()
         self._configure_human_following_variants()
         self._configure_human_callback_stay_rejoin_variants()
 
@@ -293,6 +302,14 @@ class MuseumEnv(gym.Env):
                     rise_seconds=self.distracted_rise_normal_seconds,
                 )
             human.following_impatient_probability = float(self.impatient_prob)
+
+    def _configure_human_distracted_duration(self):
+        """Apply common distracted duration config to all humans."""
+        for human in self.humans:
+            human.configure_distracted_duration(
+                max_duration_seconds=self.max_distracted_duration_seconds,
+                dt=float(self.timestep),
+            )
 
     def _configure_human_callback_stay_rejoin_variants(self):
         """Apply profile-specific delayed rejoin probability after callback stay."""
@@ -710,6 +727,7 @@ class MuseumEnv(gym.Env):
         # Reset humans
         for human in self.humans:
             human.reset_episode_state()
+        self._configure_human_distracted_duration()
         self._configure_human_following_variants()
         self._configure_human_callback_stay_rejoin_variants()
         self._apply_robot_base_color_from_robot_emotion()

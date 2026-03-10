@@ -56,6 +56,71 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_distracted_duration_defaults_to_ten_seconds_for_all_humans(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            expected_steps = max(1, int(round(10.0 / float(env.timestep))))
+            for human in env.humans:
+                self.assertAlmostEqual(human.max_distracted_duration_seconds, 10.0)
+                self.assertEqual(human.distracted_duration, expected_steps)
+        finally:
+            env.close()
+
+    def test_distracted_duration_stays_fixed_across_resets(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            expected_steps = max(1, int(round(10.0 / float(env.timestep))))
+            observed = []
+            for seed in (101, 102, 103):
+                env.reset(seed=seed)
+                durations = tuple(int(human.distracted_duration) for human in env.humans)
+                observed.append(durations)
+                self.assertEqual(durations, (expected_steps,) * len(env.humans))
+            self.assertEqual(len(set(observed)), 1)
+        finally:
+            env.close()
+
+    def test_distracted_timeout_recovers_exactly_at_configured_max_steps(self):
+        env = self._make_env(
+            max_distracted_duration_seconds=0.006,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=888)
+            human = env.humans[1]
+            expected_steps = max(1, int(round(0.006 / float(env.timestep))))
+            self.assertEqual(human.distracted_duration, expected_steps)
+
+            human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            ctx = {
+                "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "stand_threshold": env.listen_stand_threshold,
+                "dt": float(env.timestep),
+            }
+
+            with patch.object(human, "_step_wandering", return_value=np.zeros(3, dtype=np.float32)), \
+                 patch("numpy.random.uniform", return_value=0.0):
+                for _ in range(max(0, expected_steps - 1)):
+                    human.step(env.model, env.data, ctx)
+                    self.assertEqual(human.mode, HumanMode.DISTRACTED)
+                human.step(env.model, env.data, ctx)
+
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
     def test_callback_response_defaults_are_profile_specific(self):
         env = self._make_env(
             impatient_prob=0.0,

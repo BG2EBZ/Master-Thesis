@@ -28,6 +28,7 @@ DISTRACTED_HAZARD_SIGMOID_K = float(2.0 * np.log(9.0))
 DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
 DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_SECONDS_DEFAULT = 20.0
+DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
 OVERWHELMED_FALLBACK_X_OFFSET = 1.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
@@ -129,7 +130,12 @@ class Human:
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
 
         self.distracted_timer = 0
-        self.distracted_duration = np.random.randint(1000, 1500)
+        self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
+        self.distracted_duration = 0
+        self.configure_distracted_duration(
+            max_duration_seconds=self.max_distracted_duration_seconds,
+            dt=DEFAULT_SIM_TIMESTEP_SECONDS,
+        )
         self.callback_response_mode = None  # None | "stay" | "ignore"
         self.callback_stay_steps_remaining = 0
         self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
@@ -243,7 +249,6 @@ class Human:
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
-        self.distracted_duration = np.random.randint(1000, 1500)
         self._clear_callback_response_state()
         self.callback_stay_rejoin_this_step = False
 
@@ -278,6 +283,24 @@ class Human:
     def set_following_distracted_window_active(self, active: bool):
         """Tell the human whether distracted-follow hazard should be active now."""
         self.following_distracted_window_active = bool(active)
+
+    def configure_distracted_duration(
+        self,
+        max_duration_seconds: float,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+    ):
+        """Configure maximum distracted duration and cache the converted step count."""
+        duration_seconds = float(max_duration_seconds)
+        dt_safe = float(dt)
+        if duration_seconds <= 0.0:
+            raise ValueError(
+                f"distracted max_duration_seconds must be > 0, got {max_duration_seconds}"
+            )
+        if dt_safe <= 0.0:
+            raise ValueError(f"distracted dt must be > 0, got {dt}")
+
+        self.max_distracted_duration_seconds = duration_seconds
+        self.distracted_duration = max(1, int(round(duration_seconds / dt_safe)))
 
     def update_following_duration(self, eligible_following: bool):
         """Accumulate following duration only when current step is eligible."""
@@ -774,7 +797,7 @@ class Human:
             action[2] += np.random.uniform(DISTRACTED_YAW_NOISE_MIN, DISTRACTED_YAW_NOISE_MAX)
 
         # Recover after duration
-        if self.distracted_timer > self.distracted_duration:
+        if self.distracted_timer >= self.distracted_duration:
             self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
