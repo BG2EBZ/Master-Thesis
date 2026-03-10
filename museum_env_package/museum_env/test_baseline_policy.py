@@ -5,6 +5,7 @@ import numpy as np
 
 from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
 from museum_env.human import HumanMode, HumanProfile
+from museum_env.robot import RobotEmotion
 
 
 class _FixedRandom:
@@ -216,7 +217,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
             self.assertIsNotNone(request)
             self.assertEqual(request["target_idx"], target_idx)
-            self.assertGreaterEqual(request["hold_steps"], 1)
+            expected_hold_steps = max(1, int(round(2.0 / float(env.timestep))))
+            self.assertEqual(request["hold_steps"], expected_hold_steps)
         finally:
             env.close()
 
@@ -310,6 +312,228 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=125)
             _, _, _, _, info = env.step(None)
             self.assertAlmostEqual(info["status"]["callback_trigger_distance_meters"], 1.75)
+            self.assertEqual(info["status"]["perceived_distracted_indices"], [])
+            self.assertFalse(info["status"]["callback_visual_active"])
+        finally:
+            env.close()
+
+    def test_robot_does_not_perceive_near_distracted_for_label_or_sad(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=126)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.0, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertNotIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
+        finally:
+            env.close()
+
+    def test_robot_perceives_far_distracted_but_visuals_stay_off_when_callback_not_active(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=127)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.01, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
+        finally:
+            env.close()
+
+    def test_callback_turn_phase_does_not_show_follow_me_or_distracted_sad(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=131)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.robot.callback_active = True
+            env.robot.callback_turn_done = False
+            env.robot.callback_hold_steps_remaining = 20
+
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.4, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
+        finally:
+            env.close()
+
+    def test_callback_visual_phase_shows_follow_me_and_sets_sad(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=132)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.robot.callback_active = True
+            env.robot.callback_turn_done = True
+            env.robot.callback_hold_steps_remaining = 20
+
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.4, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertIn(target_idx, env.perceived_distracted_indices)
+            self.assertEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.SAD)
+        finally:
+            env.close()
+
+    def test_callback_end_hides_follow_me_and_reverts_distracted_sad_even_if_person_still_far(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=133)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.robot.callback_active = False
+            env.robot.callback_turn_done = True
+            env.robot.callback_hold_steps_remaining = 0
+
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.4, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
+        finally:
+            env.close()
+
+    def test_overwhelmed_still_triggers_sad_without_distance_gate(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=128)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.OVERWHELMED, reason="test_force_overwhelmed")
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([0.5, 0.0], dtype=np.float32)
+
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+
+            self.assertEqual(env.robot.emotion, RobotEmotion.SAD)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+        finally:
+            env.close()
+
+    def test_callback_request_ignores_near_distracted_even_with_larger_timer(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=129)
+            near_idx = 1
+            far_idx = 2
+            env.humans[near_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[far_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[near_idx].distracted_timer = 20
+            env.humans[far_idx].distracted_timer = 5
+
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[near_idx] = np.array([1.0, 0.0], dtype=np.float32)
+            human_xy[far_idx] = np.array([2.5, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+
+            self.assertIsNotNone(request)
+            self.assertEqual(request["target_idx"], far_idx)
+        finally:
+            env.close()
+
+    def test_perceived_distance_threshold_override_does_not_force_follow_me_or_sad_without_callback_visual(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=1.5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=130)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+
+            human_xy[target_idx] = np.array([1.5, 0.0], dtype=np.float32)
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+            self.assertNotIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
+
+            human_xy[target_idx] = np.array([1.5001, 0.0], dtype=np.float32)
+            events = env._default_events()
+            env._update_robot_emotion_and_visual(events=events, robot_xy=robot_xy, human_xy=human_xy)
+            env._sync_robot_text_label_visibility()
+            self.assertIn(target_idx, env.perceived_distracted_indices)
+            self.assertNotEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env.robot.emotion, RobotEmotion.NATURAL)
         finally:
             env.close()
 

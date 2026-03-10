@@ -52,7 +52,7 @@ ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
 ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
-CALLBACK_HOLD_SECONDS = 0.8
+CALLBACK_HOLD_SECONDS = 2.0
 CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT = 2.0
 CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.60
 CALLBACK_STAY_PROB_NORMAL_DEFAULT = 0.25
@@ -246,6 +246,7 @@ class MuseumEnv(gym.Env):
         self.fear_current_response_target_idx = None
         self.fear_last_response = None
         self.fear_last_response_target_idx = None
+        self.perceived_distracted_indices = []
 
         # --- Initialize humans ---
         self.humans = [
@@ -469,16 +470,14 @@ class MuseumEnv(gym.Env):
             return None
         rx, ry, _ = robot_pose
         robot_xy = np.array([rx, ry], dtype=np.float32)
+        perceived_distracted_indices = self._get_perceived_distracted_indices(
+            robot_xy=robot_xy,
+            human_xy=human_xy,
+        )
         hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
         candidates = []
-        for idx, human in enumerate(self.humans):
-            if idx >= human_xy.shape[0]:
-                continue
-            if human.mode != HumanMode.DISTRACTED:
-                continue
-            distance_to_robot = float(np.linalg.norm(np.array(human_xy[idx], dtype=np.float32) - robot_xy))
-            if distance_to_robot <= self.callback_trigger_distance_meters:
-                continue
+        for idx in perceived_distracted_indices:
+            human = self.humans[idx]
             if idx < len(self.callback_triggered_for_current_distracted):
                 if self.callback_triggered_for_current_distracted[idx]:
                     continue
@@ -632,14 +631,34 @@ class MuseumEnv(gym.Env):
         """Update speaker on/off state from listening wait status."""
         self.robot.set_speaker_active(bool(self.listen_wait_active))
 
-    def _has_any_distracted_human(self):
-        """Return True if any human is currently distracted."""
-        return any(h.mode == HumanMode.DISTRACTED for h in self.humans)
+    def _get_perceived_distracted_indices(self, robot_xy, human_xy):
+        """Return distracted human indices that are farther than perception threshold."""
+        if human_xy.size == 0:
+            return []
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        perceived = []
+        for idx, human in enumerate(self.humans):
+            if human.mode != HumanMode.DISTRACTED:
+                continue
+            if idx >= human_xy.shape[0]:
+                continue
+            dist = float(np.linalg.norm(np.array(human_xy[idx], dtype=np.float32) - robot_xy))
+            if dist > self.callback_trigger_distance_meters:
+                perceived.append(int(idx))
+        return perceived
+
+    def _is_callback_visual_active(self):
+        """Return True only during callback post-turn hold window."""
+        return bool(
+            self.robot.callback_active
+            and self.robot.callback_turn_done
+            and self.robot.callback_hold_steps_remaining > 0
+        )
 
     def _sync_robot_text_label_visibility(self):
         """Toggle robot text labels with priority: need-space > follow-me > explanation."""
         show_need_space = bool(self.fear_active)
-        show_follow_me = (not show_need_space) and self._has_any_distracted_human()
+        show_follow_me = (not show_need_space) and self._is_callback_visual_active()
         show_explanation = (not show_need_space) and (not show_follow_me) and bool(self.robot.speaker_active)
         self._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 1 if show_need_space else 0
         self._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 1 if show_follow_me else 0
@@ -656,7 +675,7 @@ class MuseumEnv(gym.Env):
         """Return semantic name of currently active robot text cue."""
         if self.fear_active:
             return "I_need_more_space"
-        if self._has_any_distracted_human():
+        if self._is_callback_visual_active():
             return "Please_follow_me"
         if self.robot.speaker_active:
             return "explanation"
@@ -674,9 +693,19 @@ class MuseumEnv(gym.Env):
         elif fear_before and (not fear_now):
             events["fear_completed"] = True
 
+        self.perceived_distracted_indices = self._get_perceived_distracted_indices(
+            robot_xy=robot_xy,
+            human_xy=human_xy,
+        )
+        callback_visual_active = self._is_callback_visual_active()
+        emotion_modes = [human.mode for human in self.humans if human.mode != HumanMode.DISTRACTED]
+        if callback_visual_active:
+            # Callback visual window should explicitly drive SAD even if the target mode changes mid-window.
+            emotion_modes.append(HumanMode.DISTRACTED)
+
         happy_before = int(self.robot.happy_hold_steps_remaining)
-        sad_now = any(h.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED) for h in self.humans)
-        self.robot.update_emotion([h.mode for h in self.humans], fear_active=self.fear_active)
+        sad_now = any(mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED) for mode in emotion_modes)
+        self.robot.update_emotion(emotion_modes, fear_active=self.fear_active)
         happy_after = int(self.robot.happy_hold_steps_remaining)
         if happy_before > 0 and happy_after == 0 and (not sad_now) and (not self.fear_active):
             events["happy_completed"] = True
@@ -733,6 +762,7 @@ class MuseumEnv(gym.Env):
         self.fear_current_response_target_idx = None
         self.fear_last_response = None
         self.fear_last_response_target_idx = None
+        self.perceived_distracted_indices = []
 
         # Reset humans
         for human in self.humans:
@@ -1078,6 +1108,7 @@ class MuseumEnv(gym.Env):
             target_idx = int(callback_request["target_idx"])
             self.callback_active_target_idx = target_idx
             if 0 <= target_idx < len(self.callback_triggered_for_current_distracted):
+                # Mark this human as having triggered callback
                 self.callback_triggered_for_current_distracted[target_idx] = True
                 self._log_event(f">>> Robot CALLBACK triggered for person{target_idx + 1}.")
         if callback_active_before_step and (not self.robot.callback_active):
@@ -1489,7 +1520,9 @@ class MuseumEnv(gym.Env):
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
                 "distracted_follow_window_active": bool(self._is_distracted_follow_window_active()),
+                "callback_visual_active": bool(self._is_callback_visual_active()),
                 "callback_trigger_distance_meters": float(self.callback_trigger_distance_meters),
+                "perceived_distracted_indices": [int(idx) for idx in self.perceived_distracted_indices],
                 "active_overwhelmed_indices": active_overwhelmed_indices,
                 "active_attack_indices": active_attack_indices,
                 "last_overwhelmed_trigger_indices": [
