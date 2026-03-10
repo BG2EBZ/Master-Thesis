@@ -52,8 +52,8 @@ ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
 ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
-CALLBACK_DISTRACTED_TRIGGER_STEPS = 400
 CALLBACK_HOLD_SECONDS = 0.8
+CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT = 2.0
 CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.60
 CALLBACK_STAY_PROB_NORMAL_DEFAULT = 0.25
 CALLBACK_IGNORE_PROB_NORMAL_DEFAULT = 0.15
@@ -108,6 +108,7 @@ class MuseumEnv(gym.Env):
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
         callback_stay_prob_nd: float = CALLBACK_STAY_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
+        callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
     ):
         """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
         super().__init__()
@@ -208,6 +209,12 @@ class MuseumEnv(gym.Env):
         self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
         self.callback_stay_prob_nd = float(callback_stay_prob_nd)
         self.callback_ignore_prob_nd = float(callback_ignore_prob_nd)
+        self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
+        if self.callback_trigger_distance_meters <= 0.0:
+            raise ValueError(
+                "callback_trigger_distance_meters must be > 0, "
+                f"got {callback_trigger_distance_meters}"
+            )
         self.callback_stay_rejoin_prob_normal = float(CALLBACK_STAY_REJOIN_PROB_NORMAL)
         self.callback_stay_rejoin_prob_nd = float(CALLBACK_STAY_REJOIN_PROB_ND)
         self.callback_response_profile_probs = {
@@ -460,6 +467,8 @@ class MuseumEnv(gym.Env):
         # Callback targets the longest-distracted eligible human during robot move stage.
         if not self._is_robot_in_move_stage(robot_pose):
             return None
+        rx, ry, _ = robot_pose
+        robot_xy = np.array([rx, ry], dtype=np.float32)
         hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
         candidates = []
         for idx, human in enumerate(self.humans):
@@ -467,7 +476,8 @@ class MuseumEnv(gym.Env):
                 continue
             if human.mode != HumanMode.DISTRACTED:
                 continue
-            if human.distracted_timer < CALLBACK_DISTRACTED_TRIGGER_STEPS:
+            distance_to_robot = float(np.linalg.norm(np.array(human_xy[idx], dtype=np.float32) - robot_xy))
+            if distance_to_robot <= self.callback_trigger_distance_meters:
                 continue
             if idx < len(self.callback_triggered_for_current_distracted):
                 if self.callback_triggered_for_current_distracted[idx]:
@@ -1479,6 +1489,7 @@ class MuseumEnv(gym.Env):
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
                 "distracted_follow_window_active": bool(self._is_distracted_follow_window_active()),
+                "callback_trigger_distance_meters": float(self.callback_trigger_distance_meters),
                 "active_overwhelmed_indices": active_overwhelmed_indices,
                 "active_attack_indices": active_attack_indices,
                 "last_overwhelmed_trigger_indices": [

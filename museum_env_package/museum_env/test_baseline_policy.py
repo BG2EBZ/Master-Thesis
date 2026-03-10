@@ -180,6 +180,139 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_callback_request_not_triggered_when_distance_is_at_or_below_threshold(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=120)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[target_idx].distracted_timer = 0
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.0, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNone(request)
+        finally:
+            env.close()
+
+    def test_callback_request_triggers_when_distance_exceeds_threshold_even_at_timer_zero(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=121)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[target_idx].distracted_timer = 0
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.01, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNotNone(request)
+            self.assertEqual(request["target_idx"], target_idx)
+            self.assertGreaterEqual(request["hold_steps"], 1)
+        finally:
+            env.close()
+
+    def test_callback_request_keeps_longest_distracted_priority_under_distance_gate(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=122)
+            idx_short = 1
+            idx_long = 2
+            env.humans[idx_short].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[idx_long].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[idx_short].distracted_timer = 5
+            env.humans[idx_long].distracted_timer = 9
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[idx_short] = np.array([2.1, 0.0], dtype=np.float32)
+            human_xy[idx_long] = np.array([2.2, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNotNone(request)
+            self.assertEqual(request["target_idx"], idx_long)
+        finally:
+            env.close()
+
+    def test_callback_request_distance_threshold_can_be_overridden_and_is_strict(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=1.5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=123)
+            self.assertAlmostEqual(env.callback_trigger_distance_meters, 1.5)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+
+            human_xy[target_idx] = np.array([1.5, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                boundary_request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNone(boundary_request)
+
+            human_xy[target_idx] = np.array([1.5001, 0.0], dtype=np.float32)
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                above_request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNotNone(above_request)
+            self.assertEqual(above_request["target_idx"], target_idx)
+        finally:
+            env.close()
+
+    def test_callback_trigger_distance_constructor_rejects_non_positive(self):
+        with self.assertRaises(ValueError):
+            self._make_env(
+                callback_trigger_distance_meters=0.0,
+                impatient_prob=0.0,
+                overwhelmed_wait_trigger_prob=0.0,
+                attack_wait_trigger_prob=0.0,
+            )
+
+    def test_callback_request_is_blocked_when_robot_not_in_move_stage(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=124)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([3.0, 0.0], dtype=np.float32)
+
+            env.robot.listen_mode = True
+            request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+            self.assertIsNone(request)
+        finally:
+            env.close()
+
+    def test_callback_trigger_distance_exposed_in_info_status(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=1.75,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=125)
+            _, _, _, _, info = env.step(None)
+            self.assertAlmostEqual(info["status"]["callback_trigger_distance_meters"], 1.75)
+        finally:
+            env.close()
+
     def test_callback_completion_samples_by_target_human_profile(self):
         env = self._make_env(
             impatient_prob=0.0,
