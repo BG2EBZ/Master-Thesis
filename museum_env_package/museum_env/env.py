@@ -8,7 +8,13 @@ import numpy as np
 from gymnasium import spaces
 
 from .human import Human, HumanMode, HumanProfile
-from .robot import ROBOT_WAYPOINT_REACHED_DIST, Robot, RobotEmotion, RobotMode
+from .robot import (
+    ROBOT_WAYPOINT_REACHED_DIST,
+    Robot,
+    RobotCallbackPhase,
+    RobotEmotion,
+    RobotMode,
+)
 
 # MuJoCo + Gym wrapper coordinating robot policy, human behaviors, and event bookkeeping.
 logger = logging.getLogger(__name__)
@@ -52,7 +58,8 @@ ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
 ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
-CALLBACK_HOLD_SECONDS = 2.0
+CALLBACK_CUE_SECONDS = 4.0
+CALLBACK_RESPONSE_SAMPLE_SECONDS = 2.0
 CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT = 2.0
 CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.60
 CALLBACK_STAY_PROB_NORMAL_DEFAULT = 0.25
@@ -376,6 +383,10 @@ class MuseumEnv(gym.Env):
             "callback_response_rejoin": False,
             "callback_response_stay": False,
             "callback_response_ignore": False,
+            "callback_attempt_1_started": False,
+            "callback_attempt_2_started": False,
+            "callback_first_attempt_failed": False,
+            "callback_success": False,
             "happy_triggered": False,
             "happy_completed": False,
             "fear_triggered": False,
@@ -474,7 +485,7 @@ class MuseumEnv(gym.Env):
             robot_xy=robot_xy,
             human_xy=human_xy,
         )
-        hold_steps = max(1, int(round(CALLBACK_HOLD_SECONDS / float(self.timestep))))
+        cue_steps = self._get_callback_cue_steps()
         candidates = []
         for idx in perceived_distracted_indices:
             human = self.humans[idx]
@@ -491,7 +502,7 @@ class MuseumEnv(gym.Env):
         return {
             "target_idx": int(target_idx),
             "target_xy": np.array(human_xy[target_idx], dtype=np.float32),
-            "hold_steps": int(hold_steps),
+            "cue_steps": int(cue_steps),
         }
 
     def _get_nearest_attack_threat(self, robot_xy, human_xy):
@@ -549,6 +560,110 @@ class MuseumEnv(gym.Env):
         if u < ignore_threshold:
             return "ignore"
         return "ignore"
+
+    def _get_callback_cue_steps(self) -> int:
+        """Return callback cue duration in simulation steps."""
+        return max(1, int(round(CALLBACK_CUE_SECONDS / float(self.timestep))))
+
+    def _get_callback_response_sample_steps(self) -> int:
+        """Return step offset inside cue when callback response should be sampled."""
+        return max(1, int(round(CALLBACK_RESPONSE_SAMPLE_SECONDS / float(self.timestep))))
+
+    def _is_callback_cue_active(self) -> bool:
+        """Return True only during callback cue phase after turning completes."""
+        return bool(
+            self.robot.callback_active
+            and self.robot.callback_phase == RobotCallbackPhase.CUE
+            and self.robot.callback_cue_elapsed_steps < self.robot.callback_cue_total_steps
+        )
+
+    def _maybe_sample_active_callback_response(self, events):
+        """Sample callback response once at the 2-second mark of the active cue."""
+        if not self.robot.callback_active:
+            return
+        if self.robot.callback_phase != RobotCallbackPhase.CUE:
+            return
+        if bool(self.robot.callback_response_sampled):
+            return
+        if int(self.robot.callback_cue_elapsed_steps) < self._get_callback_response_sample_steps():
+            return
+
+        target_idx = self.callback_active_target_idx
+        self.robot.callback_response_sampled = True
+        if target_idx is None or not (0 <= target_idx < len(self.humans)):
+            return
+
+        recover_human = self.humans[target_idx]
+        if recover_human.mode != HumanMode.DISTRACTED:
+            return
+
+        stay_steps = max(1, int(round(CALLBACK_STAY_SECONDS / float(self.timestep))))
+        callback_response = self._sample_callback_response(profile=recover_human.profile)
+        # Apply callback response to target human
+        recovered = recover_human.apply_callback_response(
+            response=callback_response,
+            stay_steps=stay_steps,
+        )
+        # Record callback response and log event
+        self.callback_last_response = str(callback_response)
+        self.callback_last_response_target_idx = int(target_idx)
+        events[f"callback_response_{callback_response}"] = True
+        self._log_event(
+            f">>> person{target_idx + 1} callback response: {callback_response} "
+            f"(attempt {int(self.robot.callback_attempt_index)})."
+        )
+        if recovered and callback_response == "rejoin":
+            events["callback_forced_recovery"] = True
+
+    def _resolve_completed_callback_cue(self, events):
+        """Resolve one callback attempt when its 4-second cue window finishes."""
+        if not bool(self.robot.callback_cue_completed_this_step):
+            return
+
+        target_idx = self.callback_active_target_idx
+        target_human = None
+        success = False
+        if target_idx is not None and 0 <= target_idx < len(self.humans):
+            target_human = self.humans[target_idx]
+            success = target_human.mode == HumanMode.FOLLOWING
+
+        # Resolve callback attempt outcome and log events
+        if success:
+            events["callback_completed"] = True
+            events["callback_success"] = True
+            hold_steps = max(1, int(round(ROBOT_HAPPY_HOLD_SECONDS / float(self.timestep))))
+            self.robot.trigger_happy(hold_steps)
+            events["happy_triggered"] = True
+            if target_idx is not None:
+                self._log_event(
+                    f">>> Robot CALLBACK succeeded for person{target_idx + 1} "
+                    f"on attempt {int(self.robot.callback_attempt_index)}."
+                )
+            self.robot._finish_callback()
+            self.callback_active_target_idx = None
+            return
+        # If first attempt failed, start second attempt
+        if int(self.robot.callback_attempt_index) < 2:
+            events["callback_first_attempt_failed"] = True
+            if self.robot.start_next_callback_attempt():
+                events["callback_attempt_2_started"] = True
+                if target_idx is not None:
+                    self._log_event(
+                        f">>> Robot CALLBACK retry started for person{target_idx + 1}."
+                    )
+            else:
+                events["callback_completed"] = True
+                self.robot._finish_callback()
+                self.callback_active_target_idx = None
+            return
+
+        events["callback_completed"] = True
+        if target_idx is not None:
+            self._log_event(
+                f">>> Robot CALLBACK ended after second attempt for person{target_idx + 1}."
+            )
+        self.robot._finish_callback()
+        self.callback_active_target_idx = None
 
     def _sample_fear_response(self):
         """Sample response mode when fear is triggered by an attacking human."""
@@ -629,7 +744,7 @@ class MuseumEnv(gym.Env):
 
     def _sync_robot_speaker_state(self):
         """Update speaker on/off state from listening wait status."""
-        self.robot.set_speaker_active(bool(self.listen_wait_active))
+        self.robot.set_speaker_active(bool(self.listen_wait_active or self._is_callback_cue_active()))
 
     def _get_perceived_distracted_indices(self, robot_xy, human_xy):
         """Return distracted human indices that are farther than perception threshold."""
@@ -648,12 +763,8 @@ class MuseumEnv(gym.Env):
         return perceived
 
     def _is_callback_visual_active(self):
-        """Return True only during callback post-turn hold window."""
-        return bool(
-            self.robot.callback_active
-            and self.robot.callback_turn_done
-            and self.robot.callback_hold_steps_remaining > 0
-        )
+        """Return True only during callback cue phase."""
+        return self._is_callback_cue_active()
 
     def _sync_robot_text_label_visibility(self):
         """Toggle robot text labels with priority: need-space > follow-me > explanation."""
@@ -700,7 +811,7 @@ class MuseumEnv(gym.Env):
         callback_visual_active = self._is_callback_visual_active()
         emotion_modes = [human.mode for human in self.humans if human.mode != HumanMode.DISTRACTED]
         if callback_visual_active:
-            # Callback visual window should explicitly drive SAD even if the target mode changes mid-window.
+            # Callback cue should explicitly drive SAD even if the target mode changes mid-window.
             emotion_modes.append(HumanMode.DISTRACTED)
 
         happy_before = int(self.robot.happy_hold_steps_remaining)
@@ -713,16 +824,14 @@ class MuseumEnv(gym.Env):
 
     # Apply one-step-delayed callback stay/rejoin effects and emit corresponding events
     def _consume_callback_stay_rejoin_events(self, events):
-        """Consume one-step delayed callback rejoin markers and emit robot happy events."""
+        """Consume one-step delayed callback stay/rejoin markers without side effects."""
         for idx, human in enumerate(self.humans):
             if not bool(getattr(human, "callback_stay_rejoin_this_step", False)):
                 continue
             human.callback_stay_rejoin_this_step = False
-            events["callback_forced_recovery"] = True
-            hold_steps = max(1, int(round(ROBOT_HAPPY_HOLD_SECONDS / float(self.timestep))))
-            self.robot.trigger_happy(hold_steps)
-            events["happy_triggered"] = True
-            self._log_event(f">>> person{idx + 1} recovered after CALLBACK stay -> FOLLOWING.")
+            self._log_event(
+                f">>> person{idx + 1} recovered after CALLBACK stay -> FOLLOWING."
+            )
 
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
@@ -1105,44 +1214,15 @@ class MuseumEnv(gym.Env):
         events["entered_listen"] = bool(enter_listen)
         if callback_request is not None and (not callback_active_before_step) and robot_mode == RobotMode.CALLBACK:
             events["callback_triggered"] = True
+            events["callback_attempt_1_started"] = True
             target_idx = int(callback_request["target_idx"])
             self.callback_active_target_idx = target_idx
             if 0 <= target_idx < len(self.callback_triggered_for_current_distracted):
                 # Mark this human as having triggered callback
                 self.callback_triggered_for_current_distracted[target_idx] = True
                 self._log_event(f">>> Robot CALLBACK triggered for person{target_idx + 1}.")
-        if callback_active_before_step and (not self.robot.callback_active):
-            events["callback_completed"] = True
-            recover_idx = self.callback_active_target_idx
-            if recover_idx is not None and 0 <= recover_idx < len(self.humans):
-                recover_human = self.humans[recover_idx]
-                if recover_human.mode == HumanMode.DISTRACTED:
-                    stay_steps = max(1, int(round(CALLBACK_STAY_SECONDS / float(self.timestep))))
-                    callback_response = self._sample_callback_response(profile=recover_human.profile)
-                    recovered = recover_human.apply_callback_response(
-                        response=callback_response,
-                        stay_steps=stay_steps,
-                    )
-                else:
-                    callback_response = None
-                    recovered = False
-
-                if recovered and callback_response is not None:
-                    self.callback_last_response = str(callback_response)
-                    self.callback_last_response_target_idx = int(recover_idx)
-                    events[f"callback_response_{callback_response}"] = True
-                    self._log_event(
-                        f">>> person{recover_idx + 1} callback response: {callback_response}."
-                    )
-
-                if recovered and callback_response == "rejoin":
-                    events["callback_forced_recovery"] = True
-                    hold_steps = max(1, int(round(ROBOT_HAPPY_HOLD_SECONDS / float(self.timestep))))
-                    self.robot.trigger_happy(hold_steps)
-                    events["happy_triggered"] = True
-                    self._log_event(f">>> person{recover_idx + 1} forced recovery by CALLBACK -> FOLLOWING.")
-            self.callback_active_target_idx = None
-            self._log_event(">>> Robot CALLBACK completed.")
+        self._maybe_sample_active_callback_response(events)
+        self._resolve_completed_callback_cue(events)
 
         # If robot just entered listen, assign listen targets
         if enter_listen:
@@ -1458,6 +1538,10 @@ class MuseumEnv(gym.Env):
                 "callback_response_rejoin": bool(events["callback_response_rejoin"]),
                 "callback_response_stay": bool(events["callback_response_stay"]),
                 "callback_response_ignore": bool(events["callback_response_ignore"]),
+                "callback_attempt_1_started": bool(events["callback_attempt_1_started"]),
+                "callback_attempt_2_started": bool(events["callback_attempt_2_started"]),
+                "callback_first_attempt_failed": bool(events["callback_first_attempt_failed"]),
+                "callback_success": bool(events["callback_success"]),
                 "happy_triggered": bool(events["happy_triggered"]),
                 "happy_completed": bool(events["happy_completed"]),
                 "fear_triggered": bool(events["fear_triggered"]),
@@ -1484,7 +1568,19 @@ class MuseumEnv(gym.Env):
                     if self.robot.callback_target_idx is not None
                     else None
                 ),
-                "callback_hold_remaining": int(self.robot.callback_hold_steps_remaining),
+                "callback_attempt_index": int(self.robot.callback_attempt_index),
+                "callback_phase": (
+                    str(self.robot.callback_phase)
+                    if self.robot.callback_phase is not None
+                    else None
+                ),
+                "callback_cue_elapsed_steps": int(self.robot.callback_cue_elapsed_steps),
+                "callback_cue_total_steps": int(self.robot.callback_cue_total_steps),
+                "callback_cue_remaining_steps": max(
+                    0,
+                    int(self.robot.callback_cue_total_steps) - int(self.robot.callback_cue_elapsed_steps),
+                ),
+                "callback_response_sampled": bool(self.robot.callback_response_sampled),
                 "callback_last_response": (
                     str(self.callback_last_response)
                     if self.callback_last_response is not None

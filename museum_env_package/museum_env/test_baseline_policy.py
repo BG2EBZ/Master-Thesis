@@ -5,7 +5,7 @@ import numpy as np
 
 from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
 from museum_env.human import HumanMode, HumanProfile
-from museum_env.robot import RobotEmotion
+from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
 class _FixedRandom:
@@ -42,6 +42,33 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         xy_arr = np.array(xy, dtype=np.float32)
         projected = human._project_point_to_walkable(xy_arr, margin)
         self.assertLessEqual(float(np.linalg.norm(xy_arr - projected)), float(tol))
+
+    def _set_callback_state(
+        self,
+        env,
+        target_idx,
+        *,
+        phase,
+        attempt_index=1,
+        cue_elapsed_steps=0,
+        cue_total_steps=None,
+        response_sampled=False,
+        cue_completed_this_step=False,
+    ):
+        if cue_total_steps is None:
+            cue_total_steps = env._get_callback_cue_steps()
+        env.callback_active_target_idx = int(target_idx)
+        env.robot.callback_active = True
+        env.robot.callback_target_idx = int(target_idx)
+        env.robot.callback_target_xy = np.array([2.4, 0.0], dtype=np.float32)
+        env.robot.callback_attempt_index = int(attempt_index)
+        env.robot.callback_phase = str(phase)
+        env.robot.callback_cue_total_steps = int(cue_total_steps)
+        env.robot.callback_cue_elapsed_steps = int(cue_elapsed_steps)
+        env.robot.callback_response_sampled = bool(response_sampled)
+        env.robot.callback_cue_completed_this_step = bool(cue_completed_this_step)
+        env.robot.callback_turn_done = phase != RobotCallbackPhase.TURN
+        env.robot.mode = "callback"
 
     def test_person1_defaults_to_neurodivergent_profile(self):
         env = self._make_env(
@@ -217,8 +244,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
             self.assertIsNotNone(request)
             self.assertEqual(request["target_idx"], target_idx)
-            expected_hold_steps = max(1, int(round(2.0 / float(env.timestep))))
-            self.assertEqual(request["hold_steps"], expected_hold_steps)
+            expected_cue_steps = max(1, int(round(4.0 / float(env.timestep))))
+            self.assertEqual(request["cue_steps"], expected_cue_steps)
         finally:
             env.close()
 
@@ -378,9 +405,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=131)
             target_idx = 1
             env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.robot.callback_active = True
-            env.robot.callback_turn_done = False
-            env.robot.callback_hold_steps_remaining = 20
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.TURN,
+                cue_elapsed_steps=0,
+            )
 
             robot_xy = np.array([0.0, 0.0], dtype=np.float32)
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
@@ -407,9 +437,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=132)
             target_idx = 1
             env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.robot.callback_active = True
-            env.robot.callback_turn_done = True
-            env.robot.callback_hold_steps_remaining = 20
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                cue_elapsed_steps=20,
+            )
 
             robot_xy = np.array([0.0, 0.0], dtype=np.float32)
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
@@ -437,8 +470,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             target_idx = 1
             env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
             env.robot.callback_active = False
-            env.robot.callback_turn_done = True
-            env.robot.callback_hold_steps_remaining = 0
+            env.robot.callback_phase = None
+            env.robot.callback_cue_total_steps = 0
+            env.robot.callback_cue_elapsed_steps = 0
 
             robot_xy = np.array([0.0, 0.0], dtype=np.float32)
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
@@ -537,7 +571,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_callback_completion_samples_by_target_human_profile(self):
+    def test_callback_response_sampling_uses_target_human_profile_at_two_seconds(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -547,31 +581,16 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             for idx in (0, 1):
                 with self.subTest(target_index=idx):
                     env.reset(seed=200 + idx)
-                    env.callback_active_target_idx = idx
-                    env.robot.callback_active = True
                     env.humans[idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-
-                    def _robot_step_stub(*_args, **_kwargs):
-                        env.robot.callback_active = False
-                        return {
-                            "action": np.zeros(3, dtype=np.float32),
-                            "dist": 1.0,
-                            "desired_yaw": 0.0,
-                            "actual_yaw": 0.0,
-                            "mode": "move",
-                            "enter_listen": False,
-                            "emotion": str(env.robot.emotion),
-                            "speaker_active": bool(env.robot.speaker_active),
-                        }
-
-                    with patch.object(env.robot, "step", side_effect=_robot_step_stub), \
-                         patch.object(env, "_build_callback_request", return_value=None), \
-                         patch.object(env, "_compute_social_repulsion", return_value=[
-                             np.zeros(2, dtype=np.float32) for _ in env.humans
-                         ]), \
-                         patch.object(env, "_update_humans_and_apply_ctrl", return_value=np.zeros((len(env.humans), 3), dtype=np.float32)), \
-                         patch.object(env, "_sample_callback_response", return_value="ignore") as callback_sampler:
-                        env._step_active_branch(external_action_received=False)
+                    self._set_callback_state(
+                        env,
+                        idx,
+                        phase=RobotCallbackPhase.CUE,
+                        cue_elapsed_steps=env._get_callback_response_sample_steps(),
+                    )
+                    events = env._default_events()
+                    with patch.object(env, "_sample_callback_response", return_value="ignore") as callback_sampler:
+                        env._maybe_sample_active_callback_response(events)
                         callback_sampler.assert_called_once_with(profile=env.humans[idx].profile)
         finally:
             env.close()
@@ -587,33 +606,43 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             target_idx = 1
             target_human = env.humans[target_idx]
             target_human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.callback_active_target_idx = target_idx
-            env.robot.callback_active = True
-
-            def _robot_step_stub(*_args, **_kwargs):
-                env.robot.callback_active = False
-                return {
-                    "action": np.zeros(3, dtype=np.float32),
-                    "dist": 1.0,
-                    "desired_yaw": 0.0,
-                    "actual_yaw": 0.0,
-                    "mode": "move",
-                    "enter_listen": False,
-                    "emotion": str(env.robot.emotion),
-                    "speaker_active": bool(env.robot.speaker_active),
-                }
-
-            with patch.object(env.robot, "step", side_effect=_robot_step_stub), \
-                 patch.object(env, "_build_callback_request", return_value=None), \
-                 patch.object(env, "_compute_social_repulsion", return_value=[
-                     np.zeros(2, dtype=np.float32) for _ in env.humans
-                 ]), \
-                 patch.object(env, "_update_humans_and_apply_ctrl", return_value=np.zeros((len(env.humans), 3), dtype=np.float32)), \
-                 patch.object(env, "_sample_callback_response", return_value="stay"), \
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                cue_elapsed_steps=env._get_callback_response_sample_steps(),
+            )
+            events = env._default_events()
+            with patch.object(env, "_sample_callback_response", return_value="stay"), \
                  patch.object(target_human, "apply_callback_response", return_value=True) as apply_response:
-                env._step_active_branch(external_action_received=False)
+                env._maybe_sample_active_callback_response(events)
                 expected_stay_steps = max(1, int(round(1.0 / float(env.timestep))))
                 apply_response.assert_called_once_with(response="stay", stay_steps=expected_stay_steps)
+        finally:
+            env.close()
+
+    def test_callback_response_sampling_happens_only_once(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=301)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                cue_elapsed_steps=env._get_callback_response_sample_steps(),
+            )
+            events = env._default_events()
+            with patch.object(env, "_sample_callback_response", return_value="ignore") as callback_sampler:
+                env._maybe_sample_active_callback_response(events)
+                env._maybe_sample_active_callback_response(events)
+                callback_sampler.assert_called_once()
+            self.assertTrue(env.robot.callback_response_sampled)
         finally:
             env.close()
 
@@ -694,7 +723,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_delayed_callback_rejoin_triggers_happy_once(self):
+    def test_callback_first_failed_attempt_starts_second_attempt(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -702,19 +731,86 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         )
         try:
             env.reset(seed=360)
-            human = env.humans[1]
-            human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            human.callback_response_mode = "stay"
-            human.callback_stay_steps_remaining = 1
-            human.callback_stay_rejoin_probability = 1.0
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                attempt_index=1,
+                cue_elapsed_steps=env._get_callback_cue_steps(),
+                cue_completed_this_step=True,
+            )
+            events = env._default_events()
+            env._resolve_completed_callback_cue(events)
 
-            _, _, _, _, info_first = env.step(None)
-            self.assertTrue(info_first["events"]["callback_forced_recovery"])
-            self.assertTrue(info_first["events"]["happy_triggered"])
+            self.assertTrue(events["callback_first_attempt_failed"])
+            self.assertTrue(events["callback_attempt_2_started"])
+            self.assertFalse(events["callback_completed"])
+            self.assertTrue(env.robot.callback_active)
+            self.assertEqual(env.robot.callback_attempt_index, 2)
+            self.assertEqual(env.robot.callback_phase, RobotCallbackPhase.TURN)
+        finally:
+            env.close()
 
-            _, _, _, _, info_second = env.step(None)
-            self.assertFalse(info_second["events"]["callback_forced_recovery"])
-            self.assertFalse(info_second["events"]["happy_triggered"])
+    def test_callback_success_at_cue_end_triggers_happy_once(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=361)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.FOLLOWING, reason="test_force_following")
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                attempt_index=1,
+                cue_elapsed_steps=env._get_callback_cue_steps(),
+                cue_completed_this_step=True,
+            )
+            events = env._default_events()
+            env._resolve_completed_callback_cue(events)
+
+            self.assertTrue(events["callback_completed"])
+            self.assertTrue(events["callback_success"])
+            self.assertTrue(events["happy_triggered"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertGreater(env.robot.happy_hold_steps_remaining, 0)
+
+            events_second = env._default_events()
+            env._resolve_completed_callback_cue(events_second)
+            self.assertFalse(events_second["happy_triggered"])
+        finally:
+            env.close()
+
+    def test_second_callback_completion_always_ends_callback(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=362)
+            target_idx = 1
+            env.humans[target_idx].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            self._set_callback_state(
+                env,
+                target_idx,
+                phase=RobotCallbackPhase.CUE,
+                attempt_index=2,
+                cue_elapsed_steps=env._get_callback_cue_steps(),
+                cue_completed_this_step=True,
+            )
+            events = env._default_events()
+            env._resolve_completed_callback_cue(events)
+
+            self.assertTrue(events["callback_completed"])
+            self.assertFalse(events["callback_attempt_2_started"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertIsNone(env.callback_active_target_idx)
         finally:
             env.close()
 

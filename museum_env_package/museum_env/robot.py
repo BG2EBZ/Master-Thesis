@@ -25,6 +25,11 @@ class RobotEmotion:
     FEAR = "fear"
 
 
+class RobotCallbackPhase:
+    TURN = "turn"
+    CUE = "cue"
+
+
 class Robot:
     """
     Robot policy/state wrapper:
@@ -52,7 +57,12 @@ class Robot:
         self.callback_active = False
         self.callback_target_idx = None
         self.callback_target_xy = None
-        self.callback_hold_steps_remaining = 0
+        self.callback_attempt_index = 0
+        self.callback_phase = None
+        self.callback_cue_total_steps = 0
+        self.callback_cue_elapsed_steps = 0
+        self.callback_response_sampled = False
+        self.callback_cue_completed_this_step = False
         self.callback_turn_done = False
         self.emotion = RobotEmotion.NATURAL
         self.happy_hold_steps_remaining = 0
@@ -81,7 +91,12 @@ class Robot:
         self.callback_active = False
         self.callback_target_idx = None
         self.callback_target_xy = None
-        self.callback_hold_steps_remaining = 0
+        self.callback_attempt_index = 0
+        self.callback_phase = None
+        self.callback_cue_total_steps = 0
+        self.callback_cue_elapsed_steps = 0
+        self.callback_response_sampled = False
+        self.callback_cue_completed_this_step = False
         self.callback_turn_done = False
 
     def get_current_waypoint(self):
@@ -170,15 +185,41 @@ class Robot:
 
         return action
 
-    def _start_callback(self, target_idx, target_xy, hold_steps):
-        """Activate callback mode toward one distracted target."""
-        # Callback mode: turn to distracted human and hold speaker for a short window.
+    def _start_callback_attempt(self, target_idx, target_xy, cue_steps, attempt_index):
+        """Activate one callback attempt toward a distracted target."""
         self.callback_active = True
         self.callback_target_idx = int(target_idx)
         self.callback_target_xy = np.array(target_xy, dtype=np.float32)
-        self.callback_hold_steps_remaining = max(1, int(hold_steps))
+        self.callback_attempt_index = max(1, int(attempt_index))
+        self.callback_phase = RobotCallbackPhase.TURN
+        self.callback_cue_total_steps = max(1, int(cue_steps))
+        self.callback_cue_elapsed_steps = 0
+        self.callback_response_sampled = False
+        self.callback_cue_completed_this_step = False
         self.callback_turn_done = False
         self.mode = RobotMode.CALLBACK
+
+    def start_callback(self, target_idx, target_xy, cue_steps):
+        """Start the first callback attempt."""
+        self._start_callback_attempt(
+            target_idx=target_idx,
+            target_xy=target_xy,
+            cue_steps=cue_steps,
+            attempt_index=1,
+        )
+
+    def start_next_callback_attempt(self):
+        """Restart callback on the same target using the next attempt index."""
+        if self.callback_target_xy is None or self.callback_target_idx is None:
+            return False
+        next_attempt_index = max(1, int(self.callback_attempt_index) + 1)
+        self._start_callback_attempt(
+            target_idx=int(self.callback_target_idx),
+            target_xy=np.array(self.callback_target_xy, dtype=np.float32),
+            cue_steps=int(self.callback_cue_total_steps),
+            attempt_index=next_attempt_index,
+        )
+        return True
 
     def _finish_callback(self):
         """Exit callback mode and return to MOVE."""
@@ -187,16 +228,16 @@ class Robot:
 
     def _callback_action(self, robot_pose):
         """Generate control while callback mode is active."""
-        # Two-phase callback behavior: turn first, then hold heading for N steps.
         rx, ry, ryaw = robot_pose
         action = np.zeros(3, dtype=np.float32)
+        self.callback_cue_completed_this_step = False
         if self.callback_target_xy is None:
             self._finish_callback()
             return action
 
         desired_yaw = float(np.arctan2(self.callback_target_xy[1] - ry, self.callback_target_xy[0] - rx))
         yaw_err = self._wrap_to_pi(desired_yaw - ryaw)
-        if not self.callback_turn_done:
+        if self.callback_phase == RobotCallbackPhase.TURN:
             if abs(yaw_err) >= ROBOT_CALLBACK_TURN_DONE_YAW_ERR:
                 action[2] = float(
                     np.clip(
@@ -207,12 +248,21 @@ class Robot:
                 )
                 return action
             self.callback_turn_done = True
+            self.callback_phase = RobotCallbackPhase.CUE
+            self.callback_cue_elapsed_steps = 0
+            self.callback_response_sampled = False
+            return action
 
-        if self.callback_hold_steps_remaining > 0:
-            self.callback_hold_steps_remaining -= 1
-
-        if self.callback_hold_steps_remaining <= 0:
+        if self.callback_phase != RobotCallbackPhase.CUE:
             self._finish_callback()
+            return action
+
+        self.callback_cue_elapsed_steps = min(
+            int(self.callback_cue_total_steps),
+            int(self.callback_cue_elapsed_steps) + 1,
+        )
+        if self.callback_cue_elapsed_steps >= int(self.callback_cue_total_steps):
+            self.callback_cue_completed_this_step = True
 
         return action
 
@@ -262,10 +312,10 @@ class Robot:
             and callback_request is not None
             and (not self.listen_mode)
         ):
-            self._start_callback(
+            self.start_callback(
                 target_idx=callback_request["target_idx"],
                 target_xy=callback_request["target_xy"],
-                hold_steps=callback_request["hold_steps"],
+                cue_steps=callback_request["cue_steps"],
             )
 
         if self.callback_active:
@@ -280,6 +330,14 @@ class Robot:
                 "enter_listen": False,
                 "emotion": str(self.emotion),
                 "speaker_active": bool(self.speaker_active),
+                "callback_attempt_index": int(self.callback_attempt_index),
+                "callback_phase": (
+                    str(self.callback_phase) if self.callback_phase is not None else None
+                ),
+                "callback_cue_elapsed_steps": int(self.callback_cue_elapsed_steps),
+                "callback_cue_total_steps": int(self.callback_cue_total_steps),
+                "callback_response_sampled": bool(self.callback_response_sampled),
+                "callback_cue_completed_this_step": bool(self.callback_cue_completed_this_step),
             }
 
         # base waypoint action
@@ -308,6 +366,14 @@ class Robot:
             "enter_listen": bool(enter_listen),
             "emotion": str(self.emotion),
             "speaker_active": bool(self.speaker_active),
+            "callback_attempt_index": int(self.callback_attempt_index),
+            "callback_phase": (
+                str(self.callback_phase) if self.callback_phase is not None else None
+            ),
+            "callback_cue_elapsed_steps": int(self.callback_cue_elapsed_steps),
+            "callback_cue_total_steps": int(self.callback_cue_total_steps),
+            "callback_response_sampled": bool(self.callback_response_sampled),
+            "callback_cue_completed_this_step": bool(self.callback_cue_completed_this_step),
         }
 
     def on_listening_complete(self):
