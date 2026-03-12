@@ -45,8 +45,12 @@ ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
-HUMAN_GOAL_THRESHOLD = 0.2
+HUMAN_GOAL_THRESHOLD = 0.1
 DIST_EPS = 1e-8
+HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
+HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
+HR_DISTANCE_MIN_ND_DEFAULT = 1.0
+HR_DISTANCE_MAX_ND_DEFAULT = 2.0
 IMPATIENT_PROB_DEFAULT = 0.000
 DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
 DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
@@ -326,6 +330,10 @@ class MuseumEnv(gym.Env):
                     ramp_start_seconds=self.listening_distracted_ramp_start_nd_seconds,
                     rise_seconds=self.listening_distracted_rise_nd_seconds,
                 )
+                human.configure_hr_distance_band(
+                    hr_distance_min=HR_DISTANCE_MIN_ND_DEFAULT,
+                    hr_distance_max=HR_DISTANCE_MAX_ND_DEFAULT,
+                )
             else:
                 human.configure_distracted_follow_hazard(
                     lambda_max_per_sec=self.distracted_lambda_max_normal_per_sec,
@@ -336,6 +344,10 @@ class MuseumEnv(gym.Env):
                     lambda_max_per_sec=self.listening_distracted_lambda_max_normal_per_sec,
                     ramp_start_seconds=self.listening_distracted_ramp_start_normal_seconds,
                     rise_seconds=self.listening_distracted_rise_normal_seconds,
+                )
+                human.configure_hr_distance_band(
+                    hr_distance_min=HR_DISTANCE_MIN_NORMAL_DEFAULT,
+                    hr_distance_max=HR_DISTANCE_MAX_NORMAL_DEFAULT,
                 )
             human.following_impatient_probability = float(self.impatient_prob)
             human.configure_listening_distracted_motion(dt=float(self.timestep))

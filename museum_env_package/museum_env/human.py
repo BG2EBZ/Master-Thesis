@@ -42,6 +42,8 @@ OVERWHELMED_FALLBACK_X_OFFSET = 1.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
 HR_DISTANCE_MAX = 2.0
+HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
+HR_DISTANCE_MIN_ND_DEFAULT = 1.0
 HR_REPULSION_GAIN = 4.0
 HR_ATTRACTION_GAIN = 2.0
 NORM_EPS = 1e-6
@@ -140,6 +142,8 @@ class Human:
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
         self.last_v_hr = np.zeros(2, dtype=np.float32)  # human–robot force
+        self.hr_distance_min = float(HR_DISTANCE_MIN)
+        self.hr_distance_max = float(HR_DISTANCE_MAX)
 
         self.distracted_timer = 0
         self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
@@ -304,6 +308,20 @@ class Human:
         """Set behavior profile (normal or neurodivergent)."""
         self._validate_profile(profile)
         self.profile = profile
+
+    def configure_hr_distance_band(self, hr_distance_min: float, hr_distance_max: float):
+        """Configure preferred human-robot spacing band for this human."""
+        distance_min = float(hr_distance_min)
+        distance_max = float(hr_distance_max)
+        if distance_min <= 0.0:
+            raise ValueError(f"hr_distance_min must be > 0, got {hr_distance_min}")
+        if distance_max < distance_min:
+            raise ValueError(
+                "hr_distance_max must be >= hr_distance_min, "
+                f"got min={hr_distance_min}, max={hr_distance_max}"
+            )
+        self.hr_distance_min = distance_min
+        self.hr_distance_max = distance_max
 
     def reset_following_duration(self):
         """Reset timer counting consecutive eligible following steps."""
@@ -1165,13 +1183,13 @@ class Human:
             dir_hr = diff_hr / dist_hr
 
             # preferred human–robot distance (meters)
-            if dist_hr < HR_DISTANCE_MIN:
+            if dist_hr < self.hr_distance_min:
                 # too close → repulsion (slow down / move away)
-                v_hr = HR_REPULSION_GAIN * (HR_DISTANCE_MIN - dist_hr) * dir_hr
+                v_hr = HR_REPULSION_GAIN * (self.hr_distance_min - dist_hr) * dir_hr
 
-            elif dist_hr > HR_DISTANCE_MAX:
+            elif dist_hr > self.hr_distance_max:
                 # too far → attraction (move towards robot)
-                v_hr = -HR_ATTRACTION_GAIN * (dist_hr - HR_DISTANCE_MAX) * dir_hr
+                v_hr = -HR_ATTRACTION_GAIN * (dist_hr - self.hr_distance_max) * dir_hr
 
         dist = np.hypot(dx, dy)
         if dist > NORM_EPS:
