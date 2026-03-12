@@ -1,10 +1,11 @@
 import unittest
 from unittest.mock import patch
 
+import mujoco
 import numpy as np
 
 from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
-from museum_env.human import HumanMode, HumanProfile
+from museum_env.human import HUMAN_WALL_FOOTPRINT_RADIUS, HumanMode, HumanProfile
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
@@ -38,10 +39,16 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def _assert_in_walkable(self, human, xy, margin=0.20, tol=1e-5):
+    def _assert_in_walkable(self, human, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-5):
         xy_arr = np.array(xy, dtype=np.float32)
         projected = human._project_point_to_walkable(xy_arr, margin)
         self.assertLessEqual(float(np.linalg.norm(xy_arr - projected)), float(tol))
+
+    def _set_human_pose(self, env, human, x, y, yaw):
+        env.data.qpos[human.qpos_idx : human.qpos_idx + 3] = np.array([x, y, yaw], dtype=np.float32)
+        mujoco.mj_forward(env.model, env.data)
+        if human.body_id is None:
+            human.body_id = env.model.body(human.body_name).id
 
     def _set_callback_state(
         self,
@@ -116,6 +123,61 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_distracted_samples_one_local_target_and_stops_after_reaching_it(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=777)
+            human = env.humans[1]
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            ctx = {
+                "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "stand_threshold": env.listen_stand_threshold,
+                "dt": float(env.timestep),
+            }
+
+            with patch("numpy.random.uniform", side_effect=[60.0, 1.0]), \
+                 patch("numpy.random.rand", return_value=0.75):
+                action = human.step(env.model, env.data, ctx)
+
+            expected_target = np.array(
+                [5.0 + np.cos(np.deg2rad(60.0)), 5.0 + np.sin(np.deg2rad(60.0))],
+                dtype=np.float32,
+            )
+            self.assertIsNotNone(human.distracted_target_xy)
+            self.assertAlmostEqual(human.distracted_target_yaw, np.deg2rad(60.0), places=6)
+            np.testing.assert_allclose(human.distracted_target_xy, expected_target, atol=1e-5)
+            self._assert_in_walkable(human, human.distracted_target_xy)
+            self.assertTrue(
+                human._is_segment_walkable(
+                    start_xy=np.array([5.0, 5.0], dtype=np.float32),
+                    end_xy=human.distracted_target_xy,
+                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+                )
+            )
+            self.assertFalse(human.distracted_stop_reached)
+            self.assertLessEqual(float(np.linalg.norm(action[:2])), 0.5 * human.max_speed + 1e-6)
+
+            self._set_human_pose(
+                env,
+                human,
+                x=float(human.distracted_target_xy[0]),
+                y=float(human.distracted_target_xy[1]),
+                yaw=float(human.distracted_target_yaw),
+            )
+            stop_action = human.step(env.model, env.data, ctx)
+            np.testing.assert_allclose(stop_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+            self.assertTrue(human.distracted_stop_reached)
+        finally:
+            env.close()
+
     def test_distracted_timeout_recovers_exactly_at_configured_max_steps(self):
         env = self._make_env(
             max_distracted_duration_seconds=0.006,
@@ -130,6 +192,11 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(human.distracted_duration, expected_steps)
 
             human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            human.distracted_target_xy = np.array([5.0, 5.0], dtype=np.float32)
+            human.current_waypoint = np.array([5.0, 5.0], dtype=np.float32)
+            human.distracted_target_yaw = 0.0
+            human.distracted_stop_reached = True
             ctx = {
                 "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
                 "robot_yaw": 0.0,
@@ -138,14 +205,38 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "dt": float(env.timestep),
             }
 
-            with patch.object(human, "_step_wandering", return_value=np.zeros(3, dtype=np.float32)), \
-                 patch("numpy.random.uniform", return_value=0.0):
-                for _ in range(max(0, expected_steps - 1)):
-                    human.step(env.model, env.data, ctx)
-                    self.assertEqual(human.mode, HumanMode.DISTRACTED)
+            for _ in range(max(0, expected_steps - 1)):
                 human.step(env.model, env.data, ctx)
+                self.assertEqual(human.mode, HumanMode.DISTRACTED)
+            human.step(env.model, env.data, ctx)
 
             self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
+    def test_stopped_distracted_human_remains_callback_eligible(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=778)
+            target_idx = 1
+            human = env.humans[target_idx]
+            human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            human.distracted_target_xy = np.array([2.6, 0.0], dtype=np.float32)
+            human.current_waypoint = np.array([2.6, 0.0], dtype=np.float32)
+            human.distracted_target_yaw = 0.0
+            human.distracted_stop_reached = True
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[target_idx] = np.array([2.6, 0.0], dtype=np.float32)
+
+            with patch.object(env, "_is_robot_in_move_stage", return_value=True):
+                request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
+
+            self.assertIsNotNone(request)
+            self.assertEqual(request["target_idx"], target_idx)
         finally:
             env.close()
 
@@ -1147,11 +1238,88 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 y=float(current_xy[1]),
                 v_xy=raw_v,
                 dt=float(env.timestep),
-                margin=0.20,
+                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
             )
             next_xy = current_xy + float(env.timestep) * safe_v
             self._assert_in_walkable(human, next_xy)
             self.assertLessEqual(float(np.linalg.norm(safe_v)), float(human.max_speed) + 1e-6)
+        finally:
+            env.close()
+
+    def test_segment_walkable_rejects_crossing_room_a_bottom_wall(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=21)
+            human = env.humans[0]
+            start_xy = np.array([5.0, 0.6], dtype=np.float32)
+            end_xy = np.array([5.0, -0.6], dtype=np.float32)
+            self.assertFalse(
+                human._is_segment_walkable(
+                    start_xy=start_xy,
+                    end_xy=end_xy,
+                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+                )
+            )
+        finally:
+            env.close()
+
+    def test_segment_walkable_accepts_corridor_doorway_passage(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=22)
+            human = env.humans[0]
+            start_xy = np.array([8.5, 0.6], dtype=np.float32)
+            end_xy = np.array([8.5, -0.6], dtype=np.float32)
+            self.assertTrue(
+                human._is_segment_walkable(
+                    start_xy=start_xy,
+                    end_xy=end_xy,
+                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+                )
+            )
+        finally:
+            env.close()
+
+    def test_distracted_target_sampling_clamps_single_sample_to_farthest_walkable_point(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=23)
+            human = env.humans[0]
+            current_xy = np.array([5.0, 0.6], dtype=np.float32)
+
+            sampled_target_xy = np.array([5.0, -0.4], dtype=np.float32)
+            with patch.object(
+                human,
+                "_sample_distracted_target_candidate",
+                return_value=(np.deg2rad(-90.0), sampled_target_xy),
+            ) as sample_candidate:
+                human._initialize_distracted_target(current_xy=current_xy, current_yaw=0.0)
+
+            sample_candidate.assert_called_once()
+            called_kwargs = sample_candidate.call_args.kwargs
+            np.testing.assert_allclose(called_kwargs["current_xy"], current_xy, atol=1e-6)
+            self.assertEqual(called_kwargs["current_yaw"], 0.0)
+            self.assertGreaterEqual(float(human.distracted_target_xy[1]), float(sampled_target_xy[1]))
+            self.assertLessEqual(float(human.distracted_target_xy[1]), float(current_xy[1]))
+            self.assertTrue(
+                human._is_segment_walkable(
+                    start_xy=current_xy,
+                    end_xy=human.distracted_target_xy,
+                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+                )
+            )
         finally:
             env.close()
 

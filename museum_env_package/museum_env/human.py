@@ -21,8 +21,10 @@ DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
 HUMAN_YAW_RATE_GAIN = 20.0
 HUMAN_ROTATION_STOP_DEG = 3.0
 DISTRACTED_SPEED_SCALE = 0.5
-DISTRACTED_YAW_NOISE_MIN = -2.0
-DISTRACTED_YAW_NOISE_MAX = 2.0
+DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
+DISTRACTED_YAW_DEVIATION_MAX_DEG = 90.0
+DISTRACTED_TARGET_DISTANCE_MIN = 0.5
+DISTRACTED_TARGET_DISTANCE_MAX = 1.5
 DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
 DISTRACTED_HAZARD_SIGMOID_K = float(2.0 * np.log(9.0))
 DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
@@ -38,7 +40,8 @@ HR_ATTRACTION_GAIN = 2.0
 NORM_EPS = 1e-6
 ATTACK_DEFAULT_SPEED = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
-WALL_CLEARANCE = 0.20
+HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
+SEGMENT_CHECK_SPACING = 0.05
 MIN_SPEED_EPS = 1e-6
 
 @dataclass
@@ -141,6 +144,9 @@ class Human:
         self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
         self.callback_stay_rejoin_probability = 0.0
         self.callback_stay_rejoin_this_step = False
+        self.distracted_target_xy = None
+        self.distracted_stop_reached = False
+        self.distracted_target_yaw = None
 
         self.can_be_impatient = False
         self.impatient_duration = 800
@@ -200,6 +206,7 @@ class Human:
         if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
             self.distracted_timer = 0
             self._clear_callback_response_state()
+            self._clear_distracted_navigation_state()
         if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
             self.reset_following_duration()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
@@ -212,6 +219,7 @@ class Human:
         if next_mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
             self._clear_callback_response_state()
+            self._clear_distracted_navigation_state()
         if next_mode == HumanMode.ATTACK:
             self.attack_hit_this_step = False
 
@@ -250,6 +258,7 @@ class Human:
 
         self.distracted_timer = 0
         self._clear_callback_response_state()
+        self._clear_distracted_navigation_state()
         self.callback_stay_rejoin_this_step = False
 
         self.impatient_timer = 0
@@ -415,6 +424,53 @@ class Human:
         self.callback_response_mode = None
         self.callback_stay_steps_remaining = 0
         self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
+
+    def _clear_distracted_navigation_state(self):
+        """Clear one-shot distracted target state for the current episode/mode."""
+        self.distracted_target_xy = None
+        self.distracted_stop_reached = False
+        self.distracted_target_yaw = None
+
+    def _initialize_distracted_target(self, current_xy, current_yaw: float):
+        """Sample one local distracted goal and deviated heading from the current pose."""
+        current_xy = np.array(current_xy, dtype=np.float32)
+        target_yaw, sampled_target_xy = self._sample_distracted_target_candidate(
+            current_xy=current_xy,
+            current_yaw=current_yaw,
+        )
+        target_xy = self._find_farthest_walkable_point_on_segment(
+            start_xy=current_xy,
+            end_xy=sampled_target_xy,
+            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
+
+        self.distracted_target_yaw = float(target_yaw)
+        self.distracted_target_xy = np.array(target_xy, dtype=np.float32)
+        self.current_waypoint = np.array(target_xy, dtype=np.float32)
+        self.distracted_stop_reached = False
+
+    def _sample_distracted_target_candidate(self, current_xy, current_yaw: float):
+        """Sample one distracted target candidate before wall/segment validity checks."""
+        deviation_deg = float(
+            np.random.uniform(
+                DISTRACTED_YAW_DEVIATION_MIN_DEG,
+                DISTRACTED_YAW_DEVIATION_MAX_DEG,
+            )
+        )
+        deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
+        deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
+        target_yaw = self._wrap_to_pi(float(current_yaw) + deviation_rad)
+        target_distance = float(
+            np.random.uniform(
+                DISTRACTED_TARGET_DISTANCE_MIN,
+                DISTRACTED_TARGET_DISTANCE_MAX,
+            )
+        )
+        raw_target_xy = np.array(current_xy, dtype=np.float32) + target_distance * np.array(
+            [np.cos(target_yaw), np.sin(target_yaw)],
+            dtype=np.float32,
+        )
+        return float(target_yaw), np.array(raw_target_xy, dtype=np.float32)
 
     def start_attack(self):
         """Enter ATTACK mode if this human is allowed to attack."""
@@ -717,15 +773,9 @@ class Human:
         return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err])
     
     def _step_distracted(self, data, ctx):
-        """DISTRACTED: local wandering / callback response until timeout recovery."""
+        """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
         x, y, yaw = self._get_pose(data)
         self.callback_stay_rejoin_this_step = False
-
-        # Distracted behavior:
-        # - ignore robot attraction,
-        # - wander locally at lower speed,
-        # - optionally respond to callback instructions,
-        # - recover automatically after timeout.
 
         if self.callback_response_mode == "stay":
             self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -776,25 +826,49 @@ class Human:
             self.last_v_hr = np.zeros(2, dtype=np.float32)
             action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
         else:
-            # Increment internal timer (also used by env callback trigger logic).
             self.distracted_timer += 1
 
-            # On first distracted step → choose a new random waypoint
-            if self.distracted_timer == 1:
-                self.current_waypoint = self._random_waypoint()
+    
+            current_xy = np.array([x, y], dtype=np.float32)
+            # Generate one-shot distracted target
+            if self.distracted_target_xy is None:
+                self._initialize_distracted_target(current_xy=current_xy, current_yaw=yaw)
 
-            # Create modified context that ignores robot
-            distracted_ctx = ctx.copy()
-            distracted_ctx["robot_xy"] = None  # disable human-robot attraction
+            target_xy = np.array(self.distracted_target_xy, dtype=np.float32)
+            to_target = target_xy - current_xy
+            dist_to_target = float(np.linalg.norm(to_target))
+            if dist_to_target < self.waypoint_threshold:
+                self.distracted_stop_reached = True
 
-            # Reuse wandering behavior
-            action = self._step_wandering(data, distracted_ctx)
+            if self.distracted_stop_reached:
+                self.last_v_follow = np.zeros(2, dtype=np.float32)
+                self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+                self.last_v_hr = np.zeros(2, dtype=np.float32)
+                action = np.zeros(3, dtype=np.float32)
+            else:
+                move_speed_limit = float(DISTRACTED_SPEED_SCALE * self.max_speed)
+                if dist_to_target > NORM_EPS:
+                    v_goal = move_speed_limit * (to_target / dist_to_target)
+                else:
+                    v_goal = np.zeros(2, dtype=np.float32)
 
-            # Slow down movement to make distraction visible
-            action[0:2] *= DISTRACTED_SPEED_SCALE  # reduce translation speed
+                v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
+                v_total = v_goal + v_repulsion
+                speed = float(np.linalg.norm(v_total))
+                if speed > move_speed_limit and speed > NORM_EPS:
+                    v_total = v_total / speed * move_speed_limit
+                    speed = float(np.linalg.norm(v_total))
 
-            # Optional: slight random yaw noise for realism
-            action[2] += np.random.uniform(DISTRACTED_YAW_NOISE_MIN, DISTRACTED_YAW_NOISE_MAX)
+                desired_yaw = (
+                    np.arctan2(v_total[1], v_total[0])
+                    if speed > NORM_EPS
+                    else float(self.distracted_target_yaw if self.distracted_target_yaw is not None else yaw)
+                )
+                yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+                self.last_v_follow = np.array(v_goal, dtype=np.float32)
+                self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
+                self.last_v_hr = np.zeros(2, dtype=np.float32)
+                action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
 
         # Recover after duration
         if self.distracted_timer >= self.distracted_duration:
@@ -1040,6 +1114,49 @@ class Human:
             return point
         return best_proj
 
+    def _is_segment_walkable(self, start_xy, end_xy, margin: float):
+        """Check whether the full straight segment stays inside walkable space."""
+        start_xy = np.array(start_xy, dtype=np.float32)
+        end_xy = np.array(end_xy, dtype=np.float32)
+        if not self._is_point_in_walkable(start_xy, margin):
+            return False
+        if not self._is_point_in_walkable(end_xy, margin):
+            return False
+
+        segment = end_xy - start_xy
+        dist = float(np.linalg.norm(segment))
+        if dist <= MIN_SPEED_EPS:
+            return True
+
+        n_steps = max(1, int(np.ceil(dist / SEGMENT_CHECK_SPACING)))
+        for alpha in np.linspace(0.0, 1.0, n_steps + 1, dtype=np.float32):
+            point = start_xy + alpha * segment
+            if not self._is_point_in_walkable(point, margin):
+                return False
+        return True
+
+    def _find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float):
+        """Return the farthest point from start that keeps the segment walkable."""
+        start_xy = np.array(start_xy, dtype=np.float32)
+        end_xy = np.array(end_xy, dtype=np.float32)
+        if not self._is_point_in_walkable(start_xy, margin):
+            return self._project_point_to_walkable(start_xy, margin)
+        if self._is_segment_walkable(start_xy, end_xy, margin):
+            return end_xy
+
+        best_point = start_xy.copy()
+        lo = 0.0
+        hi = 1.0
+        for _ in range(10):
+            mid = 0.5 * (lo + hi)
+            candidate = start_xy + mid * (end_xy - start_xy)
+            if self._is_segment_walkable(start_xy, candidate, margin):
+                best_point = candidate
+                lo = mid
+            else:
+                hi = mid
+        return np.array(best_point, dtype=np.float32)
+
     def _constrain_velocity_with_walkable(self, x: float, y: float, v_xy, dt: float, margin: float):
         """Adjust velocity so the next-step position stays in walkable area."""
         # Project next-step position back to walkable area when command exits map bounds.
@@ -1077,7 +1194,7 @@ class Human:
             y=y,
             v_xy=constrained_action[0:2],
             dt=dt,
-            margin=WALL_CLEARANCE,
+            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
         )
         return constrained_action
 
@@ -1090,7 +1207,7 @@ class Human:
 
     def _random_waypoint(self):
         """Generate random waypoint within walkable museum bounds."""
-        rects = self._walkable_rects(WALL_CLEARANCE)
+        rects = self._walkable_rects(HUMAN_WALL_FOOTPRINT_RADIUS)
         if not rects:
             return np.array([0.0, 0.0], dtype=np.float32)
 

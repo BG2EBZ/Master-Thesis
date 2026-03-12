@@ -10,8 +10,9 @@ group)
 - Listening (stopping, and facing the robot during
 explanation)
 
-- Distracted (falling behind and temporarily ignoring
-the robot while following)
+- Distracted (deviating 45-90 degrees toward a local
+target 0.5-1.5m away at 50% speed, then stopping while
+temporarily ignoring the robot during following)
 
 - Overwhelmed (backing off, then leaving the area
 during listening-stage overload)
@@ -76,6 +77,10 @@ callback rejoin)
 - Fear (when attacker is too close)
 
 
+
+
+
+
 # Neurodivergent people behaviors profile parameters
 
 All range from 0 to 1
@@ -87,6 +92,13 @@ All range from 0 to 1
 - Attention Span: Impact `Distracted` trigger probability, `Distracted` duration, `Callback Response` probability
 
 - Interaction Style: Impact `Attack` probability, `Fear Response` probability
+
+
+
+
+
+
+
 
 
 
