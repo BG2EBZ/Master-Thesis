@@ -30,6 +30,10 @@ DISTRACTED_HAZARD_SIGMOID_K = float(2.0 * np.log(9.0))
 DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
 DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_SECONDS_DEFAULT = 20.0
+IMPATIENT_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
+IMPATIENT_RAMP_START_SECONDS_DEFAULT = 10.0
+IMPATIENT_RISE_SECONDS_DEFAULT = 10.0
+IMPATIENT_ROBOT_SPEED_THRESHOLD_DEFAULT = 0.2
 LISTENING_DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.05
 LISTENING_DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
 LISTENING_DISTRACTED_RISE_SECONDS_DEFAULT = 30.0
@@ -164,6 +168,11 @@ class Human:
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
         self.following_impatient_probability = 0.0
+        self.following_low_robot_speed_steps = 0
+        self.following_impatient_lambda_max_per_sec = IMPATIENT_LAMBDA_MAX_PER_SEC_DEFAULT
+        self.following_impatient_ramp_start_seconds = IMPATIENT_RAMP_START_SECONDS_DEFAULT
+        self.following_impatient_rise_seconds = IMPATIENT_RISE_SECONDS_DEFAULT
+        self.following_impatient_robot_speed_threshold = IMPATIENT_ROBOT_SPEED_THRESHOLD_DEFAULT
         self.following_distracted_lambda_max_per_sec = DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT
         self.following_distracted_ramp_start_seconds = DISTRACTED_RAMP_START_SECONDS_DEFAULT
         self.following_distracted_rise_seconds = DISTRACTED_RISE_SECONDS_DEFAULT
@@ -233,6 +242,7 @@ class Human:
             self.distracted_source = None
         if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
             self.reset_following_duration()
+            self.reset_impatient_trigger_progress()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
             self.reset_overwhelmed_state()
         if prev_mode == HumanMode.ATTACK and next_mode != HumanMode.ATTACK:
@@ -293,6 +303,7 @@ class Human:
 
         self.max_speed = float(self.base_max_speed)
         self.reset_following_duration()
+        self.reset_impatient_trigger_progress()
         self.following_distracted_window_active = False
         self.reset_listening_session_state()
         self.reset_overwhelmed_state()
@@ -326,6 +337,10 @@ class Human:
     def reset_following_duration(self):
         """Reset timer counting consecutive eligible following steps."""
         self.following_steps = 0
+
+    def reset_impatient_trigger_progress(self):
+        """Reset timer counting consecutive low-speed robot following steps."""
+        self.following_low_robot_speed_steps = 0
 
     def set_following_distracted_window_active(self, active: bool):
         """Tell the human whether distracted-follow hazard should be active now."""
@@ -368,6 +383,13 @@ class Human:
             self.following_steps += 1
             return
         self.reset_following_duration()
+
+    def update_impatient_trigger_progress(self, eligible_following: bool, robot_speed: float):
+        """Accumulate low-speed robot duration only during eligible following steps."""
+        if (not eligible_following) or robot_speed >= self.following_impatient_robot_speed_threshold:
+            self.reset_impatient_trigger_progress()
+            return
+        self.following_low_robot_speed_steps += 1
 
     def update_listening_session_progress(self, reached_target: bool):
         """Accumulate listening duration from first target reach until session end."""
@@ -418,6 +440,34 @@ class Human:
         self.listening_distracted_lambda_max_per_sec = lambda_max
         self.listening_distracted_ramp_start_seconds = ramp_start
         self.listening_distracted_rise_seconds = rise
+
+    def configure_impatient_follow_hazard(
+        self,
+        lambda_max_per_sec: float,
+        ramp_start_seconds: float,
+        rise_seconds: float,
+        robot_speed_threshold: float,
+    ):
+        """Configure time-varying hazard used to trigger impatient-from-following."""
+        lambda_max = float(lambda_max_per_sec)
+        ramp_start = float(ramp_start_seconds)
+        rise = float(rise_seconds)
+        speed_threshold = float(robot_speed_threshold)
+        if lambda_max < 0.0:
+            raise ValueError(f"impatient lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
+        if ramp_start < 0.0:
+            raise ValueError(f"impatient ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
+        if rise <= 0.0:
+            raise ValueError(f"impatient rise_seconds must be > 0, got {rise_seconds}")
+        if speed_threshold <= 0.0:
+            raise ValueError(
+                "impatient robot_speed_threshold must be > 0, "
+                f"got {robot_speed_threshold}"
+            )
+        self.following_impatient_lambda_max_per_sec = lambda_max
+        self.following_impatient_ramp_start_seconds = ramp_start
+        self.following_impatient_rise_seconds = rise
+        self.following_impatient_robot_speed_threshold = speed_threshold
 
     def configure_listening_distracted_motion(
         self,
@@ -674,6 +724,21 @@ class Human:
         )
         return self._compute_step_probability_from_lambda(lambda_t=lambda_t, dt_safe=dt_safe)
 
+    def _compute_impatient_follow_step_probability(
+        self,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+    ) -> float:
+        """Compute per-step Bernoulli trigger probability for impatient-from-following."""
+        dt_safe = self._normalize_dt(dt)
+        lambda_t = self._compute_distracted_lambda_per_sec_with_dt_safe(
+            elapsed_steps=self.following_low_robot_speed_steps,
+            lambda_max_per_sec=self.following_impatient_lambda_max_per_sec,
+            ramp_start_seconds=self.following_impatient_ramp_start_seconds,
+            rise_seconds=self.following_impatient_rise_seconds,
+            dt_safe=dt_safe,
+        )
+        return self._compute_step_probability_from_lambda(lambda_t=lambda_t, dt_safe=dt_safe)
+
     # whether to trigger distracted following variant based on current probability
     def _maybe_trigger_distracted_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
         """Sample whether FOLLOWING should switch to DISTRACTED at this step."""
@@ -706,12 +771,13 @@ class Human:
             return HumanMode.DISTRACTED
         return None
 
-    def _maybe_trigger_impatient_following_variant(self):
+    def _maybe_trigger_impatient_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
         """Sample whether FOLLOWING should switch to IMPATIENT at this step."""
+        step_prob = self._compute_impatient_follow_step_probability(dt=dt)
         trigger_impatient = (
-            self.following_impatient_probability > 0.0
-            and self.can_be_impatient
-            and np.random.rand() < self.following_impatient_probability
+            self.can_be_impatient
+            and step_prob > 0.0
+            and np.random.rand() < step_prob
         )
         if trigger_impatient:
             return HumanMode.IMPATIENT
@@ -723,7 +789,7 @@ class Human:
         distracted_variant = self._maybe_trigger_distracted_following_variant(dt=dt)
         if distracted_variant is not None:
             return distracted_variant
-        return self._maybe_trigger_impatient_following_variant()
+        return self._maybe_trigger_impatient_following_variant(dt=dt)
 
 
     def set_context(self, **kwargs):

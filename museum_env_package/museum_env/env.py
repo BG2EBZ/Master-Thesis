@@ -52,6 +52,14 @@ HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
 HR_DISTANCE_MAX_ND_DEFAULT = 2.0
 IMPATIENT_PROB_DEFAULT = 0.000
+IMPATIENT_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
+IMPATIENT_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
+IMPATIENT_RAMP_START_NORMAL_SECONDS_DEFAULT = 10.0
+IMPATIENT_RAMP_START_ND_SECONDS_DEFAULT = 5.0
+IMPATIENT_RISE_NORMAL_SECONDS_DEFAULT = 10.0
+IMPATIENT_RISE_ND_SECONDS_DEFAULT = 5.0
+IMPATIENT_ROBOT_SPEED_THRESHOLD_NORMAL_DEFAULT = 0.2
+IMPATIENT_ROBOT_SPEED_THRESHOLD_ND_DEFAULT = 0.5
 DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
 DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
 DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
@@ -334,6 +342,12 @@ class MuseumEnv(gym.Env):
                     hr_distance_min=HR_DISTANCE_MIN_ND_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_ND_DEFAULT,
                 )
+                human.configure_impatient_follow_hazard(
+                    lambda_max_per_sec=IMPATIENT_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
+                    ramp_start_seconds=IMPATIENT_RAMP_START_ND_SECONDS_DEFAULT,
+                    rise_seconds=IMPATIENT_RISE_ND_SECONDS_DEFAULT,
+                    robot_speed_threshold=IMPATIENT_ROBOT_SPEED_THRESHOLD_ND_DEFAULT,
+                )
             else:
                 human.configure_distracted_follow_hazard(
                     lambda_max_per_sec=self.distracted_lambda_max_normal_per_sec,
@@ -349,7 +363,12 @@ class MuseumEnv(gym.Env):
                     hr_distance_min=HR_DISTANCE_MIN_NORMAL_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_NORMAL_DEFAULT,
                 )
-            human.following_impatient_probability = float(self.impatient_prob)
+                human.configure_impatient_follow_hazard(
+                    lambda_max_per_sec=IMPATIENT_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
+                    ramp_start_seconds=IMPATIENT_RAMP_START_NORMAL_SECONDS_DEFAULT,
+                    rise_seconds=IMPATIENT_RISE_NORMAL_SECONDS_DEFAULT,
+                    robot_speed_threshold=IMPATIENT_ROBOT_SPEED_THRESHOLD_NORMAL_DEFAULT,
+                )
             human.configure_listening_distracted_motion(dt=float(self.timestep))
 
     def _configure_human_distracted_duration(self):
@@ -1389,6 +1408,13 @@ class MuseumEnv(gym.Env):
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
         distracted_follow_window_active = self._is_distracted_follow_window_active()
+        robot_speed = float(np.hypot(self.data.ctrl[0], self.data.ctrl[1]))
+        impatient_following_eligible = bool(
+            self.follow_humans
+            and (not self.robot.listen_mode)
+            and (not self.listen_wait_active)
+            and (not self.robot.callback_active)
+        )
 
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
@@ -1396,6 +1422,7 @@ class MuseumEnv(gym.Env):
             ctx = {
                 "robot_xy": np.array([rx, ry], dtype=np.float32),
                 "robot_yaw": ryaw,
+                "robot_speed": robot_speed,
                 "repulsion": repulsion_vec,
                 "stand_threshold": self.listen_stand_threshold,
                 "dt": float(self.timestep),
@@ -1436,6 +1463,10 @@ class MuseumEnv(gym.Env):
                 and self._is_listening_distracted_window_active_for_human(human)
             )
             human.update_following_duration(eligible_following=eligible_following)
+            human.update_impatient_trigger_progress(
+                eligible_following=bool(impatient_following_eligible and human.mode == HumanMode.FOLLOWING),
+                robot_speed=robot_speed,
+            )
 
             human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
@@ -1528,6 +1559,9 @@ class MuseumEnv(gym.Env):
             "human_profile": [h.profile for h in self.humans],
             "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
             "human_following_steps": np.array([h.following_steps for h in self.humans], dtype=np.int32),
+            "human_following_low_robot_speed_steps": np.array(
+                [h.following_low_robot_speed_steps for h in self.humans], dtype=np.int32
+            ),
             "human_listening_steps": np.array([h.listening_steps for h in self.humans], dtype=np.int32),
             "human_distracted_source": [h.distracted_source for h in self.humans],
             "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
@@ -1703,6 +1737,7 @@ class MuseumEnv(gym.Env):
                 "profile": snapshot["human_profile"],
                 "distracted_timer": snapshot["human_distracted_timer"],
                 "following_steps": snapshot["human_following_steps"],
+                "following_low_robot_speed_steps": snapshot["human_following_low_robot_speed_steps"],
                 "listening_steps": snapshot["human_listening_steps"],
                 "distracted_source": snapshot["human_distracted_source"],
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],

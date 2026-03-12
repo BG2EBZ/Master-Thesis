@@ -117,23 +117,38 @@ def _build_distracted_progress_extra(base_env, info, sim_dt):
     listen_status = status_info.get("listen_wait", {})
     listening_active = bool(status_info.get("listen_mode", False) or listen_status.get("active", False))
     following_steps = humans_info.get("following_steps", None)
+    impatient_steps = humans_info.get("following_low_robot_speed_steps", None)
     listening_steps = humans_info.get("listening_steps", None)
 
     if not listening_active:
-        if following_steps is None:
+        if following_steps is None or impatient_steps is None:
             return ""
         try:
             follow_step_list = [int(v) for v in following_steps]
+            impatient_step_list = [int(v) for v in impatient_steps]
         except TypeError:
             return ""
         follow_window_active = bool(status_info.get("distracted_follow_window_active", False))
         follow_chunks = []
+        impatient_chunks = []
         for i, human in enumerate(base_env.humans):
             steps_i = follow_step_list[i] if i < len(follow_step_list) else 0
             follow_sec = float(steps_i) * float(sim_dt)
             ramp_start_sec = float(getattr(human, "following_distracted_ramp_start_seconds", 0.0))
             follow_chunks.append(f"h{i+1}:{follow_sec:.1f}/{ramp_start_sec:.1f}s")
-        return f"distr_win={int(follow_window_active)}, follow_eff/start=[{', '.join(follow_chunks)}]"
+            impatient_steps_i = impatient_step_list[i] if i < len(impatient_step_list) else 0
+            impatient_sec = float(impatient_steps_i) * float(sim_dt)
+            impatient_ramp_start_sec = float(
+                getattr(human, "following_impatient_ramp_start_seconds", 0.0)
+            )
+            impatient_chunks.append(
+                f"h{i+1}:{impatient_sec:.1f}/{impatient_ramp_start_sec:.1f}s"
+            )
+        return (
+            f"distr_win={int(follow_window_active)}, "
+            f"follow_eff/start=[{', '.join(follow_chunks)}], "
+            f"impatient_eff/start=[{', '.join(impatient_chunks)}]"
+        )
 
     if listening_steps is None:
         return ""
