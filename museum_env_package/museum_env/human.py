@@ -139,11 +139,7 @@ class Human:
             max_duration_seconds=self.max_distracted_duration_seconds,
             dt=DEFAULT_SIM_TIMESTEP_SECONDS,
         )
-        self.callback_response_mode = None  # None | "stay" | "ignore"
-        self.callback_stay_steps_remaining = 0
-        self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
-        self.callback_stay_rejoin_probability = 0.0
-        self.callback_stay_rejoin_this_step = False
+        self.callback_response_mode = None
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
@@ -259,7 +255,6 @@ class Human:
         self.distracted_timer = 0
         self._clear_callback_response_state()
         self._clear_distracted_navigation_state()
-        self.callback_stay_rejoin_this_step = False
 
         self.impatient_timer = 0
         self.impatient_original_max_speed = None
@@ -422,8 +417,6 @@ class Human:
     def _clear_callback_response_state(self):
         """Clear temporary state used by callback responses in distracted mode."""
         self.callback_response_mode = None
-        self.callback_stay_steps_remaining = 0
-        self.callback_ignore_last_dir = np.zeros(2, dtype=np.float32)
 
     def _clear_distracted_navigation_state(self):
         """Clear one-shot distracted target state for the current episode/mode."""
@@ -495,13 +488,7 @@ class Human:
             self.transition_to(HumanMode.FOLLOWING, reason="callback_rejoin")
             return True
 
-        if response == "stay":
-            self.callback_response_mode = "stay"
-            self.callback_stay_steps_remaining = max(1, int(stay_steps))
-            return True
-
         if response == "ignore":
-            self.callback_response_mode = "ignore"
             return True
 
         raise ValueError(f"Unknown callback response: {response}")
@@ -775,100 +762,48 @@ class Human:
     def _step_distracted(self, data, ctx):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
         x, y, yaw = self._get_pose(data)
-        self.callback_stay_rejoin_this_step = False
+        self.distracted_timer += 1
 
-        if self.callback_response_mode == "stay":
+        current_xy = np.array([x, y], dtype=np.float32)
+        # Generate one-shot distracted target
+        if self.distracted_target_xy is None:
+            self._initialize_distracted_target(current_xy=current_xy, current_yaw=yaw)
+
+        target_xy = np.array(self.distracted_target_xy, dtype=np.float32)
+        to_target = target_xy - current_xy
+        dist_to_target = float(np.linalg.norm(to_target))
+        if dist_to_target < self.waypoint_threshold:
+            self.distracted_stop_reached = True
+
+        if self.distracted_stop_reached:
             self.last_v_follow = np.zeros(2, dtype=np.float32)
             self.last_v_repulsion = np.zeros(2, dtype=np.float32)
             self.last_v_hr = np.zeros(2, dtype=np.float32)
-            self.callback_stay_steps_remaining = max(0, int(self.callback_stay_steps_remaining) - 1)
-            if self.callback_stay_steps_remaining <= 0:
-                if np.random.rand() < float(self.callback_stay_rejoin_probability):
-                    self.transition_to(HumanMode.FOLLOWING, reason="callback_stay_rejoin")
-                    self.callback_stay_rejoin_this_step = True
-                else:
-                    # Keep DISTRACTED and return to standard distracted branch next step.
-                    self.callback_response_mode = None
-            return np.zeros(3, dtype=np.float32)
-
-        if self.callback_response_mode == "ignore":
-            self.distracted_timer += 1
-
-            robot_xy = ctx.get("robot_xy", None)
-            if robot_xy is not None:
-                away = np.array([x - float(robot_xy[0]), y - float(robot_xy[1])], dtype=np.float32)
+            action = np.zeros(3, dtype=np.float32)
+        else:
+            move_speed_limit = float(DISTRACTED_SPEED_SCALE * self.max_speed)
+            if dist_to_target > NORM_EPS:
+                v_goal = move_speed_limit * (to_target / dist_to_target)
             else:
-                away = np.array(self.callback_ignore_last_dir, dtype=np.float32)
+                v_goal = np.zeros(2, dtype=np.float32)
 
-            away_norm = float(np.linalg.norm(away))
-            if away_norm > NORM_EPS:
-                away_dir = away / away_norm
-            else:
-                last_norm = float(np.linalg.norm(self.callback_ignore_last_dir))
-                if last_norm > NORM_EPS:
-                    away_dir = self.callback_ignore_last_dir / last_norm
-                else:
-                    away_dir = np.array([np.cos(yaw), np.sin(yaw)], dtype=np.float32)
-
-            self.callback_ignore_last_dir = np.array(away_dir, dtype=np.float32)
-            v_away = float(DISTRACTED_SPEED_SCALE * self.max_speed) * away_dir
             v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
-            v_total = v_away + v_repulsion
+            v_total = v_goal + v_repulsion
             speed = float(np.linalg.norm(v_total))
-            if speed > self.max_speed and speed > NORM_EPS:
-                v_total = v_total / speed * self.max_speed
+            if speed > move_speed_limit and speed > NORM_EPS:
+                v_total = v_total / speed * move_speed_limit
                 speed = float(np.linalg.norm(v_total))
 
-            desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > NORM_EPS else yaw
+            desired_yaw = (
+                np.arctan2(v_total[1], v_total[0])
+                if speed > NORM_EPS
+                else float(self.distracted_target_yaw if self.distracted_target_yaw is not None else yaw)
+            )
             yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-            self.last_v_follow = np.array(v_away, dtype=np.float32)
+            self.last_v_follow = np.array(v_goal, dtype=np.float32)
             self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
             self.last_v_hr = np.zeros(2, dtype=np.float32)
             action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        else:
-            self.distracted_timer += 1
-
-    
-            current_xy = np.array([x, y], dtype=np.float32)
-            # Generate one-shot distracted target
-            if self.distracted_target_xy is None:
-                self._initialize_distracted_target(current_xy=current_xy, current_yaw=yaw)
-
-            target_xy = np.array(self.distracted_target_xy, dtype=np.float32)
-            to_target = target_xy - current_xy
-            dist_to_target = float(np.linalg.norm(to_target))
-            if dist_to_target < self.waypoint_threshold:
-                self.distracted_stop_reached = True
-
-            if self.distracted_stop_reached:
-                self.last_v_follow = np.zeros(2, dtype=np.float32)
-                self.last_v_repulsion = np.zeros(2, dtype=np.float32)
-                self.last_v_hr = np.zeros(2, dtype=np.float32)
-                action = np.zeros(3, dtype=np.float32)
-            else:
-                move_speed_limit = float(DISTRACTED_SPEED_SCALE * self.max_speed)
-                if dist_to_target > NORM_EPS:
-                    v_goal = move_speed_limit * (to_target / dist_to_target)
-                else:
-                    v_goal = np.zeros(2, dtype=np.float32)
-
-                v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
-                v_total = v_goal + v_repulsion
-                speed = float(np.linalg.norm(v_total))
-                if speed > move_speed_limit and speed > NORM_EPS:
-                    v_total = v_total / speed * move_speed_limit
-                    speed = float(np.linalg.norm(v_total))
-
-                desired_yaw = (
-                    np.arctan2(v_total[1], v_total[0])
-                    if speed > NORM_EPS
-                    else float(self.distracted_target_yaw if self.distracted_target_yaw is not None else yaw)
-                )
-                yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-                self.last_v_follow = np.array(v_goal, dtype=np.float32)
-                self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
-                self.last_v_hr = np.zeros(2, dtype=np.float32)
-                action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
 
         # Recover after duration
         if self.distracted_timer >= self.distracted_duration:

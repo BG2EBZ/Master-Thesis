@@ -48,7 +48,7 @@ DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
 DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
 DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
-MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
+MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
 OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
@@ -58,18 +58,13 @@ ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
 ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
-CALLBACK_CUE_SECONDS = 4.0
+CALLBACK_CUE_SECONDS = 3.0
 CALLBACK_RESPONSE_SAMPLE_SECONDS = 2.0
 CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT = 2.0
-CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.60
-CALLBACK_STAY_PROB_NORMAL_DEFAULT = 0.25
-CALLBACK_IGNORE_PROB_NORMAL_DEFAULT = 0.15
-CALLBACK_REJOIN_PROB_ND_DEFAULT = 0.35
-CALLBACK_STAY_PROB_ND_DEFAULT = 0.40
-CALLBACK_IGNORE_PROB_ND_DEFAULT = 0.25
-CALLBACK_STAY_SECONDS = 1.0
-CALLBACK_STAY_REJOIN_PROB_NORMAL = 0.75
-CALLBACK_STAY_REJOIN_PROB_ND = 0.40
+CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.80
+CALLBACK_IGNORE_PROB_NORMAL_DEFAULT = 0.20
+CALLBACK_REJOIN_PROB_ND_DEFAULT = 0.40
+CALLBACK_IGNORE_PROB_ND_DEFAULT = 0.60
 MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 MOVE_BACK_SPEED = 0.6
 ROBOT_HAPPY_HOLD_SECONDS = 1.0
@@ -110,10 +105,8 @@ class MuseumEnv(gym.Env):
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
         callback_rejoin_prob_normal: float = CALLBACK_REJOIN_PROB_NORMAL_DEFAULT,
-        callback_stay_prob_normal: float = CALLBACK_STAY_PROB_NORMAL_DEFAULT,
         callback_ignore_prob_normal: float = CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
-        callback_stay_prob_nd: float = CALLBACK_STAY_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
     ):
@@ -211,10 +204,8 @@ class MuseumEnv(gym.Env):
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
         self.callback_rejoin_prob_normal = float(callback_rejoin_prob_normal)
-        self.callback_stay_prob_normal = float(callback_stay_prob_normal)
         self.callback_ignore_prob_normal = float(callback_ignore_prob_normal)
         self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
-        self.callback_stay_prob_nd = float(callback_stay_prob_nd)
         self.callback_ignore_prob_nd = float(callback_ignore_prob_nd)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         if self.callback_trigger_distance_meters <= 0.0:
@@ -222,17 +213,13 @@ class MuseumEnv(gym.Env):
                 "callback_trigger_distance_meters must be > 0, "
                 f"got {callback_trigger_distance_meters}"
             )
-        self.callback_stay_rejoin_prob_normal = float(CALLBACK_STAY_REJOIN_PROB_NORMAL)
-        self.callback_stay_rejoin_prob_nd = float(CALLBACK_STAY_REJOIN_PROB_ND)
         self.callback_response_profile_probs = {
             HumanProfile.NORMAL: {
                 "rejoin": self.callback_rejoin_prob_normal,
-                "stay": self.callback_stay_prob_normal,
                 "ignore": self.callback_ignore_prob_normal,
             },
             HumanProfile.NEURODIVERGENT: {
                 "rejoin": self.callback_rejoin_prob_nd,
-                "stay": self.callback_stay_prob_nd,
                 "ignore": self.callback_ignore_prob_nd,
             },
         }
@@ -272,7 +259,6 @@ class MuseumEnv(gym.Env):
 
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
-        self._configure_human_callback_stay_rejoin_variants()
 
         # Set human parameters related to behaviors
         for human in self.humans:
@@ -326,14 +312,6 @@ class MuseumEnv(gym.Env):
                 dt=float(self.timestep),
             )
 
-    def _configure_human_callback_stay_rejoin_variants(self):
-        """Apply profile-specific delayed rejoin probability after callback stay."""
-        for human in self.humans:
-            if human.profile == HumanProfile.NEURODIVERGENT:
-                human.callback_stay_rejoin_probability = float(self.callback_stay_rejoin_prob_nd)
-            else:
-                human.callback_stay_rejoin_probability = float(self.callback_stay_rejoin_prob_normal)
-
     def _is_distracted_follow_window_active(self):
         """Return whether follow->distracted transitions are currently allowed."""
         return bool(
@@ -381,7 +359,6 @@ class MuseumEnv(gym.Env):
             "callback_completed": False,
             "callback_forced_recovery": False,
             "callback_response_rejoin": False,
-            "callback_response_stay": False,
             "callback_response_ignore": False,
             "callback_attempt_1_started": False,
             "callback_attempt_2_started": False,
@@ -473,10 +450,8 @@ class MuseumEnv(gym.Env):
             if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
                 self.callback_triggered_for_current_distracted[idx] = False
 
-    # Callback the longest-distracted human
     def _build_callback_request(self, human_xy, robot_pose):
-        """Build callback request targeting the longest-distracted eligible human."""
-        # Callback targets the longest-distracted eligible human during robot move stage.
+        """Build callback request targeting the farthest eligible distracted human."""
         if not self._is_robot_in_move_stage(robot_pose):
             return None
         rx, ry, _ = robot_pose
@@ -492,8 +467,8 @@ class MuseumEnv(gym.Env):
             if idx < len(self.callback_triggered_for_current_distracted):
                 if self.callback_triggered_for_current_distracted[idx]:
                     continue
-            # Earliest distracted = largest distracted_timer.
-            candidates.append((int(human.distracted_timer), int(idx)))
+            dist = float(np.linalg.norm(human_xy[idx] - robot_xy))
+            candidates.append((dist, int(idx)))
 
         if not candidates:
             return None
@@ -551,12 +526,9 @@ class MuseumEnv(gym.Env):
             self.callback_response_profile_probs[HumanProfile.NORMAL],
         )
         rejoin_threshold = float(profile_probs["rejoin"])
-        stay_threshold = rejoin_threshold + float(profile_probs["stay"])
-        ignore_threshold = stay_threshold + float(profile_probs["ignore"])
+        ignore_threshold = rejoin_threshold + float(profile_probs["ignore"])
         if u < rejoin_threshold:
             return "rejoin"
-        if u < stay_threshold:
-            return "stay"
         if u < ignore_threshold:
             return "ignore"
         return "ignore"
@@ -597,12 +569,11 @@ class MuseumEnv(gym.Env):
         if recover_human.mode != HumanMode.DISTRACTED:
             return
 
-        stay_steps = max(1, int(round(CALLBACK_STAY_SECONDS / float(self.timestep))))
         callback_response = self._sample_callback_response(profile=recover_human.profile)
         # Apply callback response to target human
         recovered = recover_human.apply_callback_response(
             response=callback_response,
-            stay_steps=stay_steps,
+            stay_steps=0,
         )
         # Record callback response and log event
         self.callback_last_response = str(callback_response)
@@ -822,17 +793,6 @@ class MuseumEnv(gym.Env):
             events["happy_completed"] = True
         self._apply_robot_base_color_from_robot_emotion()
 
-    # Apply one-step-delayed callback stay/rejoin effects and emit corresponding events
-    def _consume_callback_stay_rejoin_events(self, events):
-        """Consume one-step delayed callback stay/rejoin markers without side effects."""
-        for idx, human in enumerate(self.humans):
-            if not bool(getattr(human, "callback_stay_rejoin_this_step", False)):
-                continue
-            human.callback_stay_rejoin_this_step = False
-            self._log_event(
-                f">>> person{idx + 1} recovered after CALLBACK stay -> FOLLOWING."
-            )
-
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
         super().reset(seed=seed)
@@ -878,7 +838,6 @@ class MuseumEnv(gym.Env):
             human.reset_episode_state()
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
-        self._configure_human_callback_stay_rejoin_variants()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
@@ -1265,8 +1224,6 @@ class MuseumEnv(gym.Env):
             ryaw=ryaw,
             repulsion_vectors=repulsion_vectors,
         )
-        self._consume_callback_stay_rejoin_events(events)
-
         # Step simulation
         mujoco.mj_step(self.model, self.data)
 
@@ -1536,7 +1493,6 @@ class MuseumEnv(gym.Env):
                 "callback_completed": bool(events["callback_completed"]),
                 "callback_forced_recovery": bool(events["callback_forced_recovery"]),
                 "callback_response_rejoin": bool(events["callback_response_rejoin"]),
-                "callback_response_stay": bool(events["callback_response_stay"]),
                 "callback_response_ignore": bool(events["callback_response_ignore"]),
                 "callback_attempt_1_started": bool(events["callback_attempt_1_started"]),
                 "callback_attempt_2_started": bool(events["callback_attempt_2_started"]),

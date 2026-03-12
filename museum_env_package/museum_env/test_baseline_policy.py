@@ -247,25 +247,19 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             attack_wait_trigger_prob=0.0,
         )
         try:
-            self.assertAlmostEqual(env.callback_rejoin_prob_normal, 0.60)
-            self.assertAlmostEqual(env.callback_stay_prob_normal, 0.25)
-            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.15)
-            self.assertAlmostEqual(env.callback_rejoin_prob_nd, 0.35)
-            self.assertAlmostEqual(env.callback_stay_prob_nd, 0.40)
-            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.25)
+            self.assertAlmostEqual(env.callback_rejoin_prob_normal, 0.80)
+            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.20)
+            self.assertAlmostEqual(env.callback_rejoin_prob_nd, 0.40)
+            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.60)
 
-            env.np_random = _FixedRandom(0.59)
+            env.np_random = _FixedRandom(0.79)
             self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "rejoin")
-            env.np_random = _FixedRandom(0.60)
-            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "stay")
-            env.np_random = _FixedRandom(0.85)
+            env.np_random = _FixedRandom(0.80)
             self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "ignore")
 
-            env.np_random = _FixedRandom(0.34)
+            env.np_random = _FixedRandom(0.39)
             self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "rejoin")
-            env.np_random = _FixedRandom(0.35)
-            self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "stay")
-            env.np_random = _FixedRandom(0.75)
+            env.np_random = _FixedRandom(0.40)
             self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "ignore")
         finally:
             env.close()
@@ -276,23 +270,17 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
             callback_rejoin_prob_normal=0.10,
-            callback_stay_prob_normal=0.20,
-            callback_ignore_prob_normal=0.70,
+            callback_ignore_prob_normal=0.90,
             callback_rejoin_prob_nd=0.80,
-            callback_stay_prob_nd=0.10,
-            callback_ignore_prob_nd=0.10,
+            callback_ignore_prob_nd=0.20,
         )
         try:
             self.assertAlmostEqual(env.callback_rejoin_prob_normal, 0.10)
-            self.assertAlmostEqual(env.callback_stay_prob_normal, 0.20)
-            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.70)
+            self.assertAlmostEqual(env.callback_ignore_prob_normal, 0.90)
             self.assertAlmostEqual(env.callback_rejoin_prob_nd, 0.80)
-            self.assertAlmostEqual(env.callback_stay_prob_nd, 0.10)
-            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.10)
+            self.assertAlmostEqual(env.callback_ignore_prob_nd, 0.20)
 
             env.np_random = _FixedRandom(0.15)
-            self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "stay")
-            env.np_random = _FixedRandom(0.95)
             self.assertEqual(env._sample_callback_response(HumanProfile.NORMAL), "ignore")
             env.np_random = _FixedRandom(0.05)
             self.assertEqual(env._sample_callback_response(HumanProfile.NEURODIVERGENT), "rejoin")
@@ -335,12 +323,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
             self.assertIsNotNone(request)
             self.assertEqual(request["target_idx"], target_idx)
-            expected_cue_steps = max(1, int(round(4.0 / float(env.timestep))))
+            expected_cue_steps = max(1, int(round(3.0 / float(env.timestep))))
             self.assertEqual(request["cue_steps"], expected_cue_steps)
         finally:
             env.close()
 
-    def test_callback_request_keeps_longest_distracted_priority_under_distance_gate(self):
+    def test_callback_request_targets_farthest_distracted_under_distance_gate(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -348,19 +336,19 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         )
         try:
             env.reset(seed=122)
-            idx_short = 1
-            idx_long = 2
-            env.humans[idx_short].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.humans[idx_long].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.humans[idx_short].distracted_timer = 5
-            env.humans[idx_long].distracted_timer = 9
+            idx_near = 1
+            idx_far = 2
+            env.humans[idx_near].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[idx_far].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[idx_near].distracted_timer = 50
+            env.humans[idx_far].distracted_timer = 1
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
-            human_xy[idx_short] = np.array([2.1, 0.0], dtype=np.float32)
-            human_xy[idx_long] = np.array([2.2, 0.0], dtype=np.float32)
+            human_xy[idx_near] = np.array([2.1, 0.0], dtype=np.float32)
+            human_xy[idx_far] = np.array([2.8, 0.0], dtype=np.float32)
             with patch.object(env, "_is_robot_in_move_stage", return_value=True):
                 request = env._build_callback_request(human_xy=human_xy, robot_pose=(0.0, 0.0, 0.0))
             self.assertIsNotNone(request)
-            self.assertEqual(request["target_idx"], idx_long)
+            self.assertEqual(request["target_idx"], idx_far)
         finally:
             env.close()
 
@@ -686,7 +674,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_callback_stay_steps_uses_one_sim_second(self):
+    def test_callback_rejoin_applies_immediately_without_stay_steps(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -704,11 +692,10 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 cue_elapsed_steps=env._get_callback_response_sample_steps(),
             )
             events = env._default_events()
-            with patch.object(env, "_sample_callback_response", return_value="stay"), \
+            with patch.object(env, "_sample_callback_response", return_value="rejoin"), \
                  patch.object(target_human, "apply_callback_response", return_value=True) as apply_response:
                 env._maybe_sample_active_callback_response(events)
-                expected_stay_steps = max(1, int(round(1.0 / float(env.timestep))))
-                apply_response.assert_called_once_with(response="stay", stay_steps=expected_stay_steps)
+                apply_response.assert_called_once_with(response="rejoin", stay_steps=0)
         finally:
             env.close()
 
@@ -737,58 +724,22 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_callback_stay_rejoin_probability_is_profile_specific(self):
+    def test_callback_ignore_response_keeps_standard_distracted_motion(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
         try:
-            test_cases = [
-                (1, 0.74, True),   # Normal rejoin
-                (1, 0.75, False),  # Normal continue distracted (strict < threshold)
-                (0, 0.39, True),   # ND rejoin
-                (0, 0.40, False),  # ND continue distracted
-            ]
-            for i, (idx, rand_value, expect_rejoin) in enumerate(test_cases):
-                with self.subTest(target_index=idx, rand_value=rand_value):
-                    env.reset(seed=320 + i)
-                    human = env.humans[idx]
-                    human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-                    human.callback_response_mode = "stay"
-                    human.callback_stay_steps_remaining = 1
-                    ctx = {
-                        "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
-                        "robot_yaw": 0.0,
-                        "repulsion": np.zeros(2, dtype=np.float32),
-                        "stand_threshold": env.listen_stand_threshold,
-                        "dt": float(env.timestep),
-                    }
-                    with patch("numpy.random.rand", return_value=rand_value):
-                        action = human.step(env.model, env.data, ctx)
-                    self.assertTrue(np.allclose(action, np.zeros(3, dtype=np.float32)))
-                    if expect_rejoin:
-                        self.assertEqual(human.mode, HumanMode.FOLLOWING)
-                        self.assertTrue(human.callback_stay_rejoin_this_step)
-                    else:
-                        self.assertEqual(human.mode, HumanMode.DISTRACTED)
-                        self.assertIsNone(human.callback_response_mode)
-                        self.assertFalse(human.callback_stay_rejoin_this_step)
-        finally:
-            env.close()
-
-    def test_callback_stay_continue_returns_to_regular_distracted_branch(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=340)
+            env.reset(seed=320)
             human = env.humans[1]
             human.transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            human.callback_response_mode = "stay"
-            human.callback_stay_steps_remaining = 1
+            human.apply_callback_response("ignore")
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            human.distracted_target_xy = np.array([5.5, 5.0], dtype=np.float32)
+            human.current_waypoint = np.array([5.5, 5.0], dtype=np.float32)
+            human.distracted_target_yaw = 0.0
+            human.distracted_stop_reached = False
             ctx = {
                 "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
                 "robot_yaw": 0.0,
@@ -796,21 +747,14 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "stand_threshold": env.listen_stand_threshold,
                 "dt": float(env.timestep),
             }
-
-            with patch("numpy.random.rand", return_value=0.99):
-                first_action = human.step(env.model, env.data, ctx)
-            self.assertTrue(np.allclose(first_action, np.zeros(3, dtype=np.float32)))
+            action = human.step(env.model, env.data, ctx)
             self.assertEqual(human.mode, HumanMode.DISTRACTED)
             self.assertIsNone(human.callback_response_mode)
-            self.assertFalse(human.callback_stay_rejoin_this_step)
+            self.assertGreater(float(np.linalg.norm(action[:2])), 0.0)
 
-            with patch.object(human, "_step_wandering", return_value=np.array([0.12, -0.03, 0.5], dtype=np.float32)) as wander_mock, \
-                 patch("numpy.random.uniform", return_value=0.0):
-                second_action = human.step(env.model, env.data, ctx)
-            wander_mock.assert_called_once()
-            self.assertAlmostEqual(float(second_action[0]), 0.06, places=6)
-            self.assertAlmostEqual(float(second_action[1]), -0.015, places=6)
-            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+            human.distracted_stop_reached = True
+            stop_action = human.step(env.model, env.data, ctx)
+            np.testing.assert_allclose(stop_action, np.zeros(3, dtype=np.float32), atol=1e-6)
         finally:
             env.close()
 
