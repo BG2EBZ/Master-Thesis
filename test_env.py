@@ -114,17 +114,18 @@ def _build_distracted_progress_extra(base_env, info, sim_dt):
 
     humans_info = info.get("humans", {})
     status_info = info.get("status", {})
+    listen_status = status_info.get("listen_wait", {})
+    listening_active = bool(status_info.get("listen_mode", False) or listen_status.get("active", False))
     following_steps = humans_info.get("following_steps", None)
     listening_steps = humans_info.get("listening_steps", None)
-    if following_steps is None and listening_steps is None:
-        return ""
 
-    chunks = []
-    if following_steps is not None:
+    if not listening_active:
+        if following_steps is None:
+            return ""
         try:
             follow_step_list = [int(v) for v in following_steps]
         except TypeError:
-            follow_step_list = []
+            return ""
         follow_window_active = bool(status_info.get("distracted_follow_window_active", False))
         follow_chunks = []
         for i, human in enumerate(base_env.humans):
@@ -132,26 +133,26 @@ def _build_distracted_progress_extra(base_env, info, sim_dt):
             follow_sec = float(steps_i) * float(sim_dt)
             ramp_start_sec = float(getattr(human, "following_distracted_ramp_start_seconds", 0.0))
             follow_chunks.append(f"h{i+1}:{follow_sec:.1f}/{ramp_start_sec:.1f}s")
-        chunks.append(f"distr_win={int(follow_window_active)}, follow_eff/start=[{', '.join(follow_chunks)}]")
+        return f"distr_win={int(follow_window_active)}, follow_eff/start=[{', '.join(follow_chunks)}]"
 
-    if listening_steps is not None:
-        try:
-            listening_step_list = [int(v) for v in listening_steps]
-        except TypeError:
-            listening_step_list = []
-        listening_window_active = status_info.get("listening_distracted_window_active", [])
-        listening_chunks = []
-        for i, human in enumerate(base_env.humans):
-            steps_i = listening_step_list[i] if i < len(listening_step_list) else 0
-            listen_sec = float(steps_i) * float(sim_dt)
-            ramp_start_sec = float(getattr(human, "listening_distracted_ramp_start_seconds", 0.0))
-            window_i = int(bool(listening_window_active[i])) if i < len(listening_window_active) else 0
-            listening_chunks.append(
-                f"h{i+1}:{listen_sec:.1f}/{ramp_start_sec:.1f}s(w={window_i})"
-            )
-        chunks.append(f"listen_eff/start=[{', '.join(listening_chunks)}]")
+    if listening_steps is None:
+        return ""
+    try:
+        listening_step_list = [int(v) for v in listening_steps]
+    except TypeError:
+        return ""
+    listening_window_active = status_info.get("listening_distracted_window_active", [])
+    listening_chunks = []
+    for i, human in enumerate(base_env.humans):
+        steps_i = listening_step_list[i] if i < len(listening_step_list) else 0
+        listen_sec = float(steps_i) * float(sim_dt)
+        ramp_start_sec = float(getattr(human, "listening_distracted_ramp_start_seconds", 0.0))
+        window_i = int(bool(listening_window_active[i])) if i < len(listening_window_active) else 0
+        listening_chunks.append(
+            f"h{i+1}:{listen_sec:.1f}/{ramp_start_sec:.1f}s(w={window_i})"
+        )
 
-    return ", ".join(chunks)
+    return f"listen_eff/start=[{', '.join(listening_chunks)}]"
 
 
 def _configure_base_env(base_env, args):
