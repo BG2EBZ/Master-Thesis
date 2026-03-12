@@ -7,7 +7,13 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 
-from .human import Human, HumanMode, HumanProfile
+from .human import (
+    DISTRACTED_SOURCE_FOLLOWING,
+    DISTRACTED_SOURCE_LISTENING,
+    Human,
+    HumanMode,
+    HumanProfile,
+)
 from .robot import (
     ROBOT_WAYPOINT_REACHED_DIST,
     Robot,
@@ -34,7 +40,7 @@ FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
 LISTEN_FAN_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
-LISTEN_WAIT_STEPS_DEFAULT = 2000
+LISTEN_WAIT_SECONDS_DEFAULT = 40.0
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.00
@@ -48,6 +54,12 @@ DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
 DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
 DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
+LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
+LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
+LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
+LISTENING_DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
+LISTENING_DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
+LISTENING_DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
 MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
 OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
@@ -100,6 +112,12 @@ class MuseumEnv(gym.Env):
         distracted_ramp_start_normal_seconds: float = DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
         distracted_rise_nd_seconds: float = DISTRACTED_RISE_ND_SECONDS_DEFAULT,
         distracted_rise_normal_seconds: float = DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
+        listening_distracted_lambda_max_nd_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
+        listening_distracted_lambda_max_normal_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
+        listening_distracted_ramp_start_nd_seconds: float = LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
+        listening_distracted_ramp_start_normal_seconds: float = LISTENING_DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
+        listening_distracted_rise_nd_seconds: float = LISTENING_DISTRACTED_RISE_ND_SECONDS_DEFAULT,
+        listening_distracted_rise_normal_seconds: float = LISTENING_DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
         max_distracted_duration_seconds: float = MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
         impatient_prob: float = IMPATIENT_PROB_DEFAULT,
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
@@ -183,7 +201,8 @@ class MuseumEnv(gym.Env):
         self.listen_reached_logged = set()
 
         # Listening wait window
-        self.listen_wait_steps = LISTEN_WAIT_STEPS_DEFAULT
+        self.listen_wait_seconds = float(LISTEN_WAIT_SECONDS_DEFAULT)
+        self.listen_wait_steps = max(1, int(round(self.listen_wait_seconds / float(self.timestep))))
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
@@ -194,6 +213,12 @@ class MuseumEnv(gym.Env):
         self.distracted_ramp_start_normal_seconds = float(distracted_ramp_start_normal_seconds)
         self.distracted_rise_nd_seconds = float(distracted_rise_nd_seconds)
         self.distracted_rise_normal_seconds = float(distracted_rise_normal_seconds)
+        self.listening_distracted_lambda_max_nd_per_sec = float(listening_distracted_lambda_max_nd_per_sec)
+        self.listening_distracted_lambda_max_normal_per_sec = float(listening_distracted_lambda_max_normal_per_sec)
+        self.listening_distracted_ramp_start_nd_seconds = float(listening_distracted_ramp_start_nd_seconds)
+        self.listening_distracted_ramp_start_normal_seconds = float(listening_distracted_ramp_start_normal_seconds)
+        self.listening_distracted_rise_nd_seconds = float(listening_distracted_rise_nd_seconds)
+        self.listening_distracted_rise_normal_seconds = float(listening_distracted_rise_normal_seconds)
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         if self.max_distracted_duration_seconds <= 0.0:
             raise ValueError(
@@ -296,13 +321,24 @@ class MuseumEnv(gym.Env):
                     ramp_start_seconds=self.distracted_ramp_start_nd_seconds,
                     rise_seconds=self.distracted_rise_nd_seconds,
                 )
+                human.configure_distracted_listening_hazard(
+                    lambda_max_per_sec=self.listening_distracted_lambda_max_nd_per_sec,
+                    ramp_start_seconds=self.listening_distracted_ramp_start_nd_seconds,
+                    rise_seconds=self.listening_distracted_rise_nd_seconds,
+                )
             else:
                 human.configure_distracted_follow_hazard(
                     lambda_max_per_sec=self.distracted_lambda_max_normal_per_sec,
                     ramp_start_seconds=self.distracted_ramp_start_normal_seconds,
                     rise_seconds=self.distracted_rise_normal_seconds,
                 )
+                human.configure_distracted_listening_hazard(
+                    lambda_max_per_sec=self.listening_distracted_lambda_max_normal_per_sec,
+                    ramp_start_seconds=self.listening_distracted_ramp_start_normal_seconds,
+                    rise_seconds=self.listening_distracted_rise_normal_seconds,
+                )
             human.following_impatient_probability = float(self.impatient_prob)
+            human.configure_listening_distracted_motion(dt=float(self.timestep))
 
     def _configure_human_distracted_duration(self):
         """Apply common distracted duration config to all humans."""
@@ -319,6 +355,41 @@ class MuseumEnv(gym.Env):
             and (not self.robot.listen_mode)
             and (not self.listen_wait_active)
         )
+
+    def _is_listening_session_active(self):
+        """Return whether a listening session is currently active."""
+        return bool(self.robot.listen_mode or self.listen_wait_active)
+
+    @staticmethod
+    def _is_listening_distracted_window_active_for_human(human) -> bool:
+        """Return whether this human may trigger listening-stage distraction now."""
+        return bool(
+            human.mode == HumanMode.LISTENING
+            and human.listening_target_reached_once
+            and (not human.listening_distracted_hold_until_session_end)
+        )
+
+    def _reset_human_listening_session_states(self, recover_distracted=False, human_xy=None):
+        """Clear per-session listening state and optionally recover listening-source distraction."""
+        for idx, human in enumerate(self.humans):
+            if (
+                recover_distracted
+                and human.mode == HumanMode.DISTRACTED
+                and human.distracted_source == DISTRACTED_SOURCE_LISTENING
+            ):
+                if human_xy is not None and idx < human_xy.shape[0]:
+                    human.current_waypoint = np.array(human_xy[idx], dtype=np.float32)
+                human.transition_to(HumanMode.LISTENING, reason="listening_session_end_recover")
+            human.reset_listening_session_state()
+
+    def _update_human_listening_session_progress(self, human_reached_goal):
+        """Advance per-human listening counters once a listening session is active."""
+        if not self._is_listening_session_active():
+            return
+
+        reached_set = {int(idx) for idx in human_reached_goal}
+        for idx, human in enumerate(self.humans):
+            human.update_listening_session_progress(reached_target=(idx in reached_set))
 
     def _build_label_scene_option(self):
         """Create MuJoCo scene option object used to toggle site text labels."""
@@ -726,6 +797,8 @@ class MuseumEnv(gym.Env):
         for idx, human in enumerate(self.humans):
             if human.mode != HumanMode.DISTRACTED:
                 continue
+            if human.distracted_source != DISTRACTED_SOURCE_FOLLOWING:
+                continue
             if idx >= human_xy.shape[0]:
                 continue
             dist = float(np.linalg.norm(np.array(human_xy[idx], dtype=np.float32) - robot_xy))
@@ -836,6 +909,7 @@ class MuseumEnv(gym.Env):
         # Reset humans
         for human in self.humans:
             human.reset_episode_state()
+        self._reset_human_listening_session_states()
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
         self._apply_robot_base_color_from_robot_emotion()
@@ -862,7 +936,7 @@ class MuseumEnv(gym.Env):
     def _step_waiting_branch(self, external_action_received=False):
         """Step branch used during listening wait window (explanation phase)."""
         # Branch used during explanation wait window after entering listening state.
-        # Most agents are frozen; only explicitly allowed modes keep moving.
+        # Listening humans stay active here so listening-stage hazard can still fire.
         events = self._default_events()
 
         rx, ry, ryaw = self._get_robot_pose()
@@ -885,15 +959,10 @@ class MuseumEnv(gym.Env):
         events["overwhelmed_triggered"] = len(overwhelmed_trigger_indices) > 0
         events["attack_triggered"] = len(attack_trigger_indices) > 0
 
-        # Freeze everyone during explanation window.
         self.data.ctrl[:] = 0.0
         rb_action = np.zeros(3, dtype=np.float32)
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
-
-        # Let overwhelmed humans move during explanation.
         for idx, human in enumerate(self.humans):
-            if human.mode != HumanMode.OVERWHELMED:
-                continue
             ctx = {
                 "robot_xy": robot_xy,
                 "robot_yaw": ryaw,
@@ -901,20 +970,15 @@ class MuseumEnv(gym.Env):
                 "stand_threshold": self.listen_stand_threshold,
                 "dt": float(self.timestep),
             }
-            action = human.step(self.model, self.data, ctx)
-            human_actions[idx] = action
-            ctrl_idx = 3 + idx * 3
-            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
 
-        # Allow different humans behavior during explanation.
-        for idx, human in enumerate(self.humans):
-            attack_ctx = {
-                "robot_xy": robot_xy,
-                "robot_yaw": ryaw,
-                "repulsion": np.zeros(2, dtype=np.float32),
-                "stand_threshold": self.listen_stand_threshold,
-                "dt": float(self.timestep),
-            }
+            human.set_following_distracted_window_active(False)
+            human.set_listening_distracted_window_active(
+                self._is_listening_distracted_window_active_for_human(human)
+            )
+
+            action = None
+            if human.mode == HumanMode.OVERWHELMED:
+                action = human.step(self.model, self.data, ctx)
             if human.mode == HumanMode.ATTACK:
                 should_stay_freeze = bool(
                     self.fear_active
@@ -928,31 +992,24 @@ class MuseumEnv(gym.Env):
                     human.last_v_repulsion = np.zeros(2, dtype=np.float32)
                     human.last_v_hr = np.zeros(2, dtype=np.float32)
                 else:
-                    action = human.step(self.model, self.data, attack_ctx)
+                    action = human.step(self.model, self.data, ctx)
                     if human.attack_hit_this_step and not self.attack_hit_once:
                         events["attack_hit"] = True
                         self.attack_hit_once = True
-                human_actions[idx] = action
-                ctrl_idx = 3 + idx * 3
-                self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
+            elif human.mode == HumanMode.LISTENING:
+                action = human.step(self.model, self.data, ctx)
+            elif (
+                human.mode == HumanMode.DISTRACTED
+                and human.distracted_source == DISTRACTED_SOURCE_LISTENING
+            ):
+                action = human.step(self.model, self.data, ctx)
+
+            if action is None:
                 continue
 
-            if human.mode == HumanMode.LISTENING:
-                is_move_back_response = bool(
-                    (
-                        self.fear_current_response_mode == "move_back"
-                        and self.fear_current_response_target_idx == idx
-                    )
-                    or (
-                        self.fear_last_response == "move_back"
-                        and self.fear_last_response_target_idx == idx
-                    )
-                )
-                if is_move_back_response:
-                    action = human.step(self.model, self.data, attack_ctx)
-                    human_actions[idx] = action
-                    ctrl_idx = 3 + idx * 3
-                    self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
+            human_actions[idx] = action
+            ctrl_idx = 3 + idx * 3
+            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
 
         move_back_was_active = bool(self.move_back_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
@@ -1003,6 +1060,7 @@ class MuseumEnv(gym.Env):
 
         human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
         human_reached_goal = self._check_human_goals(human_xy, human_goals)
+        self._update_human_listening_session_progress(human_reached_goal)
 
         # Finish conditions
         final_waypoint_reached = self.robot.is_final_reached(dist)
@@ -1024,9 +1082,15 @@ class MuseumEnv(gym.Env):
             self.move_back_active = False
             self.move_back_attacker_idx = None
 
+            self._reset_human_listening_session_states(
+                recover_distracted=True,
+                human_xy=human_xy,
+            )
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
+
+            human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
 
         self._update_robot_emotion_and_visual(
             events=events,
@@ -1084,7 +1148,7 @@ class MuseumEnv(gym.Env):
                 continue
             if not human.can_be_overwhelmed:
                 continue
-            if human.mode in (HumanMode.OVERWHELMED, HumanMode.ATTACK):
+            if human.mode != HumanMode.LISTENING:
                 continue
             candidates.append(idx)
 
@@ -1119,7 +1183,7 @@ class MuseumEnv(gym.Env):
                 continue
             if not human.can_attack:
                 continue
-            if human.mode in (HumanMode.ATTACK, HumanMode.OVERWHELMED):
+            if human.mode != HumanMode.LISTENING:
                 continue
             candidates.append(idx)
 
@@ -1192,6 +1256,7 @@ class MuseumEnv(gym.Env):
             self.listen_wait_is_final = False
             self.listen_session_count += 1
             n_humans = len(self.humans)
+            self._reset_human_listening_session_states()
 
             self._log_event(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
             for i, human in enumerate(self.humans):
@@ -1235,6 +1300,7 @@ class MuseumEnv(gym.Env):
 
         human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
         human_reached_goal = self._check_human_goals(human_xy, human_goals)
+        self._update_human_listening_session_progress(human_reached_goal)
 
         human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
         human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
@@ -1324,7 +1390,12 @@ class MuseumEnv(gym.Env):
             }
 
             if self.robot.listen_mode:
-                if human.mode != HumanMode.OVERWHELMED:
+                if (
+                    human.mode == HumanMode.DISTRACTED
+                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
+                ):
+                    pass
+                elif human.mode != HumanMode.OVERWHELMED:
                     human.set_mode(HumanMode.LISTENING)
             else:
                 if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
@@ -1348,6 +1419,10 @@ class MuseumEnv(gym.Env):
                 and human.mode == HumanMode.FOLLOWING
             )
             human.set_following_distracted_window_active(distracted_follow_window_active)
+            human.set_listening_distracted_window_active(
+                self._is_listening_session_active()
+                and self._is_listening_distracted_window_active_for_human(human)
+            )
             human.update_following_duration(eligible_following=eligible_following)
 
             human_action = human.step(self.model, self.data, ctx)
@@ -1441,6 +1516,8 @@ class MuseumEnv(gym.Env):
             "human_profile": [h.profile for h in self.humans],
             "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
             "human_following_steps": np.array([h.following_steps for h in self.humans], dtype=np.int32),
+            "human_listening_steps": np.array([h.listening_steps for h in self.humans], dtype=np.int32),
+            "human_distracted_source": [h.distracted_source for h in self.humans],
             "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
             "human_overwhelmed_leave_timer": np.array(
                 [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
@@ -1572,6 +1649,9 @@ class MuseumEnv(gym.Env):
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
                 "distracted_follow_window_active": bool(self._is_distracted_follow_window_active()),
+                "listening_distracted_window_active": [
+                    bool(human.listening_distracted_window_active) for human in self.humans
+                ],
                 "callback_visual_active": bool(self._is_callback_visual_active()),
                 "callback_trigger_distance_meters": float(self.callback_trigger_distance_meters),
                 "perceived_distracted_indices": [int(idx) for idx in self.perceived_distracted_indices],
@@ -1611,6 +1691,8 @@ class MuseumEnv(gym.Env):
                 "profile": snapshot["human_profile"],
                 "distracted_timer": snapshot["human_distracted_timer"],
                 "following_steps": snapshot["human_following_steps"],
+                "listening_steps": snapshot["human_listening_steps"],
+                "distracted_source": snapshot["human_distracted_source"],
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
                 "impatient_timer": snapshot["human_impatient_timer"],

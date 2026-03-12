@@ -14,6 +14,12 @@ explanation)
 target 0.5-1.5m away at 50% speed, then stopping while
 temporarily ignoring the robot during following)
 
+- Listening-stage Distracted (after a human has already
+reached their listening slot, they can independently
+drift 20-45 degrees away from the robot at 0.3m/s for
+1s, then stay still until the current explanation
+session ends)
+
 - Overwhelmed (backing off, then leaving the area
 during listening-stage overload)
 
@@ -77,10 +83,6 @@ callback rejoin)
 - Fear (when attacker is too close)
 
 
-
-
-
-
 # Neurodivergent people behaviors profile parameters
 
 All range from 0 to 1
@@ -98,6 +100,15 @@ All range from 0 to 1
 
 
 
+# Probabilities
+
+Normal:
+    rejoin = 0.80
+    ignore = 0.20
+
+ND:
+    rejoin = 0.40
+    ignore = 0.60
 
 
 
@@ -127,6 +138,7 @@ Info schema (current):
   - step_count
   - listen_mode
   - listen_wait: active/counter/steps/remaining/is_final
+  - listening_distracted_window_active (per-human bool list)
   - callback_active/callback_target_idx/callback_hold_remaining
   - move_back_active/move_back_attacker_idx/move_back_safe_distance/move_back_speed
   - robot_emotion
@@ -166,11 +178,26 @@ Robot emotion rule:
   - pose_xy, goal_xy
   - actual_yaw, desired_yaw
   - mode, distracted_timer
+  - following_steps, listening_steps
+  - distracted_source
   - overwhelmed_stage, overwhelmed_leave_timer
   - impatient_timer
   - reached_goal_indices, all_reached
   - action: vx/vy/yaw_rate
   - velocity_components: follow/repulsion/human_robot/total
+
+Listening-stage distracted parameters:
+
+- ND: `lambda_max=0.10/s`, `ramp_start=20s`, `rise=15s`
+- Normal: `lambda_max=0.05/s`, `ramp_start=40s`, `rise=30s`
+- Trigger time is per-human and starts when that human first
+  reaches the listening target, not when the global 30s
+  explanation window starts
+- The robot explanation window is still global: it starts only
+  after all humans reach their listening targets and lasts 30s
+- Listening-source distracted does not trigger callback and does
+  not recover mid-session; it is cleared only when the current
+  listening session ends
 
 Quick check snippet:
 

@@ -30,7 +30,14 @@ DISTRACTED_HAZARD_SIGMOID_K = float(2.0 * np.log(9.0))
 DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.08
 DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
 DISTRACTED_RISE_SECONDS_DEFAULT = 20.0
+LISTENING_DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT = 0.05
+LISTENING_DISTRACTED_RAMP_START_SECONDS_DEFAULT = 40.0
+LISTENING_DISTRACTED_RISE_SECONDS_DEFAULT = 30.0
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
+LISTENING_DISTRACTED_YAW_DEVIATION_MIN_DEG = 10.0
+LISTENING_DISTRACTED_YAW_DEVIATION_MAX_DEG = 40.0
+LISTENING_DISTRACTED_SPEED_METERS_PER_SEC = 0.3
+LISTENING_DISTRACTED_MOVE_SECONDS = 2.0
 OVERWHELMED_FALLBACK_X_OFFSET = 1.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
@@ -43,6 +50,8 @@ ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
 SEGMENT_CHECK_SPACING = 0.05
 MIN_SPEED_EPS = 1e-6
+DISTRACTED_SOURCE_FOLLOWING = "following"
+DISTRACTED_SOURCE_LISTENING = "listening"
 
 @dataclass
 class HumanContext:
@@ -157,6 +166,20 @@ class Human:
         self.profile = HumanProfile.NORMAL
         self.following_steps = 0
         self.following_distracted_window_active = False
+        self.listening_steps = 0
+        self.listening_started_this_session = False
+        self.listening_target_reached_once = False
+        self.listening_distracted_window_active = False
+        self.listening_distracted_lambda_max_per_sec = LISTENING_DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT
+        self.listening_distracted_ramp_start_seconds = LISTENING_DISTRACTED_RAMP_START_SECONDS_DEFAULT
+        self.listening_distracted_rise_seconds = LISTENING_DISTRACTED_RISE_SECONDS_DEFAULT
+        self.distracted_source = None
+        self.listening_distracted_move_steps = max(
+            1,
+            int(round(LISTENING_DISTRACTED_MOVE_SECONDS / DEFAULT_SIM_TIMESTEP_SECONDS)),
+        )
+        self.listening_distracted_move_elapsed_steps = 0
+        self.listening_distracted_hold_until_session_end = False
 
         self.can_be_overwhelmed = False
         self.overwhelmed_stage = None  # "backoff" | "leave"
@@ -203,6 +226,7 @@ class Human:
             self.distracted_timer = 0
             self._clear_callback_response_state()
             self._clear_distracted_navigation_state()
+            self.distracted_source = None
         if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
             self.reset_following_duration()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
@@ -266,6 +290,7 @@ class Human:
         self.max_speed = float(self.base_max_speed)
         self.reset_following_duration()
         self.following_distracted_window_active = False
+        self.reset_listening_session_state()
         self.reset_overwhelmed_state()
         self.attack_hit_this_step = False
         self.attack_origin_listen_waypoint = None
@@ -287,6 +312,19 @@ class Human:
     def set_following_distracted_window_active(self, active: bool):
         """Tell the human whether distracted-follow hazard should be active now."""
         self.following_distracted_window_active = bool(active)
+
+    def reset_listening_session_state(self):
+        """Reset per-session listening hazard state."""
+        self.listening_steps = 0
+        self.listening_started_this_session = False
+        self.listening_target_reached_once = False
+        self.listening_distracted_window_active = False
+        self.listening_distracted_move_elapsed_steps = 0
+        self.listening_distracted_hold_until_session_end = False
+
+    def set_listening_distracted_window_active(self, active: bool):
+        """Tell the human whether listening->distracted hazard should be active now."""
+        self.listening_distracted_window_active = bool(active)
 
     def configure_distracted_duration(
         self,
@@ -313,6 +351,15 @@ class Human:
             return
         self.reset_following_duration()
 
+    def update_listening_session_progress(self, reached_target: bool):
+        """Accumulate listening duration from first target reach until session end."""
+        if reached_target and not self.listening_target_reached_once:
+            self.listening_target_reached_once = True
+            self.listening_started_this_session = True
+
+        if self.listening_started_this_session:
+            self.listening_steps += 1
+
     # Use sigmoid-based hazard increase probability over time
     def configure_distracted_follow_hazard(
         self,
@@ -333,6 +380,38 @@ class Human:
         self.following_distracted_lambda_max_per_sec = lambda_max
         self.following_distracted_ramp_start_seconds = ramp_start
         self.following_distracted_rise_seconds = rise
+
+    def configure_distracted_listening_hazard(
+        self,
+        lambda_max_per_sec: float,
+        ramp_start_seconds: float,
+        rise_seconds: float,
+    ):
+        """Configure time-varying hazard used to trigger distracted-from-listening."""
+        lambda_max = float(lambda_max_per_sec)
+        ramp_start = float(ramp_start_seconds)
+        rise = float(rise_seconds)
+        if lambda_max < 0.0:
+            raise ValueError(f"distracted lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
+        if ramp_start < 0.0:
+            raise ValueError(f"distracted ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
+        if rise <= 0.0:
+            raise ValueError(f"distracted rise_seconds must be > 0, got {rise_seconds}")
+        self.listening_distracted_lambda_max_per_sec = lambda_max
+        self.listening_distracted_ramp_start_seconds = ramp_start
+        self.listening_distracted_rise_seconds = rise
+
+    def configure_listening_distracted_motion(
+        self,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+        move_seconds: float = LISTENING_DISTRACTED_MOVE_SECONDS,
+    ):
+        """Cache fixed listening-distracted move duration in simulation steps."""
+        dt_safe = self._normalize_dt(dt)
+        move_seconds = float(move_seconds)
+        if move_seconds <= 0.0:
+            raise ValueError(f"listening distracted move_seconds must be > 0, got {move_seconds}")
+        self.listening_distracted_move_steps = max(1, int(round(move_seconds / dt_safe)))
 
     def _log_event(self, msg: str):
         """Emit log line only when logging is enabled."""
@@ -423,6 +502,7 @@ class Human:
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
+        self.listening_distracted_move_elapsed_steps = 0
 
     def _initialize_distracted_target(self, current_xy, current_yaw: float):
         """Sample one local distracted goal and deviated heading from the current pose."""
@@ -483,6 +563,8 @@ class Human:
         """Apply callback response strategy while currently distracted."""
         if self.mode != HumanMode.DISTRACTED:
             return False
+        if self.distracted_source != DISTRACTED_SOURCE_FOLLOWING:
+            return False
 
         if response == "rejoin":
             self.transition_to(HumanMode.FOLLOWING, reason="callback_rejoin")
@@ -503,44 +585,102 @@ class Human:
         dt_safe = self._normalize_dt(dt)
         return int(np.floor(self.following_distracted_ramp_start_seconds / dt_safe))
 
-    def _compute_distracted_follow_lambda_per_sec_with_dt_safe(self, dt_safe: float) -> float:
+    @staticmethod
+    def _compute_distracted_lambda_per_sec_with_dt_safe(
+        elapsed_steps: int,
+        lambda_max_per_sec: float,
+        ramp_start_seconds: float,
+        rise_seconds: float,
+        dt_safe: float,
+    ) -> float:
         """Compute instantaneous distracted hazard rate (per second)."""
-        if self.following_distracted_lambda_max_per_sec <= 0.0:
+        if lambda_max_per_sec <= 0.0:
             return 0.0
-        follow_seconds = float(self.following_steps) * dt_safe
-        if follow_seconds <= self.following_distracted_ramp_start_seconds:
+        elapsed_seconds = float(elapsed_steps) * dt_safe
+        if elapsed_seconds <= ramp_start_seconds:
             return 0.0
         x = (
-            (follow_seconds - self.following_distracted_ramp_start_seconds)
-            / self.following_distracted_rise_seconds
+            (elapsed_seconds - ramp_start_seconds)
+            / rise_seconds
         )
         z = np.clip(-DISTRACTED_HAZARD_SIGMOID_K * (x - 0.5), -60.0, 60.0)
         sig = 1.0 / (1.0 + np.exp(z))
         progress = float(np.clip((sig - 0.1) / 0.8, 0.0, 1.0))
-        return float(self.following_distracted_lambda_max_per_sec * progress)
+        return float(lambda_max_per_sec * progress)
 
     # Compute current distracted follow lambda
     def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
         """Wrapper to compute distracted hazard from raw dt."""
-        return self._compute_distracted_follow_lambda_per_sec_with_dt_safe(
-            dt_safe=self._normalize_dt(dt)
+        dt_safe = self._normalize_dt(dt)
+        return self._compute_distracted_lambda_per_sec_with_dt_safe(
+            elapsed_steps=self.following_steps,
+            lambda_max_per_sec=self.following_distracted_lambda_max_per_sec,
+            ramp_start_seconds=self.following_distracted_ramp_start_seconds,
+            rise_seconds=self.following_distracted_rise_seconds,
+            dt_safe=dt_safe,
         )
 
-    # change per-step probability based on current lambda
-    def _compute_distracted_follow_step_probability(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
-        """Convert hazard rate to per-step Bernoulli trigger probability."""
-        dt_safe = self._normalize_dt(dt)
-        lambda_t = self._compute_distracted_follow_lambda_per_sec_with_dt_safe(dt_safe=dt_safe)
+    @staticmethod
+    def _compute_step_probability_from_lambda(lambda_t: float, dt_safe: float) -> float:
+        """Convert instantaneous hazard rate to per-step Bernoulli probability."""
         if lambda_t <= 0.0:
             return 0.0
         return float(1.0 - np.exp(-lambda_t * dt_safe))
 
+    def _compute_distracted_step_probability(
+        self,
+        source: str,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+    ) -> float:
+        """Compute distracted trigger probability for one step from the selected source."""
+        dt_safe = self._normalize_dt(dt)
+        if source == DISTRACTED_SOURCE_FOLLOWING:
+            elapsed_steps = self.following_steps
+            lambda_max_per_sec = self.following_distracted_lambda_max_per_sec
+            ramp_start_seconds = self.following_distracted_ramp_start_seconds
+            rise_seconds = self.following_distracted_rise_seconds
+        elif source == DISTRACTED_SOURCE_LISTENING:
+            elapsed_steps = self.listening_steps
+            lambda_max_per_sec = self.listening_distracted_lambda_max_per_sec
+            ramp_start_seconds = self.listening_distracted_ramp_start_seconds
+            rise_seconds = self.listening_distracted_rise_seconds
+        else:
+            raise ValueError(f"Unknown distracted source: {source}")
+
+        lambda_t = self._compute_distracted_lambda_per_sec_with_dt_safe(
+            elapsed_steps=elapsed_steps,
+            lambda_max_per_sec=lambda_max_per_sec,
+            ramp_start_seconds=ramp_start_seconds,
+            rise_seconds=rise_seconds,
+            dt_safe=dt_safe,
+        )
+        return self._compute_step_probability_from_lambda(lambda_t=lambda_t, dt_safe=dt_safe)
+
     # whether to trigger distracted following variant based on current probability
     def _maybe_trigger_distracted_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
         """Sample whether FOLLOWING should switch to DISTRACTED at this step."""
-        step_prob = self._compute_distracted_follow_step_probability(dt=dt)
+        step_prob = self._compute_distracted_step_probability(
+            source=DISTRACTED_SOURCE_FOLLOWING,
+            dt=dt,
+        )
         trigger_distracted = (
             self.following_distracted_window_active
+            and step_prob > 0.0
+            and np.random.rand() < step_prob
+        )
+        if trigger_distracted:
+            return HumanMode.DISTRACTED
+        return None
+
+    def _maybe_trigger_distracted_listening_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
+        """Sample whether LISTENING should switch to DISTRACTED at this step."""
+        step_prob = self._compute_distracted_step_probability(
+            source=DISTRACTED_SOURCE_LISTENING,
+            dt=dt,
+        )
+        trigger_distracted = (
+            self.listening_distracted_window_active
+            and (not self.listening_distracted_hold_until_session_end)
             and step_prob > 0.0
             and np.random.rand() < step_prob
         )
@@ -661,6 +801,7 @@ class Human:
                     return self._step_impatient(data, ctx)
 
             if variant == HumanMode.DISTRACTED:
+                self.distracted_source = DISTRACTED_SOURCE_FOLLOWING
                 self.transition_to(HumanMode.DISTRACTED, reason="following_variant_distracted")
                 self._log_event(f">>> {self.name} became DISTRACTED!")
                 return self._step_distracted(data, ctx)
@@ -669,6 +810,15 @@ class Human:
             return self._step_following(data, ctx)
 
         if self.mode == HumanMode.LISTENING:
+            variant = self._maybe_trigger_distracted_listening_variant(
+                dt=float(ctx.get("dt", DEFAULT_SIM_TIMESTEP_SECONDS))
+            )
+            if variant == HumanMode.DISTRACTED:
+                self.distracted_source = DISTRACTED_SOURCE_LISTENING
+                self.listening_distracted_hold_until_session_end = True
+                self.transition_to(HumanMode.DISTRACTED, reason="listening_variant_distracted")
+                self._log_event(f">>> {self.name} became DISTRACTED during LISTENING!")
+                return self._step_distracted(data, ctx)
             return self._step_listening(data, ctx)
         
         if self.mode == HumanMode.DISTRACTED:
@@ -761,6 +911,9 @@ class Human:
     
     def _step_distracted(self, data, ctx):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
+        if self.distracted_source == DISTRACTED_SOURCE_LISTENING:
+            return self._step_listening_distracted(data, ctx)
+
         x, y, yaw = self._get_pose(data)
         self.distracted_timer += 1
 
@@ -810,6 +963,70 @@ class Human:
             self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
+        return self._apply_wall_constraint_to_action(action, data, ctx)
+
+    def _initialize_listening_distracted_target(self, current_xy, current_yaw: float, robot_xy=None):
+        """Sample one slight yaw offset, then a backward move target for listening distraction."""
+        current_xy = np.array(current_xy, dtype=np.float32)
+        deviation_deg = float(
+            np.random.uniform(
+                LISTENING_DISTRACTED_YAW_DEVIATION_MIN_DEG,
+                LISTENING_DISTRACTED_YAW_DEVIATION_MAX_DEG,
+            )
+        )
+        deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
+        target_yaw = self._wrap_to_pi(float(current_yaw) + deviation_sign * np.deg2rad(deviation_deg))
+        target_distance = float(LISTENING_DISTRACTED_SPEED_METERS_PER_SEC * LISTENING_DISTRACTED_MOVE_SECONDS)
+        backward_dir = -np.array(
+            [np.cos(target_yaw), np.sin(target_yaw)],
+            dtype=np.float32,
+        )
+        sampled_target_xy = current_xy + target_distance * backward_dir
+        target_xy = self._find_farthest_walkable_point_on_segment(
+            start_xy=current_xy,
+            end_xy=sampled_target_xy,
+            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
+        self.distracted_target_yaw = float(target_yaw)
+        self.distracted_target_xy = np.array(target_xy, dtype=np.float32)
+        self.current_waypoint = np.array(target_xy, dtype=np.float32)
+        self.distracted_stop_reached = False
+        self.listening_distracted_move_elapsed_steps = 0
+
+    def _step_listening_distracted(self, data, ctx):
+        """DISTRACTED-from-listening: move away for 1 second, then freeze until session end."""
+        x, y, yaw = self._get_pose(data)
+        self.distracted_timer += 1
+        current_xy = np.array([x, y], dtype=np.float32)
+
+        if self.distracted_target_yaw is None:
+            self._initialize_listening_distracted_target(
+                current_xy=current_xy,
+                current_yaw=yaw,
+                robot_xy=ctx.get("robot_xy"),
+            )
+
+        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+        self.last_v_hr = np.zeros(2, dtype=np.float32)
+        desired_yaw = float(self.distracted_target_yaw)
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+
+        if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+
+        if self.listening_distracted_move_elapsed_steps >= self.listening_distracted_move_steps:
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            return np.zeros(3, dtype=np.float32)
+
+        move_dir = -np.array(
+            [np.cos(self.distracted_target_yaw), np.sin(self.distracted_target_yaw)],
+            dtype=np.float32,
+        )
+        v_goal = float(LISTENING_DISTRACTED_SPEED_METERS_PER_SEC) * move_dir
+        self.last_v_follow = np.array(v_goal, dtype=np.float32)
+        self.listening_distracted_move_elapsed_steps += 1
+        action = np.array([v_goal[0], v_goal[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
     def _step_overwhelmed(self, data, ctx):
