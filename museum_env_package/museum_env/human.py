@@ -56,6 +56,10 @@ ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
 SEGMENT_CHECK_SPACING = 0.05
 MIN_SPEED_EPS = 1e-6
+ROOM_A_X_MIN = 0.0
+ROOM_A_X_MAX = 10.0
+ROOM_A_Y_MIN = 0.0
+ROOM_A_Y_MAX = 10.0
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -1316,6 +1320,58 @@ class Human:
         return valid
 
     @staticmethod
+    def sample_point_in_rects(rects, rng=None):
+        """Sample one point uniformly over a set of axis-aligned rectangles."""
+        if not rects:
+            return np.array([0.0, 0.0], dtype=np.float32)
+
+        rng_choice = np.random if rng is None else rng
+        areas = np.array(
+            [
+                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
+                for xmin, xmax, ymin, ymax in rects
+            ],
+            dtype=np.float64,
+        )
+        if float(np.sum(areas)) <= 0.0:
+            xmin, xmax, ymin, ymax = rects[0]
+            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
+
+        probs = areas / float(np.sum(areas))
+        rect_idx = int(rng_choice.choice(len(rects), p=probs))
+        xmin, xmax, ymin, ymax = rects[rect_idx]
+        wx = float(rng_choice.uniform(xmin, xmax))
+        wy = float(rng_choice.uniform(ymin, ymax))
+        return np.array([wx, wy], dtype=np.float32)
+
+    @classmethod
+    def sample_walkable_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
+        """Sample one point from walkable space."""
+        rects = cls._walkable_rects(margin)
+        return cls.sample_point_in_rects(rects, rng=rng)
+
+    @classmethod
+    def sample_room_a_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
+        """Sample one point inside Room A."""
+        m = max(0.0, float(margin))
+        rects = [(
+            ROOM_A_X_MIN + m,
+            ROOM_A_X_MAX - m,
+            ROOM_A_Y_MIN + m,
+            ROOM_A_Y_MAX - m,
+        )]
+        valid_rects = []
+        for xmin, xmax, ymin, ymax in rects:
+            if xmin <= xmax and ymin <= ymax:
+                valid_rects.append((xmin, xmax, ymin, ymax))
+        if not valid_rects:
+            return np.array(
+                [0.5 * (ROOM_A_X_MIN + ROOM_A_X_MAX), 0.5 * (ROOM_A_Y_MIN + ROOM_A_Y_MAX)],
+                dtype=np.float32,
+            )
+        return cls.sample_point_in_rects(valid_rects, rng=rng)
+
+    @staticmethod
     def _is_point_in_rect(x: float, y: float, rect) -> bool:
         """Check if point lies inside one axis-aligned rectangle."""
         xmin, xmax, ymin, ymax = rect
@@ -1443,27 +1499,7 @@ class Human:
 
     def _random_waypoint(self):
         """Generate random waypoint within walkable museum bounds."""
-        rects = self._walkable_rects(HUMAN_WALL_FOOTPRINT_RADIUS)
-        if not rects:
-            return np.array([0.0, 0.0], dtype=np.float32)
-
-        areas = np.array(
-            [
-                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
-                for xmin, xmax, ymin, ymax in rects
-            ],
-            dtype=np.float64,
-        )
-        if float(np.sum(areas)) <= 0.0:
-            xmin, xmax, ymin, ymax = rects[0]
-            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
-
-        probs = areas / float(np.sum(areas))
-        rect_idx = int(np.random.choice(len(rects), p=probs))
-        xmin, xmax, ymin, ymax = rects[rect_idx]
-        wx = float(np.random.uniform(xmin, xmax))
-        wy = float(np.random.uniform(ymin, ymax))
-        return np.array([wx, wy], dtype=np.float32)
+        return self.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
     
     def _wrap_to_pi(self, ang):
         """Normalize angle to [-pi, pi)."""

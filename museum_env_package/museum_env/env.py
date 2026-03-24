@@ -78,14 +78,13 @@ OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
 MAX_CONCURRENT_ATTACK_DEFAULT = 5
+
+# Numbers of humans
 MAX_HUMANS_CAPACITY = 15
 HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
 HUMAN_SPAWN_MIN_ROBOT_DISTANCE = SOCIAL_DISTANCE_DEFAULT
 HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN = 2000
-ROOM_A_X_MIN = 0.0
-ROOM_A_X_MAX = 10.0
-ROOM_A_Y_MIN = 0.0
-ROOM_A_Y_MAX = 10.0
+
 INACTIVE_HUMAN_PARK_X = 50.0
 INACTIVE_HUMAN_PARK_Y_BASE = 50.0
 HUMAN_LABEL_SITE_GROUP = 2
@@ -355,53 +354,13 @@ class MuseumEnv(gym.Env):
         if hasattr(self, "all_human_body_ids"):
             self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
 
-    def _sample_walkable_point(self, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS):
-        """Sample one point uniformly over walkable rectangles using the env RNG."""
-        rects = Human._walkable_rects(margin)
-        if not rects:
-            return np.array([0.0, 0.0], dtype=np.float32)
-
-        areas = np.array(
-            [
-                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
-                for xmin, xmax, ymin, ymax in rects
-            ],
-            dtype=np.float64,
-        )
-        if float(np.sum(areas)) <= 0.0:
-            xmin, xmax, ymin, ymax = rects[0]
-            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
-
-        probs = areas / float(np.sum(areas))
-        rect_idx = int(self.np_random.choice(len(rects), p=probs))
-        xmin, xmax, ymin, ymax = rects[rect_idx]
-        wx = float(self.np_random.uniform(xmin, xmax))
-        wy = float(self.np_random.uniform(ymin, ymax))
-        return np.array([wx, wy], dtype=np.float32)
-
-    def _sample_room_a_point(self, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS):
-        """Sample one point inside Room A using the env RNG."""
-        m = max(0.0, float(margin))
-        xmin = ROOM_A_X_MIN + m
-        xmax = ROOM_A_X_MAX - m
-        ymin = ROOM_A_Y_MIN + m
-        ymax = ROOM_A_Y_MAX - m
-        if xmin > xmax or ymin > ymax:
-            return np.array(
-                [0.5 * (ROOM_A_X_MIN + ROOM_A_X_MAX), 0.5 * (ROOM_A_Y_MIN + ROOM_A_Y_MAX)],
-                dtype=np.float32,
-            )
-        wx = float(self.np_random.uniform(xmin, xmax))
-        wy = float(self.np_random.uniform(ymin, ymax))
-        return np.array([wx, wy], dtype=np.float32)
-
     def _sample_active_human_spawn_states(self, robot_xy):
         """Sample collision-free initial poses for the active humans."""
         sampled_states = []
         sampled_positions = []
         for _ in self.humans:
             for _attempt in range(HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN):
-                candidate_xy = self._sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS)
+                candidate_xy = Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.np_random)
                 if float(np.linalg.norm(candidate_xy - robot_xy)) < HUMAN_SPAWN_MIN_ROBOT_DISTANCE:
                     continue
                 if any(
@@ -427,7 +386,7 @@ class MuseumEnv(gym.Env):
         for human, spawn_state in zip(self.humans, active_spawn_states):
             self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = spawn_state
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
-            human.current_waypoint = self._sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS)
+            human.current_waypoint = Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.np_random)
 
         inactive_humans = self.all_humans[len(self.humans) :]
         for park_idx, human in enumerate(inactive_humans):

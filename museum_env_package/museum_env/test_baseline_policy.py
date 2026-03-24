@@ -15,7 +15,7 @@ from museum_env.env import (
     ROOM_A_Y_MIN,
     MuseumEnv,
 )
-from museum_env.human import HUMAN_WALL_FOOTPRINT_RADIUS, HumanMode, HumanProfile
+from museum_env.human import HUMAN_WALL_FOOTPRINT_RADIUS, Human, HumanMode, HumanProfile
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
@@ -188,6 +188,26 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 np.testing.assert_allclose(world_xy, target[:2], atol=1e-6)
         finally:
             env.close()
+
+    def test_human_walkable_sampling_api_returns_walkable_points(self):
+        for _ in range(200):
+            sampled_xy = Human.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+            probe_human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
+            self._assert_in_walkable(probe_human, sampled_xy)
+
+    def test_human_room_a_sampling_api_uses_env_rng_reproducibly(self):
+        env_a = self._make_env(n_humans=5)
+        env_b = self._make_env(n_humans=5)
+        try:
+            env_a.reset(seed=555)
+            env_b.reset(seed=555)
+            samples_a = [Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_a.np_random) for _ in range(10)]
+            samples_b = [Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_b.np_random) for _ in range(10)]
+            for a, b in zip(samples_a, samples_b):
+                np.testing.assert_allclose(a, b, atol=1e-7)
+        finally:
+            env_a.close()
+            env_b.close()
 
     def test_inactive_humans_are_parked_outside_scene_and_excluded_from_info(self):
         env = self._make_env(
