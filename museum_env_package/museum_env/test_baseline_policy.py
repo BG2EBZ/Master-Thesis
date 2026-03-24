@@ -4,7 +4,17 @@ from unittest.mock import patch
 import mujoco
 import numpy as np
 
-from museum_env.env import MOVE_BACK_SPEED, MuseumEnv
+from museum_env.env import (
+    HUMAN_SPAWN_MIN_DISTANCE,
+    HUMAN_SPAWN_MIN_ROBOT_DISTANCE,
+    INACTIVE_HUMAN_PARK_X,
+    MOVE_BACK_SPEED,
+    ROOM_A_X_MAX,
+    ROOM_A_X_MIN,
+    ROOM_A_Y_MAX,
+    ROOM_A_Y_MIN,
+    MuseumEnv,
+)
 from museum_env.human import HUMAN_WALL_FOOTPRINT_RADIUS, HumanMode, HumanProfile
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
@@ -50,6 +60,20 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         if human.body_id is None:
             human.body_id = env.model.body(human.body_name).id
 
+    def _assert_pairwise_distance(self, xy_points, min_distance, tol=1e-6):
+        for idx in range(len(xy_points)):
+            for jdx in range(idx + 1, len(xy_points)):
+                dist = float(np.linalg.norm(xy_points[idx] - xy_points[jdx]))
+                self.assertGreaterEqual(dist + tol, float(min_distance))
+
+    def _assert_in_room_a(self, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-6):
+        x = float(xy[0])
+        y = float(xy[1])
+        self.assertGreaterEqual(x + tol, float(ROOM_A_X_MIN + margin))
+        self.assertLessEqual(x - tol, float(ROOM_A_X_MAX - margin))
+        self.assertGreaterEqual(y + tol, float(ROOM_A_Y_MIN + margin))
+        self.assertLessEqual(y - tol, float(ROOM_A_Y_MAX - margin))
+
     def _set_callback_state(
         self,
         env,
@@ -90,6 +114,117 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 self.assertEqual(human.profile, HumanProfile.NORMAL)
         finally:
             env.close()
+
+    def test_active_human_counts_supported_for_5_10_and_15(self):
+        for n_humans in (5, 10, 15):
+            env = self._make_env(
+                n_humans=n_humans,
+                impatient_prob=0.0,
+                overwhelmed_wait_trigger_prob=0.0,
+                attack_wait_trigger_prob=0.0,
+            )
+            try:
+                obs, info = env.reset(seed=100 + n_humans)
+                self.assertEqual(obs.shape, (4,))
+                self.assertEqual(info, {})
+                self.assertEqual(len(env.humans), n_humans)
+                self.assertEqual(env.nu, 3 + (3 * n_humans))
+                self.assertEqual(env.action_space.shape, (3 + (3 * n_humans),))
+                step_out = env.step(None)
+                self.assertEqual(len(step_out), 5)
+            finally:
+                env.close()
+
+    def test_n_humans_validation_rejects_values_outside_supported_capacity(self):
+        with self.assertRaises(ValueError):
+            self._make_env(n_humans=0)
+        with self.assertRaises(ValueError):
+            self._make_env(n_humans=16)
+
+    def test_random_reset_spawns_active_humans_in_room_a_and_separated(self):
+        env = self._make_env(
+            n_humans=15,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=123)
+            robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            human_xy = env._get_human_poses()[:, :2]
+            self.assertEqual(human_xy.shape, (15, 2))
+            for human, xy in zip(env.humans, human_xy):
+                self._assert_in_walkable(human, xy)
+                self._assert_in_room_a(xy)
+                self.assertGreaterEqual(
+                    float(np.linalg.norm(xy - robot_xy)) + 1e-6,
+                    float(HUMAN_SPAWN_MIN_ROBOT_DISTANCE),
+                )
+                self._assert_in_room_a(human.current_waypoint)
+            self._assert_pairwise_distance(human_xy, HUMAN_SPAWN_MIN_DISTANCE)
+        finally:
+            env.close()
+
+    def test_setting_human_qpos_updates_world_xy_without_xml_base_offset(self):
+        env = self._make_env(
+            n_humans=5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=321)
+            targets = [
+                np.array([1.25, 1.75, 0.0], dtype=np.float32),
+                np.array([8.5, 9.0, 0.25], dtype=np.float32),
+                np.array([5.5, 4.0, -0.5], dtype=np.float32),
+            ]
+            for human, target in zip(env.humans[:3], targets):
+                env.data.qpos[human.qpos_idx : human.qpos_idx + 3] = target
+            mujoco.mj_forward(env.model, env.data)
+
+            for human, target in zip(env.humans[:3], targets):
+                world_xy = env.data.xpos[human.body_id, :2]
+                np.testing.assert_allclose(world_xy, target[:2], atol=1e-6)
+        finally:
+            env.close()
+
+    def test_inactive_humans_are_parked_outside_scene_and_excluded_from_info(self):
+        env = self._make_env(
+            n_humans=10,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=222)
+            _, _, _, _, info = env.step(None)
+            self.assertEqual(len(env.humans), 10)
+            self.assertEqual(info["humans"]["pose_xy"].shape, (10, 2))
+            parked_humans = env.all_humans[len(env.humans) :]
+            self.assertEqual(len(parked_humans), 5)
+            for idx, human in enumerate(parked_humans):
+                park_pose = env.data.qpos[human.qpos_idx : human.qpos_idx + 3]
+                self.assertGreaterEqual(float(park_pose[0]), INACTIVE_HUMAN_PARK_X + float(idx))
+        finally:
+            env.close()
+
+    def test_only_one_active_neurodivergent_human_for_any_supported_count(self):
+        for n_humans in (5, 10, 15):
+            env = self._make_env(
+                n_humans=n_humans,
+                impatient_prob=0.0,
+                overwhelmed_wait_trigger_prob=0.0,
+                attack_wait_trigger_prob=0.0,
+            )
+            try:
+                env.reset(seed=300 + n_humans)
+                profiles = [human.profile for human in env.humans]
+                self.assertEqual(profiles.count(HumanProfile.NEURODIVERGENT), 1)
+                self.assertEqual(profiles[0], HumanProfile.NEURODIVERGENT)
+                self.assertTrue(all(profile == HumanProfile.NORMAL for profile in profiles[1:]))
+            finally:
+                env.close()
 
     def test_distracted_duration_defaults_to_ten_seconds_for_all_humans(self):
         env = self._make_env(

@@ -10,6 +10,7 @@ from gymnasium import spaces
 from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
+    HUMAN_WALL_FOOTPRINT_RADIUS,
     Human,
     HumanMode,
     HumanProfile,
@@ -77,6 +78,16 @@ OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
 MAX_CONCURRENT_ATTACK_DEFAULT = 5
+MAX_HUMANS_CAPACITY = 15
+HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
+HUMAN_SPAWN_MIN_ROBOT_DISTANCE = SOCIAL_DISTANCE_DEFAULT
+HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN = 2000
+ROOM_A_X_MIN = 0.0
+ROOM_A_X_MAX = 10.0
+ROOM_A_Y_MIN = 0.0
+ROOM_A_Y_MAX = 10.0
+INACTIVE_HUMAN_PARK_X = 50.0
+INACTIVE_HUMAN_PARK_Y_BASE = 50.0
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
@@ -139,6 +150,7 @@ class MuseumEnv(gym.Env):
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
+        n_humans: int = 10,
     ):
         """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
         super().__init__()
@@ -160,15 +172,6 @@ class MuseumEnv(gym.Env):
         self._viewer_key_callback = None
         self.render_width = 1920
         self.render_height = 1080
-
-        # --- Action space ---
-        self.nu = self.model.nu
-        self.action_space = spaces.Box(
-            low=ACTION_LOW,
-            high=ACTION_HIGH,
-            shape=(self.nu,),
-            dtype=np.float32,
-        )
 
         # --- Observation space ---
         self.observation_space = spaces.Box(
@@ -245,6 +248,11 @@ class MuseumEnv(gym.Env):
         self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
         self.callback_ignore_prob_nd = float(callback_ignore_prob_nd)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
+        self.n_humans = int(n_humans)
+        if self.n_humans < 1 or self.n_humans > MAX_HUMANS_CAPACITY:
+            raise ValueError(
+                f"n_humans must be in [1, {MAX_HUMANS_CAPACITY}], got {n_humans}"
+            )
         if self.callback_trigger_distance_meters <= 0.0:
             raise ValueError(
                 "callback_trigger_distance_meters must be > 0, "
@@ -280,18 +288,28 @@ class MuseumEnv(gym.Env):
         self.perceived_distracted_indices = []
 
         # --- Initialize humans ---
-        self.humans = [
-            Human("person1", "person1", qpos_idx=3, max_speed=HUMAN_MAX_SPEED_DEFAULT),
-            Human("person2", "person2", qpos_idx=6, max_speed=HUMAN_MAX_SPEED_DEFAULT),
-            Human("person3", "person3", qpos_idx=9, max_speed=HUMAN_MAX_SPEED_DEFAULT),
-            Human("person4", "person4", qpos_idx=12, max_speed=HUMAN_MAX_SPEED_DEFAULT),
-            Human("person5", "person5", qpos_idx=15, max_speed=HUMAN_MAX_SPEED_DEFAULT),
+        self.all_humans = [
+            Human(
+                f"person{idx}",
+                f"person{idx}",
+                qpos_idx=3 * idx,
+                max_speed=HUMAN_MAX_SPEED_DEFAULT,
+            )
+            for idx in range(1, MAX_HUMANS_CAPACITY + 1)
         ]
-        self.humans[0].set_profile(HumanProfile.NEURODIVERGENT)
-        for human in self.humans:
+        self.humans = []
+        for human in self.all_humans:
             human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
             human.set_event_logging(self.enable_event_logs)
+        self._set_active_humans(self.n_humans)
+        self.nu = 3 + (3 * len(self.humans))
+        self.action_space = spaces.Box(
+            low=ACTION_LOW,
+            high=ACTION_HIGH,
+            shape=(self.nu,),
+            dtype=np.float32,
+        )
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
 
         self._configure_human_distracted_duration()
@@ -312,7 +330,10 @@ class MuseumEnv(gym.Env):
         self.robot_body_id = self.model.body("robot").id
         self.robot_base_geom_id = self.model.geom("robot_base").id
         self.robot_speaking_halo_geom_id = self.model.geom("robot_speaking_halo").id
-        self.human_body_ids = [self.model.body(human.body_name).id for human in self.humans]
+        self.all_human_body_ids = [self.model.body(human.body_name).id for human in self.all_humans]
+        for human, body_id in zip(self.all_humans, self.all_human_body_ids):
+            human.body_id = body_id
+        self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
         self._label_scene_option = self._build_label_scene_option()
         self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
@@ -323,6 +344,99 @@ class MuseumEnv(gym.Env):
         """Emit environment-level log message when logging is enabled."""
         if self.enable_event_logs:
             logger.info(msg)
+
+    def _set_active_humans(self, n_humans: int):
+        """Select the active prefix of humans and assign per-profile defaults."""
+        self.humans = list(self.all_humans[: int(n_humans)])
+        for human in self.all_humans:
+            human.set_profile(HumanProfile.NORMAL)
+        if self.humans:
+            self.humans[0].set_profile(HumanProfile.NEURODIVERGENT)
+        if hasattr(self, "all_human_body_ids"):
+            self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
+
+    def _sample_walkable_point(self, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS):
+        """Sample one point uniformly over walkable rectangles using the env RNG."""
+        rects = Human._walkable_rects(margin)
+        if not rects:
+            return np.array([0.0, 0.0], dtype=np.float32)
+
+        areas = np.array(
+            [
+                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
+                for xmin, xmax, ymin, ymax in rects
+            ],
+            dtype=np.float64,
+        )
+        if float(np.sum(areas)) <= 0.0:
+            xmin, xmax, ymin, ymax = rects[0]
+            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
+
+        probs = areas / float(np.sum(areas))
+        rect_idx = int(self.np_random.choice(len(rects), p=probs))
+        xmin, xmax, ymin, ymax = rects[rect_idx]
+        wx = float(self.np_random.uniform(xmin, xmax))
+        wy = float(self.np_random.uniform(ymin, ymax))
+        return np.array([wx, wy], dtype=np.float32)
+
+    def _sample_room_a_point(self, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS):
+        """Sample one point inside Room A using the env RNG."""
+        m = max(0.0, float(margin))
+        xmin = ROOM_A_X_MIN + m
+        xmax = ROOM_A_X_MAX - m
+        ymin = ROOM_A_Y_MIN + m
+        ymax = ROOM_A_Y_MAX - m
+        if xmin > xmax or ymin > ymax:
+            return np.array(
+                [0.5 * (ROOM_A_X_MIN + ROOM_A_X_MAX), 0.5 * (ROOM_A_Y_MIN + ROOM_A_Y_MAX)],
+                dtype=np.float32,
+            )
+        wx = float(self.np_random.uniform(xmin, xmax))
+        wy = float(self.np_random.uniform(ymin, ymax))
+        return np.array([wx, wy], dtype=np.float32)
+
+    def _sample_active_human_spawn_states(self, robot_xy):
+        """Sample collision-free initial poses for the active humans."""
+        sampled_states = []
+        sampled_positions = []
+        for _ in self.humans:
+            for _attempt in range(HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN):
+                candidate_xy = self._sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS)
+                if float(np.linalg.norm(candidate_xy - robot_xy)) < HUMAN_SPAWN_MIN_ROBOT_DISTANCE:
+                    continue
+                if any(
+                    float(np.linalg.norm(candidate_xy - existing_xy)) < HUMAN_SPAWN_MIN_DISTANCE
+                    for existing_xy in sampled_positions
+                ):
+                    continue
+                yaw = float(self.np_random.uniform(-np.pi, np.pi))
+                sampled_states.append(
+                    np.array([candidate_xy[0], candidate_xy[1], yaw], dtype=np.float32)
+                )
+                sampled_positions.append(candidate_xy)
+                break
+            else:
+                raise RuntimeError(
+                    f"Unable to sample non-overlapping spawn positions for {len(self.humans)} humans."
+                )
+        return sampled_states
+
+    def _reset_human_positions(self, robot_xy):
+        """Place active humans in walkable space and park inactive humans outside the map."""
+        active_spawn_states = self._sample_active_human_spawn_states(robot_xy=robot_xy)
+        for human, spawn_state in zip(self.humans, active_spawn_states):
+            self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = spawn_state
+            self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
+            human.current_waypoint = self._sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS)
+
+        inactive_humans = self.all_humans[len(self.humans) :]
+        for park_idx, human in enumerate(inactive_humans):
+            park_pose = np.array(
+                [INACTIVE_HUMAN_PARK_X + float(park_idx), INACTIVE_HUMAN_PARK_Y_BASE, 0.0],
+                dtype=np.float32,
+            )
+            self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = park_pose
+            self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
 
     def _configure_human_following_variants(self):
         """Apply profile-specific distracted/impatient parameters to all humans."""
@@ -940,6 +1054,9 @@ class MuseumEnv(gym.Env):
         # Reset humans
         for human in self.humans:
             human.reset_episode_state()
+        rx, ry, _ = self._get_robot_pose()
+        self._reset_human_positions(robot_xy=np.array([rx, ry], dtype=np.float32))
+        mujoco.mj_forward(self.model, self.data)
         self._reset_human_listening_session_states()
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
