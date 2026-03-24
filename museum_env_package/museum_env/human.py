@@ -404,6 +404,25 @@ class Human:
         if self.listening_started_this_session:
             self.listening_steps += 1
 
+    @staticmethod
+    def _normalize_hazard_parameters(
+        hazard_name: str,
+        lambda_max_per_sec: float,
+        ramp_start_seconds: float,
+        rise_seconds: float,
+    ):
+        """Validate common sigmoid-hazard parameters and return normalized floats."""
+        lambda_max = float(lambda_max_per_sec)
+        ramp_start = float(ramp_start_seconds)
+        rise = float(rise_seconds)
+        if lambda_max < 0.0:
+            raise ValueError(f"{hazard_name} lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
+        if ramp_start < 0.0:
+            raise ValueError(f"{hazard_name} ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
+        if rise <= 0.0:
+            raise ValueError(f"{hazard_name} rise_seconds must be > 0, got {rise_seconds}")
+        return lambda_max, ramp_start, rise
+
     # Use sigmoid-based hazard increase probability over time
     def configure_distracted_follow_hazard(
         self,
@@ -412,15 +431,12 @@ class Human:
         rise_seconds: float,
     ):
         """Configure time-varying hazard used to trigger distracted-from-following."""
-        lambda_max = float(lambda_max_per_sec)
-        ramp_start = float(ramp_start_seconds)
-        rise = float(rise_seconds)
-        if lambda_max < 0.0:
-            raise ValueError(f"distracted lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
-        if ramp_start < 0.0:
-            raise ValueError(f"distracted ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
-        if rise <= 0.0:
-            raise ValueError(f"distracted rise_seconds must be > 0, got {rise_seconds}")
+        lambda_max, ramp_start, rise = self._normalize_hazard_parameters(
+            hazard_name="distracted",
+            lambda_max_per_sec=lambda_max_per_sec,
+            ramp_start_seconds=ramp_start_seconds,
+            rise_seconds=rise_seconds,
+        )
         self.following_distracted_lambda_max_per_sec = lambda_max
         self.following_distracted_ramp_start_seconds = ramp_start
         self.following_distracted_rise_seconds = rise
@@ -432,15 +448,12 @@ class Human:
         rise_seconds: float,
     ):
         """Configure time-varying hazard used to trigger distracted-from-listening."""
-        lambda_max = float(lambda_max_per_sec)
-        ramp_start = float(ramp_start_seconds)
-        rise = float(rise_seconds)
-        if lambda_max < 0.0:
-            raise ValueError(f"distracted lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
-        if ramp_start < 0.0:
-            raise ValueError(f"distracted ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
-        if rise <= 0.0:
-            raise ValueError(f"distracted rise_seconds must be > 0, got {rise_seconds}")
+        lambda_max, ramp_start, rise = self._normalize_hazard_parameters(
+            hazard_name="distracted",
+            lambda_max_per_sec=lambda_max_per_sec,
+            ramp_start_seconds=ramp_start_seconds,
+            rise_seconds=rise_seconds,
+        )
         self.listening_distracted_lambda_max_per_sec = lambda_max
         self.listening_distracted_ramp_start_seconds = ramp_start
         self.listening_distracted_rise_seconds = rise
@@ -453,16 +466,13 @@ class Human:
         robot_speed_threshold: float,
     ):
         """Configure time-varying hazard used to trigger impatient-from-following."""
-        lambda_max = float(lambda_max_per_sec)
-        ramp_start = float(ramp_start_seconds)
-        rise = float(rise_seconds)
+        lambda_max, ramp_start, rise = self._normalize_hazard_parameters(
+            hazard_name="impatient",
+            lambda_max_per_sec=lambda_max_per_sec,
+            ramp_start_seconds=ramp_start_seconds,
+            rise_seconds=rise_seconds,
+        )
         speed_threshold = float(robot_speed_threshold)
-        if lambda_max < 0.0:
-            raise ValueError(f"impatient lambda_max_per_sec must be >= 0, got {lambda_max_per_sec}")
-        if ramp_start < 0.0:
-            raise ValueError(f"impatient ramp_start_seconds must be >= 0, got {ramp_start_seconds}")
-        if rise <= 0.0:
-            raise ValueError(f"impatient rise_seconds must be > 0, got {rise_seconds}")
         if speed_threshold <= 0.0:
             raise ValueError(
                 "impatient robot_speed_threshold must be > 0, "
@@ -576,6 +586,22 @@ class Human:
         self.distracted_target_yaw = None
         self.listening_distracted_move_elapsed_steps = 0
 
+    def _set_distracted_target_state(
+        self,
+        target_yaw: float,
+        target_xy,
+        *,
+        reset_listening_move_elapsed_steps: bool = False,
+    ):
+        """Store one-shot distracted navigation state shared by distracted variants."""
+        target_xy = np.array(target_xy, dtype=np.float32)
+        self.distracted_target_yaw = float(target_yaw)
+        self.distracted_target_xy = target_xy
+        self.current_waypoint = target_xy.copy()
+        self.distracted_stop_reached = False
+        if reset_listening_move_elapsed_steps:
+            self.listening_distracted_move_elapsed_steps = 0
+
     def _initialize_distracted_target(self, current_xy, current_yaw: float):
         """Sample one local distracted goal and deviated heading from the current pose."""
         current_xy = np.array(current_xy, dtype=np.float32)
@@ -588,11 +614,7 @@ class Human:
             end_xy=sampled_target_xy,
             margin=HUMAN_WALL_FOOTPRINT_RADIUS,
         )
-
-        self.distracted_target_yaw = float(target_yaw)
-        self.distracted_target_xy = np.array(target_xy, dtype=np.float32)
-        self.current_waypoint = np.array(target_xy, dtype=np.float32)
-        self.distracted_stop_reached = False
+        self._set_distracted_target_state(target_yaw=target_yaw, target_xy=target_xy)
 
     def _sample_distracted_target_candidate(self, current_xy, current_yaw: float):
         """Sample one distracted target candidate before wall/segment validity checks."""
@@ -679,18 +701,6 @@ class Human:
         sig = 1.0 / (1.0 + np.exp(z))
         progress = float(np.clip((sig - 0.1) / 0.8, 0.0, 1.0))
         return float(lambda_max_per_sec * progress)
-
-    # Compute current distracted follow lambda
-    def _compute_distracted_follow_lambda_per_sec(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS) -> float:
-        """Wrapper to compute distracted hazard from raw dt."""
-        dt_safe = self._normalize_dt(dt)
-        return self._compute_distracted_lambda_per_sec_with_dt_safe(
-            elapsed_steps=self.following_steps,
-            lambda_max_per_sec=self.following_distracted_lambda_max_per_sec,
-            ramp_start_seconds=self.following_distracted_ramp_start_seconds,
-            rise_seconds=self.following_distracted_rise_seconds,
-            dt_safe=dt_safe,
-        )
 
     @staticmethod
     def _compute_step_probability_from_lambda(lambda_t: float, dt_safe: float) -> float:
@@ -807,7 +817,7 @@ class Human:
         """
         self.context = HumanContext.from_kwargs(**kwargs)
 
-    def _assign_target_from_context(self):
+    def _assign_target_from_context(self, mode: Optional[str] = None):
         """
         Decide where to stand based on social context.
         """
@@ -820,7 +830,8 @@ class Human:
 
         fan_half_angle = self.context.fan_half_angle
         relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
-        if self.mode == HumanMode.LISTENING:
+        target_mode = self.mode if mode is None else mode
+        if target_mode == HumanMode.LISTENING:
             radius = self.context.listen_radius
             self.current_waypoint = self._compute_fan_target(
                 robot_pose=robot_pose,
@@ -829,7 +840,7 @@ class Human:
                 base_angle_offset=0.0,
             )
 
-        elif self.mode == HumanMode.FOLLOWING:
+        elif target_mode == HumanMode.FOLLOWING:
             radius = self.context.follow_radius
             self.current_waypoint = self._compute_fan_target(
                 robot_pose=robot_pose,
@@ -838,7 +849,7 @@ class Human:
                 base_angle_offset=np.pi,
             )
 
-        elif self.mode == HumanMode.IMPATIENT:
+        elif target_mode == HumanMode.IMPATIENT:
             radius = self.context.impatient_front_offset
             if radius is None:
                 radius = self.impatient_front_offset
@@ -924,32 +935,6 @@ class Human:
 
         raise ValueError(f"Unknown human mode {self.mode}")
         
-    def assign_follow_target(self, index, n_humans, robot_pose, follow_radius, fan_half_angle):
-        """
-        Compute and assign target for FOLLOWING behavior.
-        """
-        relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
-        self.current_waypoint = self._compute_fan_target(
-            robot_pose=robot_pose,
-            radius=follow_radius,
-            relative_angle=relative_angle,
-            base_angle_offset=np.pi,
-        )
-
-
-    def assign_listen_target(self, index, n_humans, robot_pose, listen_radius, fan_half_angle):
-        """
-        Compute and assign target for LISTEN behavior.
-        """
-        relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
-        self.current_waypoint = self._compute_fan_target(
-            robot_pose=robot_pose,
-            radius=listen_radius,
-            relative_angle=relative_angle,
-            base_angle_offset=0.0,
-        )
-
-
     def _step_wandering(self, data, ctx):
         """WANDERING: move to random waypoint, and resample when reached."""
         x, y, yaw = self._get_pose(data)
@@ -1053,7 +1038,7 @@ class Human:
 
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
-    def _initialize_listening_distracted_target(self, current_xy, current_yaw: float, robot_xy=None):
+    def _initialize_listening_distracted_target(self, current_xy, current_yaw: float):
         """Sample one slight yaw offset, then a backward move target for listening distraction."""
         current_xy = np.array(current_xy, dtype=np.float32)
         deviation_deg = float(
@@ -1075,11 +1060,11 @@ class Human:
             end_xy=sampled_target_xy,
             margin=HUMAN_WALL_FOOTPRINT_RADIUS,
         )
-        self.distracted_target_yaw = float(target_yaw)
-        self.distracted_target_xy = np.array(target_xy, dtype=np.float32)
-        self.current_waypoint = np.array(target_xy, dtype=np.float32)
-        self.distracted_stop_reached = False
-        self.listening_distracted_move_elapsed_steps = 0
+        self._set_distracted_target_state(
+            target_yaw=target_yaw,
+            target_xy=target_xy,
+            reset_listening_move_elapsed_steps=True,
+        )
 
     def _step_listening_distracted(self, data, ctx):
         """DISTRACTED-from-listening: move away for 1 second, then freeze until session end."""
@@ -1091,7 +1076,6 @@ class Human:
             self._initialize_listening_distracted_target(
                 current_xy=current_xy,
                 current_yaw=yaw,
-                robot_xy=ctx.get("robot_xy"),
             )
 
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
