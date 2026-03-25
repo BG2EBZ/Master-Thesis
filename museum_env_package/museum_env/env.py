@@ -42,7 +42,7 @@ HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
 SOCIAL_DISTANCE_DEFAULT = 0.8
 REPULSION_GAIN_DEFAULT = 4.0
 FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
-LISTEN_FAN_HALF_ANGLE_DEG = 75.0
+LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 80.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
@@ -215,9 +215,9 @@ class MuseumEnv(gym.Env):
         self.social_distance = SOCIAL_DISTANCE_DEFAULT
         self.repulsion_gain = REPULSION_GAIN_DEFAULT
 
-        # Listening formation (fan around robot after it stops)
+        # Listening ring in front of the robot after it stops
         self.follow_fan_half_angle = np.deg2rad(FOLLOW_FAN_HALF_ANGLE_DEG)
-        self.listen_fan_half_angle = np.deg2rad(LISTEN_FAN_HALF_ANGLE_DEG)
+        self.listen_front_sector_half_angle = np.deg2rad(LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG)
         self.listen_fan_radius = LISTEN_FAN_RADIUS_DEFAULT
         self.listen_stand_threshold = LISTEN_STAND_THRESHOLD_DEFAULT
         self.listen_reached_logged = set()
@@ -479,6 +479,17 @@ class MuseumEnv(gym.Env):
             human.mode == HumanMode.LISTENING
             and human.listening_target_reached_once
             and (not human.listening_distracted_hold_until_session_end)
+        )
+
+    def _is_human_in_listening_front_sector(self, human, pos_xy, robot_xy, robot_yaw: float) -> bool:
+        """Return whether one human position lies inside the robot-front listening sector."""
+        return bool(
+            human.is_within_listening_front_sector(
+                point_xy=np.array(pos_xy, dtype=np.float32),
+                robot_xy=np.array(robot_xy, dtype=np.float32),
+                robot_yaw=float(robot_yaw),
+                sector_half_angle=float(self.listen_front_sector_half_angle),
+            )
         )
 
     def _reset_human_listening_session_states(self, recover_distracted=False, human_xy=None):
@@ -1090,12 +1101,20 @@ class MuseumEnv(gym.Env):
                 "repulsion": np.array(repulsion_vec, dtype=np.float32),
                 "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
+                "listening_sector_half_angle": self.listen_front_sector_half_angle,
                 "dt": float(self.timestep),
             }
 
             human.set_following_distracted_window_active(False)
             human.set_listening_distracted_window_active(
                 self._is_listening_distracted_window_active_for_human(human)
+            )
+            ctx["enforce_listening_sector"] = bool(
+                human.mode == HumanMode.LISTENING
+                or (
+                    human.mode == HumanMode.DISTRACTED
+                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
+                )
             )
 
             action = None
@@ -1181,7 +1200,7 @@ class MuseumEnv(gym.Env):
         actual_yaw = float(ryaw)
 
         human_goals = self._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
-        human_reached_goal = self._check_human_goals(human_xy, human_goals, robot_xy=robot_xy)
+        human_reached_goal = self._check_human_goals(human_xy, human_goals, robot_xy=robot_xy, robot_yaw=ryaw)
         self._update_human_listening_session_progress(human_reached_goal)
 
         # Finish conditions
@@ -1369,7 +1388,7 @@ class MuseumEnv(gym.Env):
         self._maybe_sample_active_callback_response(events)
         self._resolve_completed_callback_cue(events)
 
-        # If robot just entered listen, assign listen targets
+        # If robot just entered listen, reset the ring-session bookkeeping
         if enter_listen:
             rx, ry, ryaw = robot_pose
             self.listen_reached_logged = set()
@@ -1381,7 +1400,7 @@ class MuseumEnv(gym.Env):
 
             self._log_event(
                 f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f}); "
-                f"humans will regulate to {self.listen_fan_radius:.2f}m around the robot."
+                f"humans will regulate to a {self.listen_fan_radius:.2f}m ring inside the front 160 deg sector."
             )
 
         # Apply robot action
@@ -1420,6 +1439,7 @@ class MuseumEnv(gym.Env):
             human_xy,
             human_goals,
             robot_xy=np.array([rx, ry], dtype=np.float32),
+            robot_yaw=ryaw,
         )
         self._update_human_listening_session_progress(human_reached_goal)
 
@@ -1516,6 +1536,7 @@ class MuseumEnv(gym.Env):
                 "repulsion": repulsion_vec,
                 "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
+                "listening_sector_half_angle": self.listen_front_sector_half_angle,
                 "dt": float(self.timestep),
             }
 
@@ -1560,6 +1581,13 @@ class MuseumEnv(gym.Env):
                 eligible_following=bool(impatient_following_eligible and human.mode == HumanMode.FOLLOWING),
                 robot_speed=robot_speed,
             )
+            ctx["enforce_listening_sector"] = bool(
+                human.mode == HumanMode.LISTENING
+                or (
+                    human.mode == HumanMode.DISTRACTED
+                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
+                )
+            )
 
             human_action = human.step(self.model, self.data, ctx)
             human_actions.append(human_action)
@@ -1585,14 +1613,21 @@ class MuseumEnv(gym.Env):
                 goals.append(np.array(human.current_waypoint, dtype=np.float32))
         return np.array(goals, dtype=np.float32)
 
-    def _check_human_goals(self, human_xy, human_goals, robot_xy=None):
-        """Return indices of humans that are within goal threshold or listening distance band."""
+    def _check_human_goals(self, human_xy, human_goals, robot_xy=None, robot_yaw=None):
+        """Return indices of humans that are within goal threshold or inside the listening ring sector."""
         human_reached_goal = []
         robot_xy_arr = None if robot_xy is None else np.array(robot_xy, dtype=np.float32)
         for i, (human, pos, goal) in enumerate(zip(self.humans, human_xy, human_goals)):
-            if human.mode == HumanMode.LISTENING and robot_xy_arr is not None:
+            if human.mode == HumanMode.LISTENING and robot_xy_arr is not None and robot_yaw is not None:
                 dist_to_robot = float(np.linalg.norm(pos - robot_xy_arr))
-                reached = abs(dist_to_robot - float(self.listen_fan_radius)) <= float(self.listen_stand_threshold)
+                in_ring = abs(dist_to_robot - float(self.listen_fan_radius)) <= float(self.listen_stand_threshold)
+                in_sector = self._is_human_in_listening_front_sector(
+                    human=human,
+                    pos_xy=pos,
+                    robot_xy=robot_xy_arr,
+                    robot_yaw=float(robot_yaw),
+                )
+                reached = bool(in_ring and in_sector)
             else:
                 dist_to_goal = float(np.linalg.norm(pos - goal))
                 reached = dist_to_goal < HUMAN_GOAL_THRESHOLD
@@ -1651,6 +1686,18 @@ class MuseumEnv(gym.Env):
             human_goals[:, 1] - human_xy[:, 1],
             human_goals[:, 0] - human_xy[:, 0],
         ).astype(np.float32)
+        human_in_listening_front_sector = np.array(
+            [
+                self._is_human_in_listening_front_sector(
+                    human=human,
+                    pos_xy=pos,
+                    robot_xy=np.array([rx, ry], dtype=np.float32),
+                    robot_yaw=float(actual_yaw),
+                )
+                for human, pos in zip(self.humans, human_xy)
+            ],
+            dtype=bool,
+        )
 
         return {
             "robot_xy": np.array([rx, ry], dtype=np.float32),
@@ -1677,6 +1724,7 @@ class MuseumEnv(gym.Env):
                 [h.following_low_robot_speed_steps for h in self.humans], dtype=np.int32
             ),
             "human_listening_steps": np.array([h.listening_steps for h in self.humans], dtype=np.int32),
+            "human_in_listening_front_sector": human_in_listening_front_sector,
             "human_distracted_source": [h.distracted_source for h in self.humans],
             "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
             "human_overwhelmed_leave_timer": np.array(
@@ -1853,6 +1901,7 @@ class MuseumEnv(gym.Env):
                 "following_steps": snapshot["human_following_steps"],
                 "following_low_robot_speed_steps": snapshot["human_following_low_robot_speed_steps"],
                 "listening_steps": snapshot["human_listening_steps"],
+                "in_listening_front_sector": snapshot["human_in_listening_front_sector"],
                 "distracted_source": snapshot["human_distracted_source"],
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],

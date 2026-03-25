@@ -257,6 +257,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -282,6 +284,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -290,7 +294,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_listening_freezes_translation_and_faces_robot_inside_distance_band(self):
+    def test_listening_on_ring_rotates_toward_robot_without_translation(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -307,6 +311,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "repulsion": np.zeros(2, dtype=np.float32),
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             rotate_action = human.step(env.model, env.data, ctx)
@@ -319,7 +325,136 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_listening_force_scales_with_radius_error(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=904)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            ctx = {
+                "robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(env.timestep),
+            }
+            self._set_human_pose(env, human, x=1.2, y=1.0, yaw=0.0)
+            near_action = human.step(env.model, env.data, ctx)
+            self._set_human_pose(env, human, x=3.0, y=1.0, yaw=0.0)
+            far_action = human.step(env.model, env.data, ctx)
+            self.assertGreater(abs(float(far_action[0])), abs(float(near_action[0])))
+        finally:
+            env.close()
+
+    def test_listening_sector_hard_constraint_keeps_next_step_in_front_sector(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=905)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            theta = env.listen_front_sector_half_angle - np.deg2rad(1.0)
+            pos = env.listen_fan_radius * np.array([np.cos(theta), np.sin(theta)], dtype=np.float32)
+            self._set_human_pose(env, human, x=float(pos[0]), y=float(pos[1]), yaw=0.0)
+            tangent = np.array([-np.sin(theta), np.cos(theta)], dtype=np.float32)
+            ctx = {
+                "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": 4.0 * tangent,
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(env.timestep),
+            }
+            action = human.step(env.model, env.data, ctx)
+            next_xy = pos + float(env.timestep) * action[:2]
+            self.assertTrue(
+                human.is_within_listening_front_sector(
+                    point_xy=next_xy,
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            )
+        finally:
+            env.close()
+
+    def test_listening_entry_correction_projects_pose_into_front_sector(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=906)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, human, x=-1.0, y=0.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(env.timestep),
+            }
+            human.step(env.model, env.data, ctx)
+            corrected_xy = np.array(env.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            self.assertTrue(
+                human.is_within_listening_front_sector(
+                    point_xy=corrected_xy,
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            )
+        finally:
+            env.close()
+
+    def test_listening_step_does_not_depend_on_current_waypoint(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=907)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, human, x=2.0, y=1.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(env.timestep),
+            }
+            human.current_waypoint = np.array([9.0, 9.0], dtype=np.float32)
+            action_a = human.step(env.model, env.data, ctx)
+            human.current_waypoint = np.array([1.0, -9.0], dtype=np.float32)
+            action_b = human.step(env.model, env.data, ctx)
+            np.testing.assert_allclose(action_a, action_b, atol=1e-6)
+        finally:
+            env.close()
+
     def test_hazard_config_helpers_preserve_validation_and_assignment(self):
+
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
         human.configure_distracted_follow_hazard(0.3, 4.0, 2.0)
         self.assertAlmostEqual(human.following_distracted_lambda_max_per_sec, 0.3)
@@ -1259,32 +1394,68 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_listening_goal_diagnostics_and_reached_rule_use_robot_distance_band(self):
+    def test_listening_front_sector_helper_matches_expected_angles(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
         try:
-            env.reset(seed=904)
+            env.reset(seed=908)
+            human = env.humans[0]
+            robot_xy = np.array([0.0, 0.0], dtype=np.float32)
+            self.assertTrue(
+                human.is_within_listening_front_sector(
+                    point_xy=np.array([1.0, 0.0], dtype=np.float32),
+                    robot_xy=robot_xy,
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            )
+            self.assertFalse(
+                human.is_within_listening_front_sector(
+                    point_xy=np.array([-1.0, 0.0], dtype=np.float32),
+                    robot_xy=robot_xy,
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            )
+        finally:
+            env.close()
+
+    def test_listening_goal_diagnostics_and_reached_rule_use_robot_ring_and_front_sector(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=909)
             robot_xy = np.array([2.0, 2.0], dtype=np.float32)
             env.robot.listen_mode = True
-            for idx, human in enumerate(env.humans[:2]):
-                human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
-                angle = float(idx) * np.pi
-                pos = robot_xy + env.listen_fan_radius * np.array([np.cos(angle), np.sin(angle)], dtype=np.float32)
-                self._set_human_pose(env, human, x=float(pos[0]), y=float(pos[1]), yaw=0.0)
+            front_human = env.humans[0]
+            back_human = env.humans[1]
+            front_human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            back_human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, front_human, x=3.0, y=2.0, yaw=0.0)
+            self._set_human_pose(env, back_human, x=1.0, y=2.0, yaw=0.0)
             human_xy = env._get_human_poses()[:, :2]
             human_goals = env._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
             np.testing.assert_allclose(human_goals[0], robot_xy, atol=1e-6)
             np.testing.assert_allclose(human_goals[1], robot_xy, atol=1e-6)
-            reached = env._check_human_goals(human_xy=human_xy, human_goals=human_goals, robot_xy=robot_xy)
+            reached = env._check_human_goals(
+                human_xy=human_xy,
+                human_goals=human_goals,
+                robot_xy=robot_xy,
+                robot_yaw=0.0,
+            )
             self.assertIn(0, reached)
-            self.assertIn(1, reached)
+            self.assertNotIn(1, reached)
         finally:
             env.close()
 
     def test_distracted_window_inactive_blocks_trigger_before_first_listen_complete(self):
+
         env = self._make_env(
             distracted_lambda_max_nd_per_sec=100.0,
             distracted_lambda_max_normal_per_sec=100.0,
