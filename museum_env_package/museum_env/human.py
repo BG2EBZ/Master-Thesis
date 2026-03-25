@@ -50,6 +50,10 @@ HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
 HR_REPULSION_GAIN = 4.0
 HR_ATTRACTION_GAIN = 2.0
+HR_REPULSION_GAIN_MID_DISTANCE = 1.2
+HR_REPULSION_GAIN_NEAR_DISTANCE = 0.8
+HR_REPULSION_GAIN_MID_MULTIPLIER = 4.0
+HR_REPULSION_GAIN_NEAR_MULTIPLIER = 100.0
 NORM_EPS = 1e-6
 ATTACK_DEFAULT_SPEED = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
@@ -738,6 +742,16 @@ class Human:
         )
         return self._compute_step_probability_from_lambda(lambda_t=lambda_t, dt_safe=dt_safe)
 
+    def _compute_distracted_follow_step_probability(
+        self,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+    ) -> float:
+        """Compatibility wrapper for follow-stage distracted trigger probability."""
+        return self._compute_distracted_step_probability(
+            source=DISTRACTED_SOURCE_FOLLOWING,
+            dt=dt,
+        )
+
     def _compute_impatient_follow_step_probability(
         self,
         dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
@@ -958,29 +972,75 @@ class Human:
         return self._move(dx, dy, yaw, data, ctx)
     
     def _step_listening(self, data, ctx):
-        """LISTENING: approach listen slot, then rotate to face robot."""
+        """LISTENING: regulate distance to robot, then stop and face it."""
         x, y, yaw = self._get_pose(data)
-        dx = self.current_waypoint[0] - x
-        dy = self.current_waypoint[1] - y
-        dist = np.hypot(dx, dy)
-
-        stand_threshold = ctx.get("stand_threshold", self.waypoint_threshold)
-
-        if dist >= stand_threshold:
-            return self._move(dx, dy, yaw, data, ctx)
-        
         robot_xy = ctx.get("robot_xy")
         if robot_xy is None:
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
             return np.zeros(3, dtype=np.float32)
-        
-        rx, ry = robot_xy[0], robot_xy[1]
-        desired_yaw = np.arctan2(ry - y, rx - x)
+
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        current_xy = np.array([x, y], dtype=np.float32)
+        to_robot = robot_xy - current_xy
+        dist_to_robot = float(np.linalg.norm(to_robot))
+        listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
+        stand_threshold = float(ctx.get("stand_threshold", self.waypoint_threshold))
+        desired_yaw = np.arctan2(to_robot[1], to_robot[0]) if dist_to_robot > NORM_EPS else float(
+            ctx.get("robot_yaw", yaw)
+        )
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
-        if abs(yaw_err) < np.deg2rad(HUMAN_ROTATION_STOP_DEG):
-            return np.zeros(3, dtype=np.float32)
-        
-        return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err])
+
+        # If within the stand threshold of the listen radius, stop and face the robot
+        if abs(dist_to_robot - listen_radius) <= stand_threshold:
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            if abs(yaw_err) < np.deg2rad(HUMAN_ROTATION_STOP_DEG):
+                return np.zeros(3, dtype=np.float32)
+            return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+
+        if dist_to_robot > (listen_radius + stand_threshold):
+            move_dir = to_robot / max(dist_to_robot, NORM_EPS)
+        else:
+            if dist_to_robot > NORM_EPS:
+                move_dir = -to_robot / dist_to_robot
+            else:
+                robot_yaw = float(ctx.get("robot_yaw", yaw))
+                move_dir = -np.array([np.cos(robot_yaw), np.sin(robot_yaw)], dtype=np.float32)
+
+        v_goal = self.max_speed * np.array(move_dir, dtype=np.float32)
+        v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
+        v_hr = np.zeros(2, dtype=np.float32)
+        if dist_to_robot < self.hr_distance_min:
+            if dist_to_robot > NORM_EPS:
+                hr_dir = -to_robot / dist_to_robot
+            else:
+                hr_dir = np.array(move_dir, dtype=np.float32)
+            hr_repulsion_gain = self._get_hr_repulsion_gain(dist_to_robot)
+            v_hr = hr_repulsion_gain * (self.hr_distance_min - dist_to_robot) * hr_dir
+
+        v_total = v_goal + v_repulsion + v_hr
+        speed = float(np.linalg.norm(v_total))
+        if speed > self.max_speed and speed > NORM_EPS:
+            v_total = v_total / speed * self.max_speed
+
+        self.last_v_follow = np.array(v_goal, dtype=np.float32)
+        self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
+        self.last_v_hr = np.array(v_hr, dtype=np.float32)
+        action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        return self._apply_wall_constraint_to_action(action, data, ctx)
+
+    @staticmethod
+    def _get_hr_repulsion_gain(dist_hr: float) -> float:
+        """Increase HR repulsion gain as the human gets very close to the robot."""
+        if dist_hr <= HR_REPULSION_GAIN_NEAR_DISTANCE:
+            return HR_REPULSION_GAIN * HR_REPULSION_GAIN_NEAR_MULTIPLIER
+        if dist_hr <= HR_REPULSION_GAIN_MID_DISTANCE:
+            return HR_REPULSION_GAIN * HR_REPULSION_GAIN_MID_MULTIPLIER
+        return HR_REPULSION_GAIN
     
     def _step_distracted(self, data, ctx):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
@@ -1239,7 +1299,8 @@ class Human:
             # preferred human–robot distance (meters)
             if dist_hr < self.hr_distance_min:
                 # too close → repulsion (slow down / move away)
-                v_hr = HR_REPULSION_GAIN * (self.hr_distance_min - dist_hr) * dir_hr
+                hr_repulsion_gain = self._get_hr_repulsion_gain(dist_hr)
+                v_hr = hr_repulsion_gain * (self.hr_distance_min - dist_hr) * dir_hr
 
             elif dist_hr > self.hr_distance_max:
                 # too far → attraction (move towards robot)

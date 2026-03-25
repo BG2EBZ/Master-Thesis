@@ -11,6 +11,10 @@ from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     HUMAN_WALL_FOOTPRINT_RADIUS,
+    ROOM_A_X_MAX as HUMAN_ROOM_A_X_MAX,
+    ROOM_A_X_MIN as HUMAN_ROOM_A_X_MIN,
+    ROOM_A_Y_MAX as HUMAN_ROOM_A_Y_MAX,
+    ROOM_A_Y_MIN as HUMAN_ROOM_A_Y_MIN,
     Human,
     HumanMode,
     HumanProfile,
@@ -41,6 +45,11 @@ FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
 LISTEN_FAN_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
+LISTENING_REPULSION_SCALE = 1.0
+ROOM_A_X_MIN = HUMAN_ROOM_A_X_MIN
+ROOM_A_X_MAX = HUMAN_ROOM_A_X_MAX
+ROOM_A_Y_MIN = HUMAN_ROOM_A_Y_MIN
+ROOM_A_Y_MAX = HUMAN_ROOM_A_Y_MAX
 LISTEN_WAIT_SECONDS_DEFAULT = 40.0
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
@@ -79,7 +88,6 @@ ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
 MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
 MAX_CONCURRENT_ATTACK_DEFAULT = 5
 
-# Numbers of humans
 MAX_HUMANS_CAPACITY = 15
 HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
 HUMAN_SPAWN_MIN_ROBOT_DISTANCE = SOCIAL_DISTANCE_DEFAULT
@@ -149,7 +157,7 @@ class MuseumEnv(gym.Env):
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
-        n_humans: int = 10,
+        n_humans: int = 15, # number of active humans
     ):
         """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
         super().__init__()
@@ -1051,6 +1059,7 @@ class MuseumEnv(gym.Env):
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
 
         robot_xy = np.array([rx, ry], dtype=np.float32)
+        repulsion_vectors = self._compute_social_repulsion(human_xy)
 
         # Check if any overwhelmed/attack triggers are activated
         overwhelmed_trigger_indices = self._maybe_trigger_overwhelmed_in_wait(
@@ -1070,10 +1079,16 @@ class MuseumEnv(gym.Env):
         rb_action = np.zeros(3, dtype=np.float32)
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         for idx, human in enumerate(self.humans):
+            repulsion_vec = repulsion_vectors[idx] if idx < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
+            if human.mode == HumanMode.LISTENING:
+                repulsion_vec = LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32)
+            else:
+                repulsion_vec = np.zeros(2, dtype=np.float32)
             ctx = {
                 "robot_xy": robot_xy,
                 "robot_yaw": ryaw,
-                "repulsion": np.zeros(2, dtype=np.float32),
+                "repulsion": np.array(repulsion_vec, dtype=np.float32),
+                "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
                 "dt": float(self.timestep),
             }
@@ -1165,8 +1180,8 @@ class MuseumEnv(gym.Env):
         desired_yaw = float(np.arctan2(wy - ry, wx - rx))
         actual_yaw = float(ryaw)
 
-        human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
-        human_reached_goal = self._check_human_goals(human_xy, human_goals)
+        human_goals = self._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
+        human_reached_goal = self._check_human_goals(human_xy, human_goals, robot_xy=robot_xy)
         self._update_human_listening_session_progress(human_reached_goal)
 
         # Finish conditions
@@ -1362,20 +1377,12 @@ class MuseumEnv(gym.Env):
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
             self.listen_session_count += 1
-            n_humans = len(self.humans)
             self._reset_human_listening_session_states()
 
-            self._log_event(f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f})")
-            for i, human in enumerate(self.humans):
-                human.assign_listen_target(
-                    index=i,
-                    n_humans=n_humans,
-                    robot_pose=(rx, ry, ryaw),
-                    listen_radius=self.listen_fan_radius,
-                    fan_half_angle=self.listen_fan_half_angle,
-                )
-                gx, gy = human.current_waypoint
-                self._log_event(f"    person{i+1} listen_goal=({gx:.3f}, {gy:.3f})")
+            self._log_event(
+                f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f}); "
+                f"humans will regulate to {self.listen_fan_radius:.2f}m around the robot."
+            )
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -1405,8 +1412,15 @@ class MuseumEnv(gym.Env):
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
 
-        human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
-        human_reached_goal = self._check_human_goals(human_xy, human_goals)
+        human_goals = self._build_human_goals(
+            human_xy=human_xy,
+            robot_xy=np.array([rx, ry], dtype=np.float32),
+        )
+        human_reached_goal = self._check_human_goals(
+            human_xy,
+            human_goals,
+            robot_xy=np.array([rx, ry], dtype=np.float32),
+        )
         self._update_human_listening_session_progress(human_reached_goal)
 
         human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
@@ -1500,6 +1514,7 @@ class MuseumEnv(gym.Env):
                 "robot_yaw": ryaw,
                 "robot_speed": robot_speed,
                 "repulsion": repulsion_vec,
+                "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
                 "dt": float(self.timestep),
             }
@@ -1512,6 +1527,8 @@ class MuseumEnv(gym.Env):
                     pass
                 elif human.mode != HumanMode.OVERWHELMED:
                     human.set_mode(HumanMode.LISTENING)
+                    repulsion_vec = LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32)
+                    ctx["repulsion"] = np.array(repulsion_vec, dtype=np.float32)
             else:
                 if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
                     human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
@@ -1554,12 +1571,33 @@ class MuseumEnv(gym.Env):
             return np.array(human_actions, dtype=np.float32)
         return np.zeros((0, 3), dtype=np.float32)
 
-    def _check_human_goals(self, human_xy, human_goals):
-        """Return indices of humans that are within goal threshold."""
+    def _build_human_goals(self, human_xy, robot_xy):
+        """Build goal-like diagnostics array while letting listening humans point at robot."""
+        if len(self.humans) == 0:
+            return np.zeros((0, 2), dtype=np.float32)
+
+        goals = []
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        for human in self.humans:
+            if human.mode == HumanMode.LISTENING:
+                goals.append(robot_xy.copy())
+            else:
+                goals.append(np.array(human.current_waypoint, dtype=np.float32))
+        return np.array(goals, dtype=np.float32)
+
+    def _check_human_goals(self, human_xy, human_goals, robot_xy=None):
+        """Return indices of humans that are within goal threshold or listening distance band."""
         human_reached_goal = []
-        for i, (pos, goal) in enumerate(zip(human_xy, human_goals)):
-            dist_to_goal = float(np.linalg.norm(pos - goal))
-            if dist_to_goal < HUMAN_GOAL_THRESHOLD:
+        robot_xy_arr = None if robot_xy is None else np.array(robot_xy, dtype=np.float32)
+        for i, (human, pos, goal) in enumerate(zip(self.humans, human_xy, human_goals)):
+            if human.mode == HumanMode.LISTENING and robot_xy_arr is not None:
+                dist_to_robot = float(np.linalg.norm(pos - robot_xy_arr))
+                reached = abs(dist_to_robot - float(self.listen_fan_radius)) <= float(self.listen_stand_threshold)
+            else:
+                dist_to_goal = float(np.linalg.norm(pos - goal))
+                reached = dist_to_goal < HUMAN_GOAL_THRESHOLD
+
+            if reached:
                 human_reached_goal.append(i)
                 if self.robot.listen_mode and i not in self.listen_reached_logged:
                     self.listen_reached_logged.add(i)

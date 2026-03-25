@@ -209,6 +209,143 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env_a.close()
             env_b.close()
 
+    def test_assign_target_from_context_matches_expected_follow_and_impatient_geometry(self):
+        human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
+        robot_pose = (4.0, 3.0, 0.25)
+        human.set_context(
+            index=1,
+            n_humans=3,
+            robot_pose=robot_pose,
+            follow_radius=1.5,
+            listen_radius=1.2,
+            fan_half_angle=np.deg2rad(60.0),
+            impatient_front_offset=2.0,
+        )
+
+        human._assign_target_from_context(mode=HumanMode.FOLLOWING)
+        expected_follow = Human._compute_fan_target(
+            robot_pose=robot_pose,
+            radius=1.5,
+            relative_angle=0.0,
+            base_angle_offset=np.pi,
+        )
+        np.testing.assert_allclose(human.current_waypoint, expected_follow, atol=1e-7)
+
+        human._assign_target_from_context(mode=HumanMode.IMPATIENT)
+        expected_impatient = Human._compute_fan_target(
+            robot_pose=robot_pose,
+            radius=2.0,
+            relative_angle=0.0,
+            base_angle_offset=0.0,
+        )
+        np.testing.assert_allclose(human.current_waypoint, expected_impatient, atol=1e-7)
+
+    def test_listening_moves_toward_robot_when_outside_distance_band(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=901)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, human, x=3.0, y=1.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "dt": float(env.timestep),
+            }
+            action = human.step(env.model, env.data, ctx)
+            self.assertLess(float(action[0]), 0.0)
+            self.assertAlmostEqual(float(action[1]), 0.0, delta=1e-6)
+        finally:
+            env.close()
+
+    def test_listening_moves_outward_when_inside_distance_band_core(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=902)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, human, x=0.5, y=1.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "dt": float(env.timestep),
+            }
+            action = human.step(env.model, env.data, ctx)
+            self.assertGreater(float(action[0]), 0.0)
+            self.assertAlmostEqual(float(action[1]), 0.0, delta=1e-6)
+        finally:
+            env.close()
+
+    def test_listening_freezes_translation_and_faces_robot_inside_distance_band(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=903)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_human_pose(env, human, x=1.0, y=1.0, yaw=np.pi / 2.0)
+            ctx = {
+                "robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "dt": float(env.timestep),
+            }
+            rotate_action = human.step(env.model, env.data, ctx)
+            np.testing.assert_allclose(rotate_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+            self.assertGreater(abs(float(rotate_action[2])), 0.0)
+
+            self._set_human_pose(env, human, x=1.0, y=1.0, yaw=np.pi)
+            stop_action = human.step(env.model, env.data, ctx)
+            np.testing.assert_allclose(stop_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+        finally:
+            env.close()
+
+    def test_hazard_config_helpers_preserve_validation_and_assignment(self):
+        human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
+        human.configure_distracted_follow_hazard(0.3, 4.0, 2.0)
+        self.assertAlmostEqual(human.following_distracted_lambda_max_per_sec, 0.3)
+        self.assertAlmostEqual(human.following_distracted_ramp_start_seconds, 4.0)
+        self.assertAlmostEqual(human.following_distracted_rise_seconds, 2.0)
+
+        human.configure_distracted_listening_hazard(0.2, 5.0, 3.0)
+        self.assertAlmostEqual(human.listening_distracted_lambda_max_per_sec, 0.2)
+        self.assertAlmostEqual(human.listening_distracted_ramp_start_seconds, 5.0)
+        self.assertAlmostEqual(human.listening_distracted_rise_seconds, 3.0)
+
+        human.configure_impatient_follow_hazard(0.4, 6.0, 2.5, 0.35)
+        self.assertAlmostEqual(human.following_impatient_lambda_max_per_sec, 0.4)
+        self.assertAlmostEqual(human.following_impatient_ramp_start_seconds, 6.0)
+        self.assertAlmostEqual(human.following_impatient_rise_seconds, 2.5)
+        self.assertAlmostEqual(human.following_impatient_robot_speed_threshold, 0.35)
+
+        with self.assertRaises(ValueError):
+            human.configure_distracted_follow_hazard(-0.1, 1.0, 1.0)
+        with self.assertRaises(ValueError):
+            human.configure_distracted_listening_hazard(0.1, -1.0, 1.0)
+        with self.assertRaises(ValueError):
+            human.configure_impatient_follow_hazard(0.1, 1.0, 0.0, 0.2)
+        with self.assertRaises(ValueError):
+            human.configure_impatient_follow_hazard(0.1, 1.0, 1.0, 0.0)
+
     def test_inactive_humans_are_parked_outside_scene_and_excluded_from_info(self):
         env = self._make_env(
             n_humans=10,
@@ -1119,6 +1256,31 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             dt = float(env.timestep)
             for human in env.humans:
                 self.assertEqual(human._maybe_trigger_following_variant(dt=dt), HumanMode.IMPATIENT)
+        finally:
+            env.close()
+
+    def test_listening_goal_diagnostics_and_reached_rule_use_robot_distance_band(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=904)
+            robot_xy = np.array([2.0, 2.0], dtype=np.float32)
+            env.robot.listen_mode = True
+            for idx, human in enumerate(env.humans[:2]):
+                human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+                angle = float(idx) * np.pi
+                pos = robot_xy + env.listen_fan_radius * np.array([np.cos(angle), np.sin(angle)], dtype=np.float32)
+                self._set_human_pose(env, human, x=float(pos[0]), y=float(pos[1]), yaw=0.0)
+            human_xy = env._get_human_poses()[:, :2]
+            human_goals = env._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
+            np.testing.assert_allclose(human_goals[0], robot_xy, atol=1e-6)
+            np.testing.assert_allclose(human_goals[1], robot_xy, atol=1e-6)
+            reached = env._check_human_goals(human_xy=human_xy, human_goals=human_goals, robot_xy=robot_xy)
+            self.assertIn(0, reached)
+            self.assertIn(1, reached)
         finally:
             env.close()
 
