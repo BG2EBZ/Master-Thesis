@@ -65,6 +65,18 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         if human.body_id is None:
             human.body_id = env.model.body(human.body_name).id
 
+    def _set_robot_pose(self, env, x, y, yaw):
+        current_world_x, current_world_y, _ = env._get_robot_pose()
+        current_qpos_x = float(env.data.qpos[0])
+        current_qpos_y = float(env.data.qpos[1])
+        base_offset = np.array(
+            [current_world_x - current_qpos_x, current_world_y - current_qpos_y],
+            dtype=np.float32,
+        )
+        env.data.qpos[0:2] = np.array([x, y], dtype=np.float32) - base_offset
+        env.data.qpos[2] = float(yaw)
+        mujoco.mj_forward(env.model, env.data)
+
     def _assert_pairwise_distance(self, xy_points, min_distance, tol=1e-6):
         for idx in range(len(xy_points)):
             for jdx in range(idx + 1, len(xy_points)):
@@ -1181,7 +1193,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             }
             action = human.step(env.model, env.data, ctx)
             self.assertEqual(human.mode, HumanMode.DISTRACTED)
-            self.assertIsNone(human.callback_response_mode)
             self.assertGreater(float(np.linalg.norm(action[:2])), 0.0)
 
             human.distracted_stop_reached = True
@@ -1428,7 +1439,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_listening_goal_diagnostics_and_reached_rule_use_robot_ring_and_front_sector(self):
+    def test_turn_to_display_uses_fixed_180_degree_target(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -1436,26 +1447,89 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         )
         try:
             env.reset(seed=909)
-            robot_xy = np.array([2.0, 2.0], dtype=np.float32)
-            env.robot.listen_mode = True
-            front_human = env.humans[0]
-            back_human = env.humans[1]
-            front_human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
-            back_human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
-            self._set_human_pose(env, front_human, x=3.0, y=2.0, yaw=0.0)
-            self._set_human_pose(env, back_human, x=1.0, y=2.0, yaw=0.0)
-            human_xy = env._get_human_poses()[:, :2]
-            human_goals = env._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
-            np.testing.assert_allclose(human_goals[0], robot_xy, atol=1e-6)
-            np.testing.assert_allclose(human_goals[1], robot_xy, atol=1e-6)
-            reached = env._check_human_goals(
-                human_xy=human_xy,
-                human_goals=human_goals,
-                robot_xy=robot_xy,
-                robot_yaw=0.0,
+            env.robot.turn_target_yaw = None
+            env.robot.turn_done = False
+            action = env.robot._turn_to_crowd_action(
+                robot_pose=(2.0, 2.0, np.pi / 2.0),
+                human_xyz=np.array([[4.0, 2.0, 0.0], [4.0, 3.0, 0.0]], dtype=np.float32),
             )
-            self.assertIn(0, reached)
-            self.assertNotIn(1, reached)
+            expected_target = env.robot._wrap_to_pi((np.pi / 2.0) + np.pi)
+            self.assertAlmostEqual(env.robot.turn_target_yaw, expected_target, places=6)
+            self.assertLess(float(action[2]), 0.0)
+        finally:
+            env.close()
+
+    def test_entering_listen_starts_intro_delay_and_defers_speaker(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=907)
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = False
+            env.robot.listen_done = False
+            env.robot.turn_done = True
+            self._set_robot_pose(env, x=1.0, y=5.0, yaw=0.0)
+            self._set_human_pose(env, env.humans[0], x=0.0, y=5.0, yaw=0.0)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertTrue(info["events"]["entered_listen"])
+            self.assertFalse(info["events"]["started_listen_wait"])
+            self.assertTrue(info["status"]["listen_mode"])
+            self.assertTrue(info["status"]["listen_intro_delay"]["active"])
+            self.assertEqual(info["status"]["listen_intro_delay"]["counter"], 1)
+            self.assertEqual(info["status"]["listen_intro_delay"]["steps"], env.listen_intro_delay_steps)
+            self.assertEqual(
+                info["status"]["listen_intro_delay"]["remaining"],
+                env.listen_intro_delay_steps - 1,
+            )
+            self.assertFalse(info["status"]["listen_wait"]["active"])
+            self.assertFalse(info["status"]["speaker_active"])
+            self.assertEqual(info["humans"]["mode"][0], HumanMode.LISTENING)
+        finally:
+            env.close()
+
+    def test_intro_delay_keeps_listening_humans_moving_and_then_starts_wait(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=908)
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = False
+            env.robot.listen_done = False
+            env.robot.turn_done = True
+            human = env.humans[0]
+            self._set_robot_pose(env, x=1.0, y=5.0, yaw=0.0)
+            self._set_human_pose(env, human, x=0.0, y=5.0, yaw=0.0)
+            before_xy = np.array(env._get_human_poses()[0, :2], dtype=np.float32)
+
+            _, _, _, _, info = env.step(None)
+
+            after_xy = np.array(info["humans"]["pose_xy"][0], dtype=np.float32)
+            self.assertTrue(info["status"]["listen_intro_delay"]["active"])
+            self.assertFalse(info["status"]["listen_wait"]["active"])
+            self.assertGreater(
+                float(np.linalg.norm(after_xy - before_xy)),
+                0.0,
+            )
+
+            remaining_intro_steps = int(info["status"]["listen_intro_delay"]["remaining"])
+            for _ in range(max(0, remaining_intro_steps - 1)):
+                _, _, _, _, info = env.step(None)
+                self.assertFalse(info["events"]["started_listen_wait"])
+                self.assertTrue(info["status"]["listen_intro_delay"]["active"])
+
+            _, _, _, _, final_info = env.step(None)
+            self.assertTrue(final_info["events"]["started_listen_wait"])
+            self.assertFalse(final_info["status"]["listen_intro_delay"]["active"])
+            self.assertTrue(final_info["status"]["listen_wait"]["active"])
+            self.assertTrue(final_info["status"]["speaker_active"])
         finally:
             env.close()
 
@@ -1558,75 +1632,92 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_overwhelmed_only_triggers_in_wait_window(self):
+    def test_wait_window_keeps_minimal_listening_mode_without_wait_hazards(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=1.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=13)
-            _, _, _, _, info = env.step(None)
-            self.assertFalse(info["events"]["overwhelmed_triggered"])
-            self.assertEqual(info["status"]["last_overwhelmed_trigger_indices"], [])
-
-            env.listen_wait_active = True
-            _, _, _, _, info = env.step(None)
-            self.assertTrue(info["events"]["overwhelmed_triggered"])
-            self.assertGreater(len(info["status"]["last_overwhelmed_trigger_indices"]), 0)
-        finally:
-            env.close()
-
-    def test_attack_only_triggers_in_wait_window(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=1.0,
-        )
-        try:
-            env.reset(seed=14)
-            _, _, _, _, info = env.step(None)
-            self.assertFalse(info["events"]["attack_triggered"])
-            self.assertEqual(info["status"]["last_attack_trigger_indices"], [])
-
-            env.listen_wait_active = True
-            _, _, _, _, info = env.step(None)
-            self.assertTrue(info["events"]["attack_triggered"])
-            self.assertGreater(len(info["status"]["last_attack_trigger_indices"]), 0)
-        finally:
-            env.close()
-
-    def test_fixed_cap_five_for_overwhelmed(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=1.0,
-            attack_wait_trigger_prob=0.0,
         )
         try:
             env.reset(seed=15)
+            env.robot.listen_mode = True
             env.listen_wait_active = True
+            env.listen_wait_counter = 0
+            env.listen_wait_is_final = False
+            env.robot.mode = "stop"
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(env.max_concurrent_overwhelmed, 5)
-            self.assertLessEqual(len(info["status"]["active_overwhelmed_indices"]), 5)
-            self.assertEqual(len(info["status"]["last_overwhelmed_trigger_indices"]), 5)
+            self.assertFalse(info["events"]["overwhelmed_triggered"])
+            self.assertFalse(info["events"]["attack_triggered"])
+            self.assertFalse(info["events"]["fear_triggered"])
+            self.assertFalse(info["events"]["move_back_triggered"])
+            self.assertEqual(info["status"]["last_overwhelmed_trigger_indices"], [])
+            self.assertEqual(info["status"]["last_attack_trigger_indices"], [])
+            self.assertEqual(info["status"]["active_overwhelmed_indices"], [])
+            self.assertEqual(info["status"]["active_attack_indices"], [])
+            self.assertTrue(all(mode == HumanMode.LISTENING for mode in info["humans"]["mode"]))
         finally:
             env.close()
 
-    def test_fixed_cap_five_for_attack(self):
+    def test_nonfinal_listen_wait_completes_without_all_humans_reached(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=1.0,
+            attack_wait_trigger_prob=0.0,
         )
         try:
-            env.reset(seed=16)
+            env.reset(seed=17)
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = True
+            env.robot.listen_done = False
             env.listen_wait_active = True
-            _, _, _, _, info = env.step(None)
+            env.listen_wait_counter = env.listen_wait_steps - 1
+            env.listen_wait_is_final = False
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+            self._set_human_pose(env, human, x=1.0, y=2.0, yaw=0.0)
 
-            self.assertEqual(env.max_concurrent_attack, 5)
-            self.assertLessEqual(len(info["status"]["active_attack_indices"]), 5)
-            self.assertEqual(len(info["status"]["last_attack_trigger_indices"]), 5)
+            _, _, terminated, truncated, info = env.step(None)
+
+            self.assertFalse(terminated)
+            self.assertFalse(truncated)
+            self.assertTrue(info["events"]["completed_listen_wait"])
+            self.assertFalse(info["events"]["final_listen_ready"])
+            self.assertFalse(info["status"]["listen_mode"])
+            self.assertFalse(info["status"]["listen_wait"]["active"])
+            self.assertTrue(env.robot.listen_done)
+        finally:
+            env.close()
+
+    def test_final_listen_wait_terminates_without_all_humans_reached(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=18)
+            env.robot.current_waypoint_idx = len(env.robot.waypoints) - 1
+            env.robot.listen_mode = True
+            env.robot.listen_done = True
+            env.listen_wait_active = True
+            env.listen_wait_counter = env.listen_wait_steps - 1
+            env.listen_wait_is_final = True
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_final_listening_wait")
+            self._set_robot_pose(env, x=11.0, y=-12.5, yaw=0.0)
+            self._set_human_pose(env, human, x=10.0, y=-12.5, yaw=0.0)
+
+            _, _, terminated, truncated, info = env.step(None)
+
+            self.assertTrue(terminated)
+            self.assertFalse(truncated)
+            self.assertTrue(info["events"]["completed_listen_wait"])
+            self.assertTrue(info["events"]["final_listen_ready"])
+            self.assertTrue(info["status"]["terminated_reason"] == "final_listen_ready")
         finally:
             env.close()
 

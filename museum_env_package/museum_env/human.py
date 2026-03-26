@@ -143,8 +143,6 @@ class Human:
         self.max_speed = float(max_speed)
         self.base_max_speed = float(max_speed)
         self.waypoint_threshold = waypoint_threshold
-        # If True, current_waypoint is managed externally (e.g., follow robot)
-        self.external_waypoint = False
         setattr(self, "mode", None)
 
         self.context = HumanContext()
@@ -173,7 +171,6 @@ class Human:
             max_duration_seconds=self.max_distracted_duration_seconds,
             dt=DEFAULT_SIM_TIMESTEP_SECONDS,
         )
-        self.callback_response_mode = None
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
@@ -184,7 +181,6 @@ class Human:
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
-        self.following_impatient_probability = 0.0
         self.following_low_robot_speed_steps = 0
         self.following_impatient_lambda_max_per_sec = IMPATIENT_LAMBDA_MAX_PER_SEC_DEFAULT
         self.following_impatient_ramp_start_seconds = IMPATIENT_RAMP_START_SECONDS_DEFAULT
@@ -198,7 +194,6 @@ class Human:
         self.following_distracted_window_active = False
         self.listening_steps = 0
         self.listening_started_this_session = False
-        self.listening_target_reached_once = False
         self.listening_distracted_window_active = False
         self.listening_distracted_lambda_max_per_sec = LISTENING_DISTRACTED_LAMBDA_MAX_PER_SEC_DEFAULT
         self.listening_distracted_ramp_start_seconds = LISTENING_DISTRACTED_RAMP_START_SECONDS_DEFAULT
@@ -254,7 +249,6 @@ class Human:
             self._stop_impatient()
         if prev_mode == HumanMode.DISTRACTED and next_mode != HumanMode.DISTRACTED:
             self.distracted_timer = 0
-            self._clear_callback_response_state()
             self._clear_distracted_navigation_state()
             self.distracted_source = None
         if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
@@ -269,7 +263,6 @@ class Human:
         """Run initialization hooks when entering a mode."""
         if next_mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
-            self._clear_callback_response_state()
             self._clear_distracted_navigation_state()
         if next_mode == HumanMode.ATTACK:
             self.attack_hit_this_step = False
@@ -302,13 +295,11 @@ class Human:
     def reset_episode_state(self):
         """Reset per-episode dynamic state while keeping static config."""
         self.step_count = 0
-        self.external_waypoint = False
         self.transition_to(HumanMode.WANDERING, reason="episode_reset", force=True)
         self.context = HumanContext()
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
-        self._clear_callback_response_state()
         self._clear_distracted_navigation_state()
 
         self.impatient_timer = 0
@@ -368,14 +359,9 @@ class Human:
         """Reset per-session listening hazard state."""
         self.listening_steps = 0
         self.listening_started_this_session = False
-        self.listening_target_reached_once = False
         self.listening_distracted_window_active = False
         self.listening_distracted_move_elapsed_steps = 0
         self.listening_distracted_hold_until_session_end = False
-
-    def set_listening_distracted_window_active(self, active: bool):
-        """Tell the human whether listening->distracted hazard should be active now."""
-        self.listening_distracted_window_active = bool(active)
 
     def configure_distracted_duration(
         self,
@@ -409,14 +395,12 @@ class Human:
             return
         self.following_low_robot_speed_steps += 1
 
-    def update_listening_session_progress(self, reached_target: bool):
-        """Accumulate listening duration from first target reach until session end."""
-        if reached_target and not self.listening_target_reached_once:
-            self.listening_target_reached_once = True
-            self.listening_started_this_session = True
-
-        if self.listening_started_this_session:
-            self.listening_steps += 1
+    def update_listening_session_progress(self, active: bool):
+        """Accumulate listening duration for the active listening session."""
+        if not active:
+            return
+        self.listening_started_this_session = True
+        self.listening_steps += 1
 
     @staticmethod
     def _normalize_hazard_parameters(
@@ -588,10 +572,6 @@ class Human:
             self.max_speed = float(self.base_max_speed)
         self.impatient_original_max_speed = None
         self.impatient_timer = 0
-
-    def _clear_callback_response_state(self):
-        """Clear temporary state used by callback responses in distracted mode."""
-        self.callback_response_mode = None
 
     def _clear_distracted_navigation_state(self):
         """Clear one-shot distracted target state for the current episode/mode."""
@@ -793,22 +773,6 @@ class Human:
             return HumanMode.DISTRACTED
         return None
 
-    def _maybe_trigger_distracted_listening_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
-        """Sample whether LISTENING should switch to DISTRACTED at this step."""
-        step_prob = self._compute_distracted_step_probability(
-            source=DISTRACTED_SOURCE_LISTENING,
-            dt=dt,
-        )
-        trigger_distracted = (
-            self.listening_distracted_window_active
-            and (not self.listening_distracted_hold_until_session_end)
-            and step_prob > 0.0
-            and np.random.rand() < step_prob
-        )
-        if trigger_distracted:
-            return HumanMode.DISTRACTED
-        return None
-
     def _maybe_trigger_impatient_following_variant(self, dt: float = DEFAULT_SIM_TIMESTEP_SECONDS):
         """Sample whether FOLLOWING should switch to IMPATIENT at this step."""
         step_prob = self._compute_impatient_follow_step_probability(dt=dt)
@@ -924,15 +888,6 @@ class Human:
             return self._step_following(data, ctx)
 
         if self.mode == HumanMode.LISTENING:
-            variant = self._maybe_trigger_distracted_listening_variant(
-                dt=float(ctx.get("dt", DEFAULT_SIM_TIMESTEP_SECONDS))
-            )
-            if variant == HumanMode.DISTRACTED:
-                self.distracted_source = DISTRACTED_SOURCE_LISTENING
-                self.listening_distracted_hold_until_session_end = True
-                self.transition_to(HumanMode.DISTRACTED, reason="listening_variant_distracted")
-                self._log_event(f">>> {self.name} became DISTRACTED during LISTENING!")
-                return self._step_distracted(data, ctx)
             return self._step_listening(data, ctx)
         
         if self.mode == HumanMode.DISTRACTED:

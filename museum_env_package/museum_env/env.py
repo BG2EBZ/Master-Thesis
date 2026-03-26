@@ -42,7 +42,9 @@ LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 80.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
-LISTEN_WAIT_SECONDS_DEFAULT = 40.0
+LISTEN_REACHED_MIN_DISTANCE = 0.8
+LISTEN_INTRO_DELAY_SECONDS_DEFAULT = 3.0
+LISTEN_WAIT_SECONDS_DEFAULT = 10.0
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.00
@@ -212,15 +214,21 @@ class MuseumEnv(gym.Env):
         self.listen_front_sector_half_angle = np.deg2rad(LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG)
         self.listen_fan_radius = LISTEN_FAN_RADIUS_DEFAULT
         self.listen_stand_threshold = LISTEN_STAND_THRESHOLD_DEFAULT
-        self.listen_reached_logged = set()
 
-        # Listening wait window
+        # Listening intro delay + wait window
+        self.listen_intro_delay_seconds = float(LISTEN_INTRO_DELAY_SECONDS_DEFAULT)
+        self.listen_intro_delay_steps = max(
+            1,
+            int(round(self.listen_intro_delay_seconds / float(self.timestep))),
+        )
+        self.listen_intro_delay_active = False
+        self.listen_intro_delay_counter = 0
+        self.listen_intro_delay_is_final = False
         self.listen_wait_seconds = float(LISTEN_WAIT_SECONDS_DEFAULT)
         self.listen_wait_steps = max(1, int(round(self.listen_wait_seconds / float(self.timestep))))
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
-        self.listen_session_count = 0
         self.distracted_lambda_max_nd_per_sec = float(distracted_lambda_max_nd_per_sec)
         self.distracted_lambda_max_normal_per_sec = float(distracted_lambda_max_normal_per_sec)
         self.distracted_ramp_start_nd_seconds = float(distracted_ramp_start_nd_seconds)
@@ -298,7 +306,6 @@ class MuseumEnv(gym.Env):
         ]
         self.humans = []
         for human in self.all_humans:
-            human.external_waypoint = False
             human.set_mode(HumanMode.WANDERING)
             human.set_event_logging(self.enable_event_logs)
         self._set_active_humans(self.n_humans)
@@ -460,19 +467,6 @@ class MuseumEnv(gym.Env):
             and (not self.listen_wait_active)
         )
 
-    def _is_listening_session_active(self):
-        """Return whether a listening session is currently active."""
-        return bool(self.robot.listen_mode or self.listen_wait_active)
-
-    @staticmethod
-    def _is_listening_distracted_window_active_for_human(human) -> bool:
-        """Return whether this human may trigger listening-stage distraction now."""
-        return bool(
-            human.mode == HumanMode.LISTENING
-            and human.listening_target_reached_once
-            and (not human.listening_distracted_hold_until_session_end)
-        )
-
     def _is_human_in_listening_front_sector(self, human, pos_xy, robot_xy, robot_yaw: float) -> bool:
         """Return whether one human position lies inside the robot-front listening sector."""
         return bool(
@@ -484,27 +478,18 @@ class MuseumEnv(gym.Env):
             )
         )
 
-    def _reset_human_listening_session_states(self, recover_distracted=False, human_xy=None):
-        """Clear per-session listening state and optionally recover listening-source distraction."""
-        for idx, human in enumerate(self.humans):
-            if (
-                recover_distracted
-                and human.mode == HumanMode.DISTRACTED
-                and human.distracted_source == DISTRACTED_SOURCE_LISTENING
-            ):
-                if human_xy is not None and idx < human_xy.shape[0]:
-                    human.current_waypoint = np.array(human_xy[idx], dtype=np.float32)
-                human.transition_to(HumanMode.LISTENING, reason="listening_session_end_recover")
+    def _reset_human_listening_session_states(self):
+        """Clear per-session listening counters and flags."""
+        for human in self.humans:
             human.reset_listening_session_state()
 
-    def _update_human_listening_session_progress(self, human_reached_goal):
-        """Advance per-human listening counters once a listening session is active."""
-        if not self._is_listening_session_active():
+    def _update_human_listening_session_progress(self):
+        """Advance per-human listening counters while the listening session is active."""
+        if not (self.robot.listen_mode or self.listen_wait_active):
             return
 
-        reached_set = {int(idx) for idx in human_reached_goal}
-        for idx, human in enumerate(self.humans):
-            human.update_listening_session_progress(reached_target=(idx in reached_set))
+        for human in self.humans:
+            human.update_listening_session_progress(active=(human.mode == HumanMode.LISTENING))
 
     def _build_label_scene_option(self):
         """Create MuJoCo scene option object used to toggle site text labels."""
@@ -999,11 +984,12 @@ class MuseumEnv(gym.Env):
         self.follow_humans = False
 
         # Reset listening state
-        self.listen_reached_logged = set()
+        self.listen_intro_delay_active = False
+        self.listen_intro_delay_counter = 0
+        self.listen_intro_delay_is_final = False
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
-        self.listen_session_count = 0
         self.attack_hit_once = False
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
@@ -1053,133 +1039,28 @@ class MuseumEnv(gym.Env):
 
     def _step_waiting_branch(self, external_action_received=False):
         """Step branch used during listening wait window (explanation phase)."""
-        # Branch used during explanation wait window after entering listening state.
-        # Listening humans stay active here so listening-stage hazard can still fire.
         events = self._default_events()
+        self.last_overwhelmed_trigger_indices = []
+        self.last_attack_trigger_indices = []
+        self.move_back_active = False
+        self.move_back_attacker_idx = None
 
         rx, ry, ryaw = self._get_robot_pose()
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
-
-        robot_xy = np.array([rx, ry], dtype=np.float32)
         repulsion_vectors = self._compute_social_repulsion(human_xy)
-
-        # Check if any overwhelmed/attack triggers are activated
-        overwhelmed_trigger_indices = self._maybe_trigger_overwhelmed_in_wait(
-            robot_xy=robot_xy,
-            human_xy=human_xy,
-        )
-        attack_trigger_indices = self._maybe_trigger_attack_in_wait(
-            robot_xy=robot_xy,
-            human_xy=human_xy,
-        )
-        self.last_overwhelmed_trigger_indices = list(overwhelmed_trigger_indices)
-        self.last_attack_trigger_indices = list(attack_trigger_indices)
-        events["overwhelmed_triggered"] = len(overwhelmed_trigger_indices) > 0
-        events["attack_triggered"] = len(attack_trigger_indices) > 0
-
-        # Update robot emotion and visuals based on any new attack threats
         self.data.ctrl[:] = 0.0
         rb_action = np.zeros(3, dtype=np.float32)
-        human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
-        for idx, human in enumerate(self.humans):
-            repulsion_vec = repulsion_vectors[idx] if idx < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            if human.mode == HumanMode.LISTENING:
-                repulsion_vec = LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32)
-            else:
-                repulsion_vec = np.zeros(2, dtype=np.float32)
-            ctx = {
-                "robot_xy": robot_xy,
-                "robot_yaw": ryaw,
-                "repulsion": np.array(repulsion_vec, dtype=np.float32),
-                "listen_radius": self.listen_fan_radius,
-                "stand_threshold": self.listen_stand_threshold,
-                "listening_sector_half_angle": self.listen_front_sector_half_angle,
-                "dt": float(self.timestep),
-            }
-
-            human.set_following_distracted_window_active(False)
-            human.set_listening_distracted_window_active(
-                self._is_listening_distracted_window_active_for_human(human)
-            )
-            ctx["enforce_listening_sector"] = bool(
-                human.mode == HumanMode.LISTENING
-                or (
-                    human.mode == HumanMode.DISTRACTED
-                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
-                )
-            )
-
-            action = None
-            if human.mode == HumanMode.OVERWHELMED:
-                action = human.step(self.model, self.data, ctx)
-            if human.mode == HumanMode.ATTACK:
-                should_stay_freeze = bool(
-                    self.fear_active
-                    and self.fear_current_response_mode == "stay"
-                    and self.fear_current_response_target_idx == idx
-                )
-                if should_stay_freeze:
-                    action = np.zeros(3, dtype=np.float32)
-                    human.attack_hit_this_step = False
-                    human.last_v_follow = np.zeros(2, dtype=np.float32)
-                    human.last_v_repulsion = np.zeros(2, dtype=np.float32)
-                    human.last_v_hr = np.zeros(2, dtype=np.float32)
-                else:
-                    action = human.step(self.model, self.data, ctx)
-                    if human.attack_hit_this_step and not self.attack_hit_once:
-                        events["attack_hit"] = True
-                        self.attack_hit_once = True
-            elif human.mode == HumanMode.LISTENING:
-                action = human.step(self.model, self.data, ctx)
-            elif (
-                human.mode == HumanMode.DISTRACTED
-                and human.distracted_source == DISTRACTED_SOURCE_LISTENING
-            ):
-                action = human.step(self.model, self.data, ctx)
-
-            if action is None:
-                continue
-
-            human_actions[idx] = action
-            ctrl_idx = 3 + idx * 3
-            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
-
-        # Check move back policy availability and apply if active
-        move_back_was_active = bool(self.move_back_active)
-        threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
-        if threat is None:
-            self.move_back_active = False
-            self.move_back_attacker_idx = None
-            self.robot.mode = RobotMode.STOP
-            if move_back_was_active:
-                events["move_back_completed"] = True
-                self._log_event(">>> Robot MOVE_BACK completed (attack ended).")
-        elif threat["dist"] < MOVE_BACK_SAFE_DISTANCE:
-            self.move_back_active = True
-            self.move_back_attacker_idx = int(threat["idx"])
-            self.robot.mode = RobotMode.MOVE_BACK
-            rb_action = self._compute_move_back_action(robot_xy=robot_xy, threat_xy=threat["xy"])
-            if not move_back_was_active:
-                events["move_back_triggered"] = True
-                self._log_event(
-                    f">>> Robot MOVE_BACK triggered by person{self.move_back_attacker_idx + 1} "
-                    f"(dist={threat['dist']:.3f}m)."
-                )
-        else:
-            # Attack is ongoing but safety distance is satisfied: hold position.
-            if move_back_was_active:
-                self.move_back_active = True
-                self.move_back_attacker_idx = int(threat["idx"])
-                self.robot.mode = RobotMode.MOVE_BACK
-            else:
-                self.move_back_active = False
-                self.move_back_attacker_idx = None
-                self.robot.mode = RobotMode.STOP
+        human_actions = self._update_listening_humans_and_apply_ctrl(
+            rx=rx,
+            ry=ry,
+            ryaw=ryaw,
+            repulsion_vectors=repulsion_vectors,
+        )
+        self.robot.mode = RobotMode.STOP
 
         self.data.ctrl[0:3] = rb_action
 
-        # Mujoco step update
         mujoco.mj_step(self.model, self.data)
         self.listen_wait_counter += 1
 
@@ -1193,11 +1074,11 @@ class MuseumEnv(gym.Env):
         desired_yaw = float(np.arctan2(wy - ry, wx - rx))
         actual_yaw = float(ryaw)
 
+        robot_xy = np.array([rx, ry], dtype=np.float32)
         human_goals = self._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
         human_reached_goal = self._check_human_goals(human_xy, human_goals, robot_xy=robot_xy, robot_yaw=ryaw)
-        self._update_human_listening_session_progress(human_reached_goal)
+        self._update_human_listening_session_progress()
 
-        # Finish conditions
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
 
@@ -1212,15 +1093,10 @@ class MuseumEnv(gym.Env):
                 self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
                 self._log_event(">>> Listening wait complete. Resume MOVE to Room B.")
 
-            if self.move_back_active:
-                events["move_back_completed"] = True
-            self.move_back_active = False
-            self.move_back_attacker_idx = None
-
-            self._reset_human_listening_session_states(
-                recover_distracted=True,
-                human_xy=human_xy,
-            )
+            self.listen_intro_delay_active = False
+            self.listen_intro_delay_counter = 0
+            self.listen_intro_delay_is_final = False
+            self._reset_human_listening_session_states()
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
@@ -1232,15 +1108,13 @@ class MuseumEnv(gym.Env):
             robot_xy=np.array([rx, ry], dtype=np.float32),
             human_xy=human_xy,
         )
-        self._apply_fear_response_on_trigger(events)
-        self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
-        human_v_follow = np.zeros((len(self.humans), 2), dtype=np.float32)
-        human_v_repulsion = np.zeros((len(self.humans), 2), dtype=np.float32)
-        human_v_hr = np.zeros((len(self.humans), 2), dtype=np.float32)
+        human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
+        human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
+        human_v_hr = np.array([h.last_v_hr for h in self.humans], dtype=np.float32)
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -1269,76 +1143,6 @@ class MuseumEnv(gym.Env):
             external_action_received=external_action_received,
             external_action_used=False,
         )
-
-    def _maybe_trigger_overwhelmed_in_wait(self, robot_xy, human_xy):
-        """Sample new overwhelmed humans during wait branch with concurrency cap."""
-        active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED]
-        slots = int(self.max_concurrent_overwhelmed) - len(active_indices)
-        if slots <= 0:
-            return []
-
-        candidates = []
-        for idx, human in enumerate(self.humans):
-            if idx >= human_xy.shape[0]:
-                continue
-            if not human.can_be_overwhelmed:
-                continue
-            if human.mode != HumanMode.LISTENING:
-                continue
-            candidates.append(idx)
-
-        if not candidates:
-            return []
-
-        if self.overwhelmed_wait_trigger_prob <= 0.0:
-            return []
-
-        # trigger_prob means each candidate independently triggers at this step
-        self.np_random.shuffle(candidates)
-        triggered = []
-        for idx in candidates:
-            if float(self.np_random.random()) >= float(self.overwhelmed_wait_trigger_prob):
-                continue
-            self.humans[idx].start_overwhelmed(robot_xy=robot_xy, current_xy=human_xy[idx])
-            triggered.append(int(idx))
-            if len(triggered) >= slots:
-                break
-        return triggered
-
-    def _maybe_trigger_attack_in_wait(self, robot_xy, human_xy):
-        """Sample new attack humans during wait branch with concurrency cap."""
-        active_indices = [idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.ATTACK]
-        slots = int(self.max_concurrent_attack) - len(active_indices)
-        if slots <= 0:
-            return []
-
-        candidates = []
-        for idx, human in enumerate(self.humans):
-            if idx >= human_xy.shape[0]:
-                continue
-            if not human.can_attack:
-                continue
-            if human.mode != HumanMode.LISTENING:
-                continue
-            candidates.append(idx)
-
-        if not candidates:
-            return []
-
-        if self.attack_wait_trigger_prob <= 0.0:
-            return []
-
-        # trigger_prob means each candidate independently triggers at this step
-        self.np_random.shuffle(candidates)
-        triggered = []
-        for idx in candidates:
-            if float(self.np_random.random()) >= float(self.attack_wait_trigger_prob):
-                continue
-            if self.humans[idx].start_attack():
-                triggered.append(int(idx))
-                if len(triggered) >= slots:
-                    break
-        return triggered
 
     def _step_active_branch(self, external_action_received=False):
         """Main simulation branch outside wait window."""
@@ -1382,19 +1186,30 @@ class MuseumEnv(gym.Env):
         self._maybe_sample_active_callback_response(events)
         self._resolve_completed_callback_cue(events)
 
-        # If robot just entered listen, reset the ring-session bookkeeping
+        # If robot just entered listen, start a silent preparation window first.
         if enter_listen:
             rx, ry, ryaw = robot_pose
-            self.listen_reached_logged = set()
+            final_waypoint_reached_at_entry = self.robot.is_final_reached(float(dist))
+            self.listen_intro_delay_active = True
+            self.listen_intro_delay_counter = 0
+            self.listen_intro_delay_is_final = bool(final_waypoint_reached_at_entry)
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
-            self.listen_session_count += 1
+            self.last_overwhelmed_trigger_indices = []
+            self.last_attack_trigger_indices = []
+            self.move_back_active = False
+            self.move_back_attacker_idx = None
+            self.fear_active = False
+            self.fear_attacker_idx = None
+            self.fear_current_response_mode = None
+            self.fear_current_response_target_idx = None
             self._reset_human_listening_session_states()
 
             self._log_event(
                 f">>> Robot entering LISTEN mode. robot=({rx:.2f}, {ry:.2f}, yaw={ryaw:.2f}); "
-                f"humans will regulate to a {self.listen_fan_radius:.2f}m ring inside the front 160 deg sector."
+                f"silent 3s preparation started while humans regulate to a "
+                f"{self.listen_fan_radius:.2f}m ring inside the front 160 deg sector."
             )
 
         # Apply robot action
@@ -1435,15 +1250,27 @@ class MuseumEnv(gym.Env):
             robot_xy=np.array([rx, ry], dtype=np.float32),
             robot_yaw=ryaw,
         )
-        self._update_human_listening_session_progress(human_reached_goal)
+        self._update_human_listening_session_progress()
 
         human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
         human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
         human_v_hr = np.array([h.last_v_hr for h in self.humans], dtype=np.float32)
 
+        if self.listen_intro_delay_active:
+            self.listen_intro_delay_counter += 1
+            if self.listen_intro_delay_counter >= self.listen_intro_delay_steps:
+                self.listen_intro_delay_active = False
+                self.listen_wait_active = True
+                self.listen_wait_counter = 0
+                self.listen_wait_is_final = bool(self.listen_intro_delay_is_final)
+                self.listen_intro_delay_is_final = False
+                events["started_listen_wait"] = True
+                self._log_event(
+                    f">>> Listening explanation started after {self.listen_intro_delay_seconds:.1f}s delay."
+                )
+
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
-        events.update(self._handle_listen_transitions(final_waypoint_reached, all_humans_reached))
         self._update_robot_emotion_and_visual(
             events=events,
             robot_xy=np.array([rx, ry], dtype=np.float32),
@@ -1505,9 +1332,46 @@ class MuseumEnv(gym.Env):
 
         return repulsion_vectors
 
+    def _update_listening_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
+        """Apply the minimal listening-force controller to every active human."""
+        human_actions = []
+        robot_xy = np.array([rx, ry], dtype=np.float32)
+
+        for i, human in enumerate(self.humans):
+            human.set_mode(HumanMode.LISTENING)
+            human.set_following_distracted_window_active(False)
+            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
+            ctx = {
+                "robot_xy": robot_xy,
+                "robot_yaw": ryaw,
+                "robot_speed": 0.0,
+                "repulsion": LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32),
+                "listen_radius": self.listen_fan_radius,
+                "stand_threshold": self.listen_stand_threshold,
+                "listening_sector_half_angle": self.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(self.timestep),
+            }
+            human_action = human.step(self.model, self.data, ctx)
+            human_actions.append(human_action)
+
+            ctrl_idx = 3 + i * 3
+            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = human_action
+
+        if human_actions:
+            return np.array(human_actions, dtype=np.float32)
+        return np.zeros((0, 3), dtype=np.float32)
+
     def _update_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
         """Update all humans and write their commands to control buffer."""
-        # Update each human mode/context, compute action, and write it into MuJoCo controls.
+        if self.robot.listen_mode:
+            return self._update_listening_humans_and_apply_ctrl(
+                rx=rx,
+                ry=ry,
+                ryaw=ryaw,
+                repulsion_vectors=repulsion_vectors,
+            )
+
         human_actions = []
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
@@ -1515,14 +1379,12 @@ class MuseumEnv(gym.Env):
         robot_speed = float(np.hypot(self.data.ctrl[0], self.data.ctrl[1]))
         impatient_following_eligible = bool(
             self.follow_humans
-            and (not self.robot.listen_mode)
             and (not self.listen_wait_active)
             and (not self.robot.callback_active)
         )
 
         for i, human in enumerate(self.humans):
             repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-
             ctx = {
                 "robot_xy": np.array([rx, ry], dtype=np.float32),
                 "robot_yaw": ryaw,
@@ -1531,34 +1393,24 @@ class MuseumEnv(gym.Env):
                 "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
                 "listening_sector_half_angle": self.listen_front_sector_half_angle,
+                "enforce_listening_sector": False,
                 "dt": float(self.timestep),
             }
 
-            if self.robot.listen_mode:
-                if (
-                    human.mode == HumanMode.DISTRACTED
-                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
-                ):
-                    pass
-                elif human.mode != HumanMode.OVERWHELMED:
-                    human.set_mode(HumanMode.LISTENING)
-                    repulsion_vec = LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32)
-                    ctx["repulsion"] = np.array(repulsion_vec, dtype=np.float32)
-            else:
-                if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
-                    human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
+            if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
+                human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
-                if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
-                    human.set_context(
-                        index=i,
-                        n_humans=n_humans,
-                        robot_pose=(rx, ry, ryaw),
-                        follow_radius=follow_radius,
-                        fan_half_angle=self.follow_fan_half_angle,
-                        impatient_front_offset=human.impatient_front_offset,
-                        robot_xy=np.array([rx, ry], dtype=np.float32),
-                        robot_yaw=ryaw,
-                    )
+            if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
+                human.set_context(
+                    index=i,
+                    n_humans=n_humans,
+                    robot_pose=(rx, ry, ryaw),
+                    follow_radius=follow_radius,
+                    fan_half_angle=self.follow_fan_half_angle,
+                    impatient_front_offset=human.impatient_front_offset,
+                    robot_xy=np.array([rx, ry], dtype=np.float32),
+                    robot_yaw=ryaw,
+                )
 
             eligible_following = bool(
                 distracted_follow_window_active
@@ -1566,21 +1418,10 @@ class MuseumEnv(gym.Env):
                 and human.mode == HumanMode.FOLLOWING
             )
             human.set_following_distracted_window_active(distracted_follow_window_active)
-            human.set_listening_distracted_window_active(
-                self._is_listening_session_active()
-                and self._is_listening_distracted_window_active_for_human(human)
-            )
             human.update_following_duration(eligible_following=eligible_following)
             human.update_impatient_trigger_progress(
                 eligible_following=bool(impatient_following_eligible and human.mode == HumanMode.FOLLOWING),
                 robot_speed=robot_speed,
-            )
-            ctx["enforce_listening_sector"] = bool(
-                human.mode == HumanMode.LISTENING
-                or (
-                    human.mode == HumanMode.DISTRACTED
-                    and human.distracted_source == DISTRACTED_SOURCE_LISTENING
-                )
             )
 
             human_action = human.step(self.model, self.data, ctx)
@@ -1608,49 +1449,26 @@ class MuseumEnv(gym.Env):
         return np.array(goals, dtype=np.float32)
 
     def _check_human_goals(self, human_xy, human_goals, robot_xy=None, robot_yaw=None):
-        """Return indices of humans that are within goal threshold or inside the listening ring sector."""
+        """Return indices of humans that satisfy the active goal/reached criterion."""
         human_reached_goal = []
         robot_xy_arr = None if robot_xy is None else np.array(robot_xy, dtype=np.float32)
         for i, (human, pos, goal) in enumerate(zip(self.humans, human_xy, human_goals)):
             if human.mode == HumanMode.LISTENING and robot_xy_arr is not None and robot_yaw is not None:
                 dist_to_robot = float(np.linalg.norm(pos - robot_xy_arr))
-                in_ring = abs(dist_to_robot - float(self.listen_fan_radius)) <= float(self.listen_stand_threshold)
                 in_sector = self._is_human_in_listening_front_sector(
                     human=human,
                     pos_xy=pos,
                     robot_xy=robot_xy_arr,
                     robot_yaw=float(robot_yaw),
                 )
-                reached = bool(in_ring and in_sector)
+                reached = bool((dist_to_robot > LISTEN_REACHED_MIN_DISTANCE) and in_sector)
             else:
                 dist_to_goal = float(np.linalg.norm(pos - goal))
                 reached = dist_to_goal < HUMAN_GOAL_THRESHOLD
 
             if reached:
                 human_reached_goal.append(i)
-                if self.robot.listen_mode and i not in self.listen_reached_logged:
-                    self.listen_reached_logged.add(i)
-                    self._log_event(f">>> person{i+1} reached their goal at step {self.step_count}!")
         return human_reached_goal
-
-    def _handle_listen_transitions(self, final_waypoint_reached, all_humans_reached):
-        """Handle transitions into listening wait window and emit related events."""
-        events = {
-            "started_listen_wait": False,
-            "completed_listen_wait": False,
-            "final_listen_ready": False,
-        }
-
-        # Listening complete condition: all humans reached.
-        # Start waiting window instead of switching immediately.
-        if self.robot.listen_mode and all_humans_reached and not self.listen_wait_active:
-            self.listen_wait_active = True
-            self.listen_wait_counter = 0
-            self.listen_wait_is_final = bool(final_waypoint_reached)
-            events["started_listen_wait"] = True
-            self._log_event(f">>> Listening targets reached. Start wait for {self.listen_wait_steps} steps.")
-
-        return events
 
     def _collect_step_snapshot(
         self,
@@ -1743,6 +1561,11 @@ class MuseumEnv(gym.Env):
         listen_wait_remaining = (
             max(0, self.listen_wait_steps - self.listen_wait_counter) if self.listen_wait_active else 0
         )
+        listen_intro_delay_remaining = (
+            max(0, self.listen_intro_delay_steps - self.listen_intro_delay_counter)
+            if self.listen_intro_delay_active
+            else 0
+        )
         active_overwhelmed_indices = [
             int(idx) for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED
         ]
@@ -1790,6 +1613,13 @@ class MuseumEnv(gym.Env):
             "status": {
                 "step_count": int(self.step_count),
                 "listen_mode": bool(self.robot.listen_mode),
+                "listen_intro_delay": {
+                    "active": bool(self.listen_intro_delay_active),
+                    "counter": int(self.listen_intro_delay_counter),
+                    "steps": int(self.listen_intro_delay_steps),
+                    "remaining": int(listen_intro_delay_remaining),
+                    "is_final": bool(self.listen_intro_delay_is_final),
+                },
                 "listen_wait": {
                     "active": bool(self.listen_wait_active),
                     "counter": int(self.listen_wait_counter),

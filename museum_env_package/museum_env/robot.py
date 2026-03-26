@@ -155,22 +155,13 @@ class Robot:
 
     def _turn_to_crowd_action(self, robot_pose, human_xyz):
         """
-        When STOP at display: turn to face crowd centroid (or fallback).
+        When STOP at display: rotate in place by a fixed 180 degrees.
         """
-        rx, ry, ryaw = robot_pose
+        del human_xyz
+        _, _, ryaw = robot_pose
 
         if self.turn_target_yaw is None:
-            if human_xyz is not None and human_xyz.size:
-                mean_hx = float(np.mean(human_xyz[:, 0]))
-                mean_hy = float(np.mean(human_xyz[:, 1]))
-                dx = mean_hx - rx
-                dy = mean_hy - ry
-                if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-                    self.turn_target_yaw = self._wrap_to_pi(ryaw + np.pi)
-                else:
-                    self.turn_target_yaw = float(np.arctan2(dy, dx))
-            else:
-                self.turn_target_yaw = self._wrap_to_pi(ryaw + np.pi)
+            self.turn_target_yaw = self._wrap_to_pi(ryaw + np.pi)
 
         yaw_err = self._wrap_to_pi(self.turn_target_yaw - ryaw)
 
