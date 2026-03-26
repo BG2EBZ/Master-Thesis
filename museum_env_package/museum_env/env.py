@@ -11,10 +11,6 @@ from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     HUMAN_WALL_FOOTPRINT_RADIUS,
-    ROOM_A_X_MAX as HUMAN_ROOM_A_X_MAX,
-    ROOM_A_X_MIN as HUMAN_ROOM_A_X_MIN,
-    ROOM_A_Y_MAX as HUMAN_ROOM_A_Y_MAX,
-    ROOM_A_Y_MIN as HUMAN_ROOM_A_Y_MIN,
     Human,
     HumanMode,
     HumanProfile,
@@ -46,10 +42,6 @@ LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 80.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
-ROOM_A_X_MIN = HUMAN_ROOM_A_X_MIN
-ROOM_A_X_MAX = HUMAN_ROOM_A_X_MAX
-ROOM_A_Y_MIN = HUMAN_ROOM_A_Y_MIN
-ROOM_A_Y_MAX = HUMAN_ROOM_A_Y_MAX
 LISTEN_WAIT_SECONDS_DEFAULT = 40.0
 ATTACK_SPEED_DEFAULT = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
@@ -1086,6 +1078,7 @@ class MuseumEnv(gym.Env):
         events["overwhelmed_triggered"] = len(overwhelmed_trigger_indices) > 0
         events["attack_triggered"] = len(attack_trigger_indices) > 0
 
+        # Update robot emotion and visuals based on any new attack threats
         self.data.ctrl[:] = 0.0
         rb_action = np.zeros(3, dtype=np.float32)
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
@@ -1152,6 +1145,7 @@ class MuseumEnv(gym.Env):
             ctrl_idx = 3 + idx * 3
             self.data.ctrl[ctrl_idx:ctrl_idx + 3] = action
 
+        # Check move back policy availability and apply if active
         move_back_was_active = bool(self.move_back_active)
         threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
         if threat is None:

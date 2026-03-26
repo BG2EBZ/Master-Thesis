@@ -9,13 +9,18 @@ from museum_env.env import (
     HUMAN_SPAWN_MIN_ROBOT_DISTANCE,
     INACTIVE_HUMAN_PARK_X,
     MOVE_BACK_SPEED,
+    MuseumEnv,
+)
+from museum_env.human import (
+    HUMAN_WALL_FOOTPRINT_RADIUS,
     ROOM_A_X_MAX,
     ROOM_A_X_MIN,
     ROOM_A_Y_MAX,
     ROOM_A_Y_MIN,
-    MuseumEnv,
+    Human,
+    HumanMode,
+    HumanProfile,
 )
-from museum_env.human import HUMAN_WALL_FOOTPRINT_RADIUS, Human, HumanMode, HumanProfile
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
