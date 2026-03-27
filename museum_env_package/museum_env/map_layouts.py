@@ -1,10 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from typing import Mapping
 
 import numpy as np
 
-DEFAULT_SEGMENT_CHECK_SPACING = 0.05
-DEFAULT_BINARY_SEARCH_ITERS = 5
+GEOMETRY_EPS = 1e-5
 
 
 @dataclass(frozen=True)
@@ -74,8 +73,6 @@ class MapLayout:
     spawn_rects: tuple[AxisAlignedRect, ...]
     robot_waypoints: tuple[tuple[float, float], ...]
     metadata: Mapping[str, object] = field(default_factory=dict)
-    segment_check_spacing: float = DEFAULT_SEGMENT_CHECK_SPACING
-    binary_search_iters: int = DEFAULT_BINARY_SEARCH_ITERS
 
     def _margin_rects(self, rects, margin: float, *, expand_degenerate: bool) -> tuple[AxisAlignedRect, ...]:
         valid_rects = []
@@ -145,6 +142,63 @@ class MapLayout:
             return point
         return best_projection
 
+    @staticmethod
+    def _segment_rect_interval(start_xy, end_xy, rect: AxisAlignedRect):
+        start_xy = np.array(start_xy, dtype=np.float32)
+        end_xy = np.array(end_xy, dtype=np.float32)
+        delta = end_xy - start_xy
+
+        if float(np.linalg.norm(delta)) <= GEOMETRY_EPS:
+            if rect.contains_point(start_xy):
+                return (0.0, 1.0)
+            return None
+
+        t_enter = 0.0
+        t_exit = 1.0
+        for coord, direction, lower, upper in (
+            (float(start_xy[0]), float(delta[0]), float(rect.xmin), float(rect.xmax)),
+            (float(start_xy[1]), float(delta[1]), float(rect.ymin), float(rect.ymax)),
+        ):
+            if abs(direction) <= GEOMETRY_EPS:
+                if coord < lower - GEOMETRY_EPS or coord > upper + GEOMETRY_EPS:
+                    return None
+                continue
+
+            inv_direction = 1.0 / direction
+            axis_t0 = (lower - coord) * inv_direction
+            axis_t1 = (upper - coord) * inv_direction
+            if axis_t0 > axis_t1:
+                axis_t0, axis_t1 = axis_t1, axis_t0
+
+            t_enter = max(t_enter, axis_t0)
+            t_exit = min(t_exit, axis_t1)
+            if t_enter > t_exit + GEOMETRY_EPS:
+                return None
+
+        if t_exit < -GEOMETRY_EPS or t_enter > 1.0 + GEOMETRY_EPS:
+            return None
+        return (max(0.0, t_enter), min(1.0, t_exit))
+
+    def _merged_walkable_intervals(self, start_xy, end_xy, margin: float) -> tuple[tuple[float, float], ...]:
+        intervals = []
+        for rect in self.get_walkable_rects(margin):
+            interval = self._segment_rect_interval(start_xy, end_xy, rect)
+            if interval is not None:
+                intervals.append(interval)
+
+        if not intervals:
+            return ()
+
+        intervals.sort(key=lambda interval: interval[0])
+        merged = [intervals[0]]
+        for interval_start, interval_end in intervals[1:]:
+            prev_start, prev_end = merged[-1]
+            if interval_start <= prev_end + GEOMETRY_EPS:
+                merged[-1] = (prev_start, max(prev_end, interval_end))
+            else:
+                merged.append((interval_start, interval_end))
+        return tuple(merged)
+
     def is_segment_walkable(self, start_xy, end_xy, margin: float) -> bool:
         start_xy = np.array(start_xy, dtype=np.float32)
         end_xy = np.array(end_xy, dtype=np.float32)
@@ -152,39 +206,26 @@ class MapLayout:
             return False
         if not self.contains_point(end_xy, margin):
             return False
-
-        segment = end_xy - start_xy
-        dist = float(np.linalg.norm(segment))
-        if dist <= 1e-6:
-            return True
-
-        n_steps = max(1, int(np.ceil(dist / float(self.segment_check_spacing))))
-        for alpha in np.linspace(0.0, 1.0, n_steps + 1, dtype=np.float32):
-            point = start_xy + alpha * segment
-            if not self.contains_point(point, margin):
-                return False
-        return True
+        for interval_start, interval_end in self._merged_walkable_intervals(start_xy, end_xy, margin):
+            if interval_start <= GEOMETRY_EPS and interval_end >= 1.0 - GEOMETRY_EPS:
+                return True
+        return False
 
     def find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float) -> np.ndarray:
         start_xy = np.array(start_xy, dtype=np.float32)
         end_xy = np.array(end_xy, dtype=np.float32)
         if not self.contains_point(start_xy, margin):
             return self.project_point(start_xy, margin)
-        if self.is_segment_walkable(start_xy, end_xy, margin):
-            return end_xy
 
-        best_point = start_xy.copy()
-        lo = 0.0
-        hi = 1.0
-        for _ in range(int(self.binary_search_iters)):
-            mid = 0.5 * (lo + hi)
-            candidate = start_xy + mid * (end_xy - start_xy)
-            if self.is_segment_walkable(start_xy, candidate, margin):
-                best_point = candidate
-                lo = mid
-            else:
-                hi = mid
-        return np.array(best_point, dtype=np.float32)
+        farthest_t = 0.0
+        for interval_start, interval_end in self._merged_walkable_intervals(start_xy, end_xy, margin):
+            if interval_start <= GEOMETRY_EPS <= interval_end + GEOMETRY_EPS:
+                farthest_t = min(1.0, interval_end)
+                break
+
+        if farthest_t >= 1.0 - GEOMETRY_EPS:
+            return end_xy
+        return np.array(start_xy + farthest_t * (end_xy - start_xy), dtype=np.float32)
 
 
 DEFAULT_MUSEUM_LAYOUT = MapLayout(

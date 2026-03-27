@@ -264,6 +264,79 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_segment_rect_interval_matches_expected_on_single_rect(self):
+        rect = AxisAlignedRect(0.0, 1.0, 0.0, 1.0)
+        interval = DEFAULT_MUSEUM_LAYOUT._segment_rect_interval(
+            start_xy=np.array([-1.0, 0.5], dtype=np.float32),
+            end_xy=np.array([2.0, 0.5], dtype=np.float32),
+            rect=rect,
+        )
+        self.assertIsNotNone(interval)
+        self.assertAlmostEqual(interval[0], 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(interval[1], 2.0 / 3.0, places=6)
+
+    def test_segment_walkable_accepts_motion_across_touching_rectangles(self):
+        layout = MapLayout(
+            name="touching_rects",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(
+                AxisAlignedRect(0.0, 1.0, 0.0, 1.0),
+                AxisAlignedRect(1.0, 2.0, 0.0, 1.0),
+            ),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        self.assertTrue(
+            layout.is_segment_walkable(
+                start_xy=np.array([0.25, 0.5], dtype=np.float32),
+                end_xy=np.array([1.75, 0.5], dtype=np.float32),
+                margin=0.0,
+            )
+        )
+
+    def test_segment_walkable_accepts_default_map_doorway_boundary_path(self):
+        self.assertTrue(
+            DEFAULT_MUSEUM_LAYOUT.is_segment_walkable(
+                start_xy=np.array([8.5, 0.0], dtype=np.float32),
+                end_xy=np.array([8.5, -10.0], dtype=np.float32),
+                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+            )
+        )
+
+    def test_farthest_walkable_point_on_segment_returns_exact_boundary_point(self):
+        layout = MapLayout(
+            name="single_rect",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        farthest_xy = layout.find_farthest_walkable_point_on_segment(
+            start_xy=np.array([0.2, 0.5], dtype=np.float32),
+            end_xy=np.array([1.8, 0.5], dtype=np.float32),
+            margin=0.0,
+        )
+        np.testing.assert_allclose(farthest_xy, np.array([1.0, 0.5], dtype=np.float32), atol=1e-7)
+
+    def test_degenerate_segment_uses_point_containment_semantics(self):
+        layout = MapLayout(
+            name="degenerate_segment_layout",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        inside_xy = np.array([0.5, 0.5], dtype=np.float32)
+        outside_xy = np.array([1.5, 0.5], dtype=np.float32)
+
+        self.assertTrue(layout.is_segment_walkable(inside_xy, inside_xy, margin=0.0))
+        self.assertFalse(layout.is_segment_walkable(outside_xy, outside_xy, margin=0.0))
+        np.testing.assert_allclose(
+            layout.find_farthest_walkable_point_on_segment(outside_xy, outside_xy, margin=0.0),
+            np.array([1.0, 0.5], dtype=np.float32),
+            atol=1e-7,
+        )
+
     def test_assign_target_from_context_matches_expected_follow_and_impatient_geometry(self):
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
         robot_pose = (4.0, 3.0, 0.25)
