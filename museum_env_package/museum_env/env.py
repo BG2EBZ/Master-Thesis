@@ -193,8 +193,14 @@ class MuseumEnv(gym.Env):
         )
 
         self.timestep = self.model.opt.timestep
+        self.timestep_float = float(self.timestep)
         self.max_steps = MAX_STEPS_DEFAULT
         self.step_count = 0
+        self._callback_cue_steps = max(1, int(round(CALLBACK_CUE_SECONDS / self.timestep_float)))
+        self._callback_response_sample_steps = max(
+            1,
+            int(round(CALLBACK_RESPONSE_SAMPLE_SECONDS / self.timestep_float)),
+        )
 
         # Robot agent
         self.robot = Robot(
@@ -601,13 +607,13 @@ class MuseumEnv(gym.Env):
 
     def _get_human_poses(self):
         """Read all human poses as array shaped [n_humans, 3]."""
-        humans_xyz = []
-        for human, human_body_id in zip(self.humans, self.human_body_ids):
-            x = float(self.data.xpos[human_body_id, 0])
-            y = float(self.data.xpos[human_body_id, 1])
-            yaw = float(self.data.qpos[human.qpos_idx + 2])
-            humans_xyz.append([x, y, yaw])
-        return np.array(humans_xyz, dtype=np.float32)
+        n_humans = len(self.humans)
+        humans_xyz = np.empty((n_humans, 3), dtype=np.float32)
+        for idx, (human, human_body_id) in enumerate(zip(self.humans, self.human_body_ids)):
+            humans_xyz[idx, 0] = float(self.data.xpos[human_body_id, 0])
+            humans_xyz[idx, 1] = float(self.data.xpos[human_body_id, 1])
+            humans_xyz[idx, 2] = float(self.data.qpos[human.qpos_idx + 2])
+        return humans_xyz
 
     def _get_goal_xy(self):
         """Return current robot waypoint coordinates."""
@@ -629,34 +635,85 @@ class MuseumEnv(gym.Env):
             if idx < len(self.callback_triggered_for_current_distracted) and human.mode != HumanMode.DISTRACTED:
                 self.callback_triggered_for_current_distracted[idx] = False
 
-    def _build_callback_request(self, human_xy, robot_pose):
+    def _analyze_human_state(self, robot_xy, human_xy):
+        """Collect per-step human aggregates used by robot decision and diagnostics."""
+        perceived_distracted_indices = []
+        emotion_modes = []
+        callback_target_idx = None
+        callback_target_dist = None
+        nearest_attack_threat = None
+        threshold = float(self.callback_trigger_distance_meters)
+
+        if human_xy.size == 0:
+            return {
+                "perceived_distracted_indices": perceived_distracted_indices,
+                "callback_target_idx": callback_target_idx,
+                "nearest_attack_threat": nearest_attack_threat,
+                "emotion_modes": emotion_modes,
+            }
+
+        robot_x = float(robot_xy[0])
+        robot_y = float(robot_xy[1])
+        nearest_attack_dist = None
+        for idx, human in enumerate(self.humans):
+            mode = human.mode
+            if mode != HumanMode.DISTRACTED:
+                emotion_modes.append(mode)
+            if idx >= human_xy.shape[0]:
+                continue
+
+            dx = float(human_xy[idx, 0]) - robot_x
+            dy = float(human_xy[idx, 1]) - robot_y
+            dist = float(np.hypot(dx, dy))
+
+            if mode == HumanMode.ATTACK:
+                if nearest_attack_dist is None or dist < nearest_attack_dist:
+                    nearest_attack_dist = dist
+                    nearest_attack_threat = {
+                        "idx": int(idx),
+                        "dist": float(dist),
+                        "xy": np.array(human_xy[idx], dtype=np.float32),
+                    }
+                continue
+
+            if mode != HumanMode.DISTRACTED:
+                continue
+
+            if dist > threshold:
+                perceived_distracted_indices.append(int(idx))
+                if (
+                    idx < len(self.callback_triggered_for_current_distracted)
+                    and not self.callback_triggered_for_current_distracted[idx]
+                    and (callback_target_dist is None or dist > callback_target_dist)
+                ):
+                    callback_target_idx = int(idx)
+                    callback_target_dist = float(dist)
+
+        return {
+            "perceived_distracted_indices": perceived_distracted_indices,
+            "callback_target_idx": callback_target_idx,
+            "nearest_attack_threat": nearest_attack_threat,
+            "emotion_modes": emotion_modes,
+        }
+
+    def _build_callback_request(self, human_xy, robot_pose, human_analysis=None):
         """Build callback request targeting the farthest eligible distracted human."""
         if not self._is_robot_in_move_stage(robot_pose):
             return None
-        rx, ry, _ = robot_pose
-        robot_xy = np.array([rx, ry], dtype=np.float32)
-        perceived_distracted_indices = self._get_perceived_distracted_indices(
-            robot_xy=robot_xy,
-            human_xy=human_xy,
-        )
-        cue_steps = self._get_callback_cue_steps()
-        candidates = []
-        for idx in perceived_distracted_indices:
-            human = self.humans[idx]
-            if idx < len(self.callback_triggered_for_current_distracted):
-                if self.callback_triggered_for_current_distracted[idx]:
-                    continue
-            dist = float(np.linalg.norm(human_xy[idx] - robot_xy))
-            candidates.append((dist, int(idx)))
-
-        if not candidates:
+        if human_analysis is None:
+            rx, ry, _ = robot_pose
+            human_analysis = self._analyze_human_state(
+                robot_xy=np.array([rx, ry], dtype=np.float32),
+                human_xy=human_xy,
+            )
+        target_idx = human_analysis["callback_target_idx"]
+        if target_idx is None:
             return None
 
-        _, target_idx = max(candidates, key=lambda item: (item[0], -item[1]))
         return {
             "target_idx": int(target_idx),
             "target_xy": np.array(human_xy[target_idx], dtype=np.float32),
-            "cue_steps": int(cue_steps),
+            "cue_steps": int(self._get_callback_cue_steps()),
         }
 
     def _get_nearest_attack_threat(self, robot_xy, human_xy):
@@ -714,11 +771,11 @@ class MuseumEnv(gym.Env):
 
     def _get_callback_cue_steps(self) -> int:
         """Return callback cue duration in simulation steps."""
-        return max(1, int(round(CALLBACK_CUE_SECONDS / float(self.timestep))))
+        return int(self._callback_cue_steps)
 
     def _get_callback_response_sample_steps(self) -> int:
         """Return step offset inside cue when callback response should be sampled."""
-        return max(1, int(round(CALLBACK_RESPONSE_SAMPLE_SECONDS / float(self.timestep))))
+        return int(self._callback_response_sample_steps)
 
     def _is_callback_cue_active(self) -> bool:
         """Return True only during callback cue phase after turning completes."""
@@ -898,21 +955,8 @@ class MuseumEnv(gym.Env):
 
     def _get_perceived_distracted_indices(self, robot_xy, human_xy):
         """Return distracted human indices that are farther than perception threshold."""
-        if human_xy.size == 0:
-            return []
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        perceived = []
-        for idx, human in enumerate(self.humans):
-            if human.mode != HumanMode.DISTRACTED:
-                continue
-            if human.distracted_source != DISTRACTED_SOURCE_FOLLOWING:
-                continue
-            if idx >= human_xy.shape[0]:
-                continue
-            dist = float(np.linalg.norm(np.array(human_xy[idx], dtype=np.float32) - robot_xy))
-            if dist > self.callback_trigger_distance_meters:
-                perceived.append(int(idx))
-        return perceived
+        analysis = self._analyze_human_state(np.asarray(robot_xy, dtype=np.float32), human_xy)
+        return list(analysis["perceived_distracted_indices"])
 
     def _is_callback_visual_active(self):
         """Return True only during callback cue phase."""
@@ -944,10 +988,12 @@ class MuseumEnv(gym.Env):
             return "explanation"
         return "none"
 
-    def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy):
+    def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy, human_analysis=None):
         """Update fear/happy/sad states and apply corresponding robot visuals."""
+        if human_analysis is None:
+            human_analysis = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
         fear_before = bool(self.fear_active)
-        threat = self._get_nearest_attack_threat(robot_xy=robot_xy, human_xy=human_xy)
+        threat = human_analysis["nearest_attack_threat"]
         fear_now = bool(threat is not None and threat["dist"] < ROBOT_FEAR_DISTANCE_THRESHOLD)
         self.fear_active = fear_now
         self.fear_attacker_idx = int(threat["idx"]) if fear_now else None
@@ -956,12 +1002,9 @@ class MuseumEnv(gym.Env):
         elif fear_before and (not fear_now):
             events["fear_completed"] = True
 
-        self.perceived_distracted_indices = self._get_perceived_distracted_indices(
-            robot_xy=robot_xy,
-            human_xy=human_xy,
-        )
+        self.perceived_distracted_indices = list(human_analysis["perceived_distracted_indices"])
         callback_visual_active = self._is_callback_visual_active()
-        emotion_modes = [human.mode for human in self.humans if human.mode != HumanMode.DISTRACTED]
+        emotion_modes = list(human_analysis["emotion_modes"])
         if callback_visual_active:
             # Callback cue should explicitly drive SAD even if the target mode changes mid-window.
             emotion_modes.append(HumanMode.DISTRACTED)
@@ -1057,11 +1100,11 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         repulsion_vectors = self._compute_social_repulsion(human_xy)
+        robot_xy = np.array([rx, ry], dtype=np.float32)
         self.data.ctrl[:] = 0.0
         rb_action = np.zeros(3, dtype=np.float32)
         human_actions = self._update_listening_humans_and_apply_ctrl(
-            rx=rx,
-            ry=ry,
+            robot_xy=robot_xy,
             ryaw=ryaw,
             repulsion_vectors=repulsion_vectors,
         )
@@ -1082,9 +1125,13 @@ class MuseumEnv(gym.Env):
         desired_yaw = float(np.arctan2(wy - ry, wx - rx))
         actual_yaw = float(ryaw)
 
-        robot_xy = np.array([rx, ry], dtype=np.float32)
         human_goals = self._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
-        human_reached_goal = self._check_human_goals(human_xy, human_goals, robot_xy=robot_xy, robot_yaw=ryaw)
+        human_reached_goal, human_in_listening_front_sector = self._check_human_goals(
+            human_xy,
+            human_goals,
+            robot_xy=robot_xy,
+            robot_yaw=ryaw,
+        )
         self._update_human_listening_session_progress()
 
         final_waypoint_reached = self.robot.is_final_reached(dist)
@@ -1111,18 +1158,19 @@ class MuseumEnv(gym.Env):
 
             human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
 
+        human_analysis = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
         self._update_robot_emotion_and_visual(
             events=events,
-            robot_xy=np.array([rx, ry], dtype=np.float32),
+            robot_xy=robot_xy,
             human_xy=human_xy,
+            human_analysis=human_analysis,
         )
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
 
-        human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
-        human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
-        human_v_hr = np.array([h.last_v_hr for h in self.humans], dtype=np.float32)
+        human_v_follow, human_v_repulsion, human_v_hr = self._collect_human_velocity_components()
+        human_state_snapshot = self._collect_human_state_snapshot()
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -1138,6 +1186,8 @@ class MuseumEnv(gym.Env):
             human_v_follow=human_v_follow,
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
+            human_state_snapshot=human_state_snapshot,
+            human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
             final_waypoint_reached=final_waypoint_reached,
             all_humans_reached=all_humans_reached,
@@ -1166,8 +1216,14 @@ class MuseumEnv(gym.Env):
         # --- Robot decision ---
         # External action is validated for API compatibility, but this env uses rule-based control.
         robot_pose = self._get_robot_pose()
+        robot_xy = np.array([robot_pose[0], robot_pose[1]], dtype=np.float32)
         self._refresh_callback_rearm_flags()
-        callback_request = self._build_callback_request(human_xy=human_xy, robot_pose=robot_pose)
+        human_analysis_before = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
+        callback_request = self._build_callback_request(
+            human_xy=human_xy,
+            robot_pose=robot_pose,
+            human_analysis=human_analysis_before,
+        )
         callback_active_before_step = bool(self.robot.callback_active)
         robot_out = self.robot.step(
             robot_pose=robot_pose,
@@ -1225,6 +1281,7 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[0:3] = rb_action
 
         rx, ry, ryaw = self._get_robot_pose()
+        robot_xy = np.array([rx, ry], dtype=np.float32)
 
         # Switch to follow once the robot has started moving toward the display
         if not self.robot.listen_mode and not self.follow_humans:
@@ -1234,8 +1291,7 @@ class MuseumEnv(gym.Env):
 
         repulsion_vectors = self._compute_social_repulsion(human_xy)
         human_actions = self._update_humans_and_apply_ctrl(
-            rx=rx,
-            ry=ry,
+            robot_xy=robot_xy,
             ryaw=ryaw,
             repulsion_vectors=repulsion_vectors,
         )
@@ -1244,25 +1300,24 @@ class MuseumEnv(gym.Env):
 
         # Refresh poses after the step for reporting
         rx, ry, ryaw = self._get_robot_pose()
+        robot_xy = np.array([rx, ry], dtype=np.float32)
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
 
         human_goals = self._build_human_goals(
             human_xy=human_xy,
-            robot_xy=np.array([rx, ry], dtype=np.float32),
+            robot_xy=robot_xy,
         )
-        human_reached_goal = self._check_human_goals(
+        human_reached_goal, human_in_listening_front_sector = self._check_human_goals(
             human_xy,
             human_goals,
-            robot_xy=np.array([rx, ry], dtype=np.float32),
+            robot_xy=robot_xy,
             robot_yaw=ryaw,
         )
         self._update_human_listening_session_progress()
 
-        human_v_follow = np.array([h.last_v_follow for h in self.humans], dtype=np.float32)
-        human_v_repulsion = np.array([h.last_v_repulsion for h in self.humans], dtype=np.float32)
-        human_v_hr = np.array([h.last_v_hr for h in self.humans], dtype=np.float32)
+        human_v_follow, human_v_repulsion, human_v_hr = self._collect_human_velocity_components()
 
         if self.listen_intro_delay_active:
             self.listen_intro_delay_counter += 1
@@ -1279,16 +1334,19 @@ class MuseumEnv(gym.Env):
 
         final_waypoint_reached = self.robot.is_final_reached(dist)
         all_humans_reached = len(self.humans) > 0 and len(human_reached_goal) == len(self.humans)
+        human_analysis_after = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
         self._update_robot_emotion_and_visual(
             events=events,
-            robot_xy=np.array([rx, ry], dtype=np.float32),
+            robot_xy=robot_xy,
             human_xy=human_xy,
+            human_analysis=human_analysis_after,
         )
         self._apply_fear_response_on_trigger(events)
         self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
         self._sync_robot_text_label_visibility()
         self._apply_robot_speaking_halo_visual()
+        human_state_snapshot = self._collect_human_state_snapshot()
 
         snapshot = self._collect_step_snapshot(
             robot_pose=(rx, ry, ryaw),
@@ -1304,6 +1362,8 @@ class MuseumEnv(gym.Env):
             human_v_follow=human_v_follow,
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
+            human_state_snapshot=human_state_snapshot,
+            human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
             final_waypoint_reached=final_waypoint_reached,
             all_humans_reached=all_humans_reached,
@@ -1322,9 +1382,9 @@ class MuseumEnv(gym.Env):
         """Compute pairwise short-range repulsion vectors for every human."""
         # Pairwise short-range repulsion to prevent humans from collapsing into each other.
         if not human_xy.size:
-            return [np.zeros(2, dtype=np.float32) for _ in self.humans]
+            return np.zeros((len(self.humans), 2), dtype=np.float32)
 
-        repulsion_vectors = []
+        repulsion_vectors = np.zeros((human_xy.shape[0], 2), dtype=np.float32)
         for i in range(human_xy.shape[0]):
             pos = human_xy[i]
             diff = pos - human_xy
@@ -1334,52 +1394,48 @@ class MuseumEnv(gym.Env):
                 directions = diff[mask] / neighbor_dist[mask][:, None]
                 strengths = (self.social_distance - neighbor_dist[mask]) / self.social_distance
                 repulsion = (directions * strengths[:, None]).sum(axis=0)
-            else:
-                repulsion = np.zeros(2, dtype=np.float32)
-            repulsion_vectors.append(self.repulsion_gain * repulsion)
+                repulsion_vectors[i] = self.repulsion_gain * repulsion
 
         return repulsion_vectors
 
-    def _update_listening_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
+    def _update_listening_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
         """Apply the minimal listening-force controller to every active human."""
-        human_actions = []
-        robot_xy = np.array([rx, ry], dtype=np.float32)
+        n_humans = len(self.humans)
+        human_actions = np.zeros((n_humans, 3), dtype=np.float32)
+        ctx = {
+            "robot_xy": robot_xy,
+            "robot_yaw": ryaw,
+            "robot_speed": 0.0,
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "listen_radius": self.listen_fan_radius,
+            "stand_threshold": self.listen_stand_threshold,
+            "listening_sector_half_angle": self.listen_front_sector_half_angle,
+            "dt": self.timestep_float,
+        }
 
         for i, human in enumerate(self.humans):
             human.set_mode(HumanMode.LISTENING)
             human.set_following_distracted_window_active(False)
-            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            ctx = {
-                "robot_xy": robot_xy,
-                "robot_yaw": ryaw,
-                "robot_speed": 0.0,
-                "repulsion": LISTENING_REPULSION_SCALE * np.array(repulsion_vec, dtype=np.float32),
-                "listen_radius": self.listen_fan_radius,
-                "stand_threshold": self.listen_stand_threshold,
-                "listening_sector_half_angle": self.listen_front_sector_half_angle,
-                "dt": float(self.timestep),
-            }
+            repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
+            ctx["repulsion"] = LISTENING_REPULSION_SCALE * repulsion_vec
             human_action = human.step(self.model, self.data, ctx)
-            human_actions.append(human_action)
+            human_actions[i] = human_action
 
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx + 3] = human_action
 
-        if human_actions:
-            return np.array(human_actions, dtype=np.float32)
-        return np.zeros((0, 3), dtype=np.float32)
+        return human_actions
 
-    def _update_humans_and_apply_ctrl(self, rx, ry, ryaw, repulsion_vectors):
+    def _update_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
         """Update all humans and write their commands to control buffer."""
         if self.robot.listen_mode:
             return self._update_listening_humans_and_apply_ctrl(
-                rx=rx,
-                ry=ry,
+                robot_xy=robot_xy,
                 ryaw=ryaw,
                 repulsion_vectors=repulsion_vectors,
             )
 
-        human_actions = []
+        human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
         distracted_follow_window_active = self._is_distracted_follow_window_active()
@@ -1389,19 +1445,21 @@ class MuseumEnv(gym.Env):
             and (not self.listen_wait_active)
             and (not self.robot.callback_active)
         )
+        robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(ryaw))
+        ctx = {
+            "robot_xy": robot_xy,
+            "robot_yaw": ryaw,
+            "robot_speed": robot_speed,
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "listen_radius": self.listen_fan_radius,
+            "stand_threshold": self.listen_stand_threshold,
+            "listening_sector_half_angle": self.listen_front_sector_half_angle,
+            "dt": self.timestep_float,
+        }
 
         for i, human in enumerate(self.humans):
-            repulsion_vec = repulsion_vectors[i] if i < len(repulsion_vectors) else np.zeros(2, dtype=np.float32)
-            ctx = {
-                "robot_xy": np.array([rx, ry], dtype=np.float32),
-                "robot_yaw": ryaw,
-                "robot_speed": robot_speed,
-                "repulsion": repulsion_vec,
-                "listen_radius": self.listen_fan_radius,
-                "stand_threshold": self.listen_stand_threshold,
-                "listening_sector_half_angle": self.listen_front_sector_half_angle,
-                "dt": float(self.timestep),
-            }
+            repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
+            ctx["repulsion"] = repulsion_vec
 
             if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
@@ -1410,11 +1468,11 @@ class MuseumEnv(gym.Env):
                 human.set_context(
                     index=i,
                     n_humans=n_humans,
-                    robot_pose=(rx, ry, ryaw),
+                    robot_pose=robot_pose,
                     follow_radius=follow_radius,
                     fan_half_angle=self.follow_fan_half_angle,
                     impatient_front_offset=human.impatient_front_offset,
-                    robot_xy=np.array([rx, ry], dtype=np.float32),
+                    robot_xy=robot_xy,
                     robot_yaw=ryaw,
                 )
 
@@ -1431,33 +1489,92 @@ class MuseumEnv(gym.Env):
             )
 
             human_action = human.step(self.model, self.data, ctx)
-            human_actions.append(human_action)
+            human_actions[i] = human_action
 
             ctrl_idx = 3 + i * 3
             self.data.ctrl[ctrl_idx:ctrl_idx + 3] = human_action
 
-        if human_actions:
-            return np.array(human_actions, dtype=np.float32)
-        return np.zeros((0, 3), dtype=np.float32)
+        return human_actions
+
+    def _collect_human_velocity_components(self):
+        """Collect per-human velocity components into contiguous arrays."""
+        n_humans = len(self.humans)
+        human_v_follow = np.empty((n_humans, 2), dtype=np.float32)
+        human_v_repulsion = np.empty((n_humans, 2), dtype=np.float32)
+        human_v_hr = np.empty((n_humans, 2), dtype=np.float32)
+        for idx, human in enumerate(self.humans):
+            human_v_follow[idx] = human.last_v_follow
+            human_v_repulsion[idx] = human.last_v_repulsion
+            human_v_hr[idx] = human.last_v_hr
+        return human_v_follow, human_v_repulsion, human_v_hr
+
+    def _collect_human_state_snapshot(self):
+        """Collect per-human mode/profile/timer diagnostics in one pass."""
+        n_humans = len(self.humans)
+        human_modes = [None] * n_humans
+        human_profiles = [None] * n_humans
+        human_distracted_source = [None] * n_humans
+        human_overwhelmed_stage = [None] * n_humans
+        human_distracted_timer = np.empty(n_humans, dtype=np.int32)
+        human_following_steps = np.empty(n_humans, dtype=np.int32)
+        human_following_low_robot_speed_steps = np.empty(n_humans, dtype=np.int32)
+        human_listening_steps = np.empty(n_humans, dtype=np.int32)
+        human_overwhelmed_leave_timer = np.empty(n_humans, dtype=np.int32)
+        human_impatient_timer = np.empty(n_humans, dtype=np.int32)
+        active_overwhelmed_indices = []
+        active_attack_indices = []
+
+        for idx, human in enumerate(self.humans):
+            mode = human.mode
+            human_modes[idx] = mode
+            human_profiles[idx] = human.profile
+            human_distracted_source[idx] = human.distracted_source
+            human_overwhelmed_stage[idx] = human.overwhelmed_stage
+            human_distracted_timer[idx] = int(human.distracted_timer)
+            human_following_steps[idx] = int(human.following_steps)
+            human_following_low_robot_speed_steps[idx] = int(human.following_low_robot_speed_steps)
+            human_listening_steps[idx] = int(human.listening_steps)
+            human_overwhelmed_leave_timer[idx] = int(human.overwhelmed_leave_timer)
+            human_impatient_timer[idx] = int(human.impatient_timer)
+            if mode == HumanMode.OVERWHELMED:
+                active_overwhelmed_indices.append(int(idx))
+            elif mode == HumanMode.ATTACK:
+                active_attack_indices.append(int(idx))
+
+        return {
+            "human_mode": human_modes,
+            "human_profile": human_profiles,
+            "human_distracted_source": human_distracted_source,
+            "human_overwhelmed_stage": human_overwhelmed_stage,
+            "human_distracted_timer": human_distracted_timer,
+            "human_following_steps": human_following_steps,
+            "human_following_low_robot_speed_steps": human_following_low_robot_speed_steps,
+            "human_listening_steps": human_listening_steps,
+            "human_overwhelmed_leave_timer": human_overwhelmed_leave_timer,
+            "human_impatient_timer": human_impatient_timer,
+            "active_overwhelmed_indices": active_overwhelmed_indices,
+            "active_attack_indices": active_attack_indices,
+        }
 
     def _build_human_goals(self, human_xy, robot_xy):
         """Build goal-like diagnostics array while letting listening humans point at robot."""
-        if len(self.humans) == 0:
+        n_humans = len(self.humans)
+        if n_humans == 0:
             return np.zeros((0, 2), dtype=np.float32)
 
-        goals = []
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        for human in self.humans:
+        goals = np.empty((n_humans, 2), dtype=np.float32)
+        for idx, human in enumerate(self.humans):
             if human.mode == HumanMode.LISTENING:
-                goals.append(robot_xy.copy())
+                goals[idx] = robot_xy
             else:
-                goals.append(np.array(human.current_waypoint, dtype=np.float32))
-        return np.array(goals, dtype=np.float32)
+                goals[idx] = human.current_waypoint
+        return goals
 
     def _check_human_goals(self, human_xy, human_goals, robot_xy=None, robot_yaw=None):
         """Return indices of humans that satisfy the active goal/reached criterion."""
         human_reached_goal = []
-        robot_xy_arr = None if robot_xy is None else np.array(robot_xy, dtype=np.float32)
+        human_in_listening_front_sector = np.zeros(len(self.humans), dtype=bool)
+        robot_xy_arr = None if robot_xy is None else np.asarray(robot_xy, dtype=np.float32)
         for i, (human, pos, goal) in enumerate(zip(self.humans, human_xy, human_goals)):
             if human.mode == HumanMode.LISTENING and robot_xy_arr is not None and robot_yaw is not None:
                 dist_to_robot = float(np.linalg.norm(pos - robot_xy_arr))
@@ -1467,6 +1584,7 @@ class MuseumEnv(gym.Env):
                     robot_xy=robot_xy_arr,
                     robot_yaw=float(robot_yaw),
                 )
+                human_in_listening_front_sector[i] = bool(in_sector)
                 reached = bool((dist_to_robot > LISTEN_REACHED_MIN_DISTANCE) and in_sector)
             else:
                 dist_to_goal = float(np.linalg.norm(pos - goal))
@@ -1474,7 +1592,7 @@ class MuseumEnv(gym.Env):
 
             if reached:
                 human_reached_goal.append(i)
-        return human_reached_goal
+        return human_reached_goal, human_in_listening_front_sector
 
     def _collect_step_snapshot(
         self,
@@ -1491,6 +1609,8 @@ class MuseumEnv(gym.Env):
         human_v_follow,
         human_v_repulsion,
         human_v_hr,
+        human_state_snapshot,
+        human_in_listening_front_sector,
         human_reached_goal,
         final_waypoint_reached,
         all_humans_reached,
@@ -1499,26 +1619,15 @@ class MuseumEnv(gym.Env):
         # Single snapshot object consumed by _build_info and returned via info dict.
         rx, ry, _ = robot_pose
         gx, gy = self._get_goal_xy()
+        robot_xy = np.array([rx, ry], dtype=np.float32)
 
         human_desired_yaw = np.arctan2(
             human_goals[:, 1] - human_xy[:, 1],
             human_goals[:, 0] - human_xy[:, 0],
         ).astype(np.float32)
-        human_in_listening_front_sector = np.array(
-            [
-                self._is_human_in_listening_front_sector(
-                    human=human,
-                    pos_xy=pos,
-                    robot_xy=np.array([rx, ry], dtype=np.float32),
-                    robot_yaw=float(actual_yaw),
-                )
-                for human, pos in zip(self.humans, human_xy)
-            ],
-            dtype=bool,
-        )
 
         return {
-            "robot_xy": np.array([rx, ry], dtype=np.float32),
+            "robot_xy": robot_xy,
             "robot_goal_xy": np.array([gx, gy], dtype=np.float32),
             "dist_to_goal": float(dist),
             "robot_yaw": float(actual_yaw),
@@ -1534,24 +1643,22 @@ class MuseumEnv(gym.Env):
             "human_v_repulsion": human_v_repulsion,
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
-            "human_mode": [h.mode for h in self.humans],
-            "human_profile": [h.profile for h in self.humans],
-            "human_distracted_timer": np.array([h.distracted_timer for h in self.humans], dtype=np.int32),
-            "human_following_steps": np.array([h.following_steps for h in self.humans], dtype=np.int32),
-            "human_following_low_robot_speed_steps": np.array(
-                [h.following_low_robot_speed_steps for h in self.humans], dtype=np.int32
-            ),
-            "human_listening_steps": np.array([h.listening_steps for h in self.humans], dtype=np.int32),
+            "human_mode": human_state_snapshot["human_mode"],
+            "human_profile": human_state_snapshot["human_profile"],
+            "human_distracted_timer": human_state_snapshot["human_distracted_timer"],
+            "human_following_steps": human_state_snapshot["human_following_steps"],
+            "human_following_low_robot_speed_steps": human_state_snapshot["human_following_low_robot_speed_steps"],
+            "human_listening_steps": human_state_snapshot["human_listening_steps"],
             "human_in_listening_front_sector": human_in_listening_front_sector,
-            "human_distracted_source": [h.distracted_source for h in self.humans],
-            "human_overwhelmed_stage": [h.overwhelmed_stage for h in self.humans],
-            "human_overwhelmed_leave_timer": np.array(
-                [h.overwhelmed_leave_timer for h in self.humans], dtype=np.int32
-            ),
-            "human_impatient_timer": np.array([h.impatient_timer for h in self.humans], dtype=np.int32),
+            "human_distracted_source": human_state_snapshot["human_distracted_source"],
+            "human_overwhelmed_stage": human_state_snapshot["human_overwhelmed_stage"],
+            "human_overwhelmed_leave_timer": human_state_snapshot["human_overwhelmed_leave_timer"],
+            "human_impatient_timer": human_state_snapshot["human_impatient_timer"],
             "human_reached_goal": human_reached_goal,
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
+            "active_overwhelmed_indices": human_state_snapshot["active_overwhelmed_indices"],
+            "active_attack_indices": human_state_snapshot["active_attack_indices"],
         }
 
     def _build_info(
@@ -1572,12 +1679,6 @@ class MuseumEnv(gym.Env):
             if self.listen_intro_delay_active
             else 0
         )
-        active_overwhelmed_indices = [
-            int(idx) for idx, human in enumerate(self.humans) if human.mode == HumanMode.OVERWHELMED
-        ]
-        active_attack_indices = [
-            int(idx) for idx, human in enumerate(self.humans) if human.mode == HumanMode.ATTACK
-        ]
 
         terminated_reason = None
         if events["final_listen_ready"]:
@@ -1693,8 +1794,8 @@ class MuseumEnv(gym.Env):
                 "callback_visual_active": bool(self._is_callback_visual_active()),
                 "callback_trigger_distance_meters": float(self.callback_trigger_distance_meters),
                 "perceived_distracted_indices": [int(idx) for idx in self.perceived_distracted_indices],
-                "active_overwhelmed_indices": active_overwhelmed_indices,
-                "active_attack_indices": active_attack_indices,
+                "active_overwhelmed_indices": snapshot["active_overwhelmed_indices"],
+                "active_attack_indices": snapshot["active_attack_indices"],
                 "last_overwhelmed_trigger_indices": [
                     int(idx) for idx in self.last_overwhelmed_trigger_indices
                 ],

@@ -854,8 +854,9 @@ class Human:
             self.x_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_x").id]
             self.y_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_y").id]
 
+        pose = self._get_pose(data)
         if self.mode == HumanMode.WANDERING:
-            return self._step_wandering(data, ctx)
+            return self._step_wandering(data, ctx, pose)
 
         if self.mode == HumanMode.FOLLOWING:
             # FOLLOWING may stochastically branch to IMPATIENT or DISTRACTED.
@@ -873,38 +874,38 @@ class Human:
                     n_humans=self.context.n_humans,
                 )
                 if started:
-                    return self._step_impatient(data, ctx)
+                    return self._step_impatient(data, ctx, pose)
 
             if variant == HumanMode.DISTRACTED:
                 self.distracted_source = DISTRACTED_SOURCE_FOLLOWING
                 self.transition_to(HumanMode.DISTRACTED, reason="following_variant_distracted")
                 self._log_event(f">>> {self.name} became DISTRACTED!")
-                return self._step_distracted(data, ctx)
+                return self._step_distracted(data, ctx, pose)
 
             self._assign_target_from_context()
-            return self._step_following(data, ctx)
+            return self._step_following(data, ctx, pose)
 
         if self.mode == HumanMode.LISTENING:
-            return self._step_listening(data, ctx)
+            return self._step_listening(data, ctx, pose)
         
         if self.mode == HumanMode.DISTRACTED:
-            return self._step_distracted(data, ctx)
+            return self._step_distracted(data, ctx, pose)
 
         if self.mode == HumanMode.OVERWHELMED:
-            return self._step_overwhelmed(data, ctx)
+            return self._step_overwhelmed(data, ctx, pose)
 
         if self.mode == HumanMode.IMPATIENT:
-            return self._step_impatient(data, ctx)
+            return self._step_impatient(data, ctx, pose)
 
         if self.mode == HumanMode.ATTACK:
-            return self._step_attack(data, ctx)
+            return self._step_attack(data, ctx, pose)
 
 
         raise ValueError(f"Unknown human mode {self.mode}")
         
-    def _step_wandering(self, data, ctx):
+    def _step_wandering(self, data, ctx, pose):
         """WANDERING: move to random waypoint, and resample when reached."""
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
 
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
@@ -915,18 +916,18 @@ class Human:
             dx = self.current_waypoint[0] - x
             dy = self.current_waypoint[1] - y
 
-        return self._move(dx, dy, yaw, data, ctx)
+        return self._move(dx, dy, yaw, ctx, current_xy=np.array([x, y], dtype=np.float32))
 
-    def _step_following(self, data, ctx):
+    def _step_following(self, data, ctx, pose):
         """FOLLOWING: move toward current follow target."""
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
         dx = self.current_waypoint[0] - x
         dy = self.current_waypoint[1] - y
-        return self._move(dx, dy, yaw, data, ctx)
+        return self._move(dx, dy, yaw, ctx, current_xy=np.array([x, y], dtype=np.float32))
     
-    def _step_listening(self, data, ctx):
+    def _step_listening(self, data, ctx, pose):
         """LISTENING: low-cost motion toward the nearest front-sector point on the listening ring."""
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
         robot_xy = ctx.get("robot_xy")
         if robot_xy is None:
             self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -935,11 +936,11 @@ class Human:
             self.last_in_listening_front_sector = False
             return np.zeros(3, dtype=np.float32)
 
-        robot_xy = np.array(robot_xy, dtype=np.float32)
         current_xy = np.array([x, y], dtype=np.float32)
         robot_yaw = float(ctx.get("robot_yaw", yaw))
+        robot_xy = np.asarray(robot_xy, dtype=np.float32)
         to_robot = robot_xy - current_xy
-        dist_to_robot = float(np.linalg.norm(to_robot))
+        dist_to_robot = float(np.hypot(float(to_robot[0]), float(to_robot[1])))
         listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
         sector_half_angle = float(
             ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
@@ -980,14 +981,14 @@ class Human:
         self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
         self.last_v_hr = np.array(v_hr, dtype=np.float32)
         action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
-    def _step_distracted(self, data, ctx):
+    def _step_distracted(self, data, ctx, pose):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
         if self.distracted_source == DISTRACTED_SOURCE_LISTENING:
-            return self._step_listening_distracted(data, ctx)
+            return self._step_listening_distracted(data, ctx, pose)
 
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
         self.distracted_timer += 1
 
         current_xy = np.array([x, y], dtype=np.float32)
@@ -1036,7 +1037,7 @@ class Human:
             self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
             self._log_event(f">>> {self.name} recovered -> FOLLOWING")
 
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
     def _initialize_listening_distracted_target(
         self,
@@ -1079,12 +1080,12 @@ class Human:
             reset_listening_move_elapsed_steps=True,
         )
 
-    def _step_listening_distracted(self, data, ctx):
+    def _step_listening_distracted(self, data, ctx, pose):
         """DISTRACTED-from-listening: move away for 1 second, then freeze until session end."""
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
         self.distracted_timer += 1
         current_xy = np.array([x, y], dtype=np.float32)
-        robot_xy = np.array(ctx.get("robot_xy", current_xy), dtype=np.float32)
+        robot_xy = np.asarray(ctx.get("robot_xy", current_xy), dtype=np.float32)
         robot_yaw = float(ctx.get("robot_yaw", yaw))
         sector_half_angle = float(
             ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
@@ -1112,7 +1113,11 @@ class Human:
 
         if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
             self.last_v_follow = np.zeros(2, dtype=np.float32)
-            return np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+            return self._apply_wall_constraint_to_action(
+                np.array([0.0, 0.0, HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32),
+                ctx,
+                current_xy=current_xy,
+            )
 
         if self.listening_distracted_move_elapsed_steps >= self.listening_distracted_move_steps:
             self.last_v_follow = np.zeros(2, dtype=np.float32)
@@ -1126,11 +1131,11 @@ class Human:
         self.last_v_follow = np.array(v_goal, dtype=np.float32)
         self.listening_distracted_move_elapsed_steps += 1
         action = np.array([v_goal[0], v_goal[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
-    def _step_overwhelmed(self, data, ctx):
+    def _step_overwhelmed(self, data, ctx, pose):
         """OVERWHELMED: first back off, then keep leaving for fixed duration."""
-        x, y, yaw = self._get_pose(data)
+        x, y, yaw = pose
         pos_xy = np.array([x, y], dtype=np.float32)
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
@@ -1182,7 +1187,7 @@ class Human:
 
             yaw_err = self._wrap_to_pi(desired_yaw - yaw)
             action = np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-            return self._apply_wall_constraint_to_action(action, data, ctx)
+            return self._apply_wall_constraint_to_action(action, ctx, current_xy=pos_xy)
 
         # Leave stage: keep moving away for a fixed duration.
         leave_speed = min(self.overwhelmed_leave_speed, self.max_speed)
@@ -1195,13 +1200,13 @@ class Human:
             self._log_event(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
 
         action = np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=pos_xy)
 
-    def _step_impatient(self, data, ctx):
+    def _step_impatient(self, data, ctx, pose):
         """IMPATIENT: fast following toward front slot, with timeout recovery."""
         self.impatient_timer += 1
         self._assign_target_from_context()
-        action = self._step_following(data, ctx)
+        action = self._step_following(data, ctx, pose)
 
         if self.impatient_timer >= self.impatient_duration:
             self.set_mode(HumanMode.FOLLOWING)
@@ -1209,7 +1214,7 @@ class Human:
 
         return action
 
-    def _step_attack(self, data, ctx):
+    def _step_attack(self, data, ctx, pose):
         """ATTACK: chase robot until hit distance, then return to listening."""
         self.attack_hit_this_step = False
         robot_xy = ctx.get("robot_xy", None)
@@ -1219,9 +1224,11 @@ class Human:
             self.last_v_hr = np.zeros(2, dtype=np.float32)
             return np.zeros(3, dtype=np.float32)
 
-        x, y, yaw = self._get_pose(data)
-        to_robot = np.array([robot_xy[0] - x, robot_xy[1] - y], dtype=np.float32)
-        dist = float(np.linalg.norm(to_robot))
+        x, y, yaw = pose
+        dx = float(robot_xy[0]) - x
+        dy = float(robot_xy[1]) - y
+        current_xy = np.array([x, y], dtype=np.float32)
+        dist = float(np.hypot(dx, dy))
 
         if dist <= float(self.attack_hit_distance):
             self.attack_hit_this_step = True
@@ -1233,8 +1240,10 @@ class Human:
             return np.zeros(3, dtype=np.float32)
 
         if dist > NORM_EPS:
-            direction = to_robot / dist
-            v_follow = float(self.attack_speed) * direction
+            v_follow = np.array(
+                [float(self.attack_speed) * dx / dist, float(self.attack_speed) * dy / dist],
+                dtype=np.float32,
+            )
         else:
             v_follow = np.zeros(2, dtype=np.float32)
 
@@ -1245,10 +1254,10 @@ class Human:
         desired_yaw = np.arctan2(v_follow[1], v_follow[0]) if float(np.linalg.norm(v_follow)) > NORM_EPS else yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
         action = np.array([v_follow[0], v_follow[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
 
-    def _move(self, dx, dy, yaw, data, ctx):
+    def _move(self, dx, dy, yaw, ctx, current_xy):
         """Shared low-level controller that fuses follow, repulsion and HR spacing forces."""
         robot_xy = ctx.get("robot_xy", None)
 
@@ -1256,10 +1265,9 @@ class Human:
         v_hr = np.zeros(2, dtype=np.float32)
 
         if robot_xy is not None:
-            hx, hy, _ = self._get_pose(data)
             v_hr = self._compute_hr_spacing_force(
-                current_xy=np.array([hx, hy], dtype=np.float32),
-                robot_xy=np.array(robot_xy, dtype=np.float32),
+                current_xy=current_xy,
+                robot_xy=np.asarray(robot_xy, dtype=np.float32),
                 distance_min=self.hr_distance_min,
                 distance_max=self.hr_distance_max,
             )
@@ -1288,7 +1296,7 @@ class Human:
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
         action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, data, ctx)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
     
     # -------------------------
     # Helpers
@@ -1332,12 +1340,11 @@ class Human:
 
     def _compute_listening_sector_relative_angle(self, point_xy, robot_xy, robot_yaw: float) -> float:
         """Return point angle relative to robot heading in [-pi, pi)."""
-        point_xy = np.array(point_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        rel = point_xy - robot_xy
-        if float(np.linalg.norm(rel)) <= NORM_EPS:
+        rel_x = float(point_xy[0]) - float(robot_xy[0])
+        rel_y = float(point_xy[1]) - float(robot_xy[1])
+        if (rel_x * rel_x) + (rel_y * rel_y) <= (NORM_EPS * NORM_EPS):
             return 0.0
-        absolute_angle = float(np.arctan2(rel[1], rel[0]))
+        absolute_angle = float(np.arctan2(rel_y, rel_x))
         return float(self._wrap_to_pi(absolute_angle - float(robot_yaw)))
 
     def is_within_listening_front_sector(
@@ -1378,13 +1385,12 @@ class Human:
         sector_half_angle: float,
     ):
         """Return the nearest low-cost front-sector target point on the listening ring."""
-        current_xy = np.array(current_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        rel = current_xy - robot_xy
-        if float(np.linalg.norm(rel)) <= NORM_EPS:
+        rel_x = float(current_xy[0]) - float(robot_xy[0])
+        rel_y = float(current_xy[1]) - float(robot_xy[1])
+        if (rel_x * rel_x) + (rel_y * rel_y) <= (NORM_EPS * NORM_EPS):
             absolute_angle = float(robot_yaw)
         else:
-            absolute_angle = float(np.arctan2(rel[1], rel[0]))
+            absolute_angle = float(np.arctan2(rel_y, rel_x))
         clamped_angle = self._clamp_absolute_angle_to_listening_sector(
             absolute_angle=absolute_angle,
             robot_yaw=robot_yaw,
@@ -1410,14 +1416,15 @@ class Human:
         if robot_xy is None:
             return np.zeros(2, dtype=np.float32)
 
-        current_xy = np.array(current_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        diff_hr = current_xy - robot_xy
-        dist_hr = float(np.linalg.norm(diff_hr))
+        diff_x = float(current_xy[0]) - float(robot_xy[0])
+        diff_y = float(current_xy[1]) - float(robot_xy[1])
+        dist_hr = float(np.hypot(diff_x, diff_y))
         if dist_hr <= NORM_EPS:
-            dir_hr = np.array([1.0, 0.0], dtype=np.float32)
+            dir_x = 1.0
+            dir_y = 0.0
         else:
-            dir_hr = diff_hr / dist_hr
+            dir_x = diff_x / dist_hr
+            dir_y = diff_y / dist_hr
 
         if distance_min is not None and dist_hr < float(distance_min):
             if dist_hr <= HR_REPULSION_GAIN_NEAR_DISTANCE:
@@ -1426,16 +1433,35 @@ class Human:
                 repulsion_gain = HR_REPULSION_GAIN * HR_REPULSION_GAIN_MID_MULTIPLIER
             else:
                 repulsion_gain = HR_REPULSION_GAIN
-            return np.array(repulsion_gain * (float(distance_min) - dist_hr) * dir_hr, dtype=np.float32)
+            magnitude = repulsion_gain * (float(distance_min) - dist_hr)
+            return np.array([magnitude * dir_x, magnitude * dir_y], dtype=np.float32)
 
         if distance_max is not None and dist_hr > float(distance_max):
-            return np.array(-HR_ATTRACTION_GAIN * (dist_hr - float(distance_max)) * dir_hr, dtype=np.float32)
+            magnitude = -HR_ATTRACTION_GAIN * (dist_hr - float(distance_max))
+            return np.array([magnitude * dir_x, magnitude * dir_y], dtype=np.float32)
 
         return np.zeros(2, dtype=np.float32)
 
-    def _constrain_velocity_with_walkable(self, x: float, y: float, v_xy, dt: float, margin: float):
+    def _constrain_velocity_with_walkable(
+        self,
+        current_xy=None,
+        v_xy=None,
+        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
+        margin: float = HUMAN_WALL_FOOTPRINT_RADIUS,
+        *,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+    ):
         """Adjust velocity so the next-step position stays in walkable area."""
         # Project next-step position back to walkable area when command exits map bounds.
+        if current_xy is None:
+            if x is None or y is None:
+                raise ValueError("current_xy or both x/y must be provided.")
+            current_xy = np.array([float(x), float(y)], dtype=np.float32)
+        else:
+            current_xy = np.array(current_xy, dtype=np.float32)
+        if v_xy is None:
+            raise ValueError("v_xy must be provided.")
         v_xy = np.array(v_xy, dtype=np.float32)
         speed = float(np.linalg.norm(v_xy))
         if speed > self.max_speed and speed > MIN_SPEED_EPS:
@@ -1445,7 +1471,6 @@ class Human:
         if dt <= MIN_SPEED_EPS:
             return v_xy
 
-        current_xy = np.array([float(x), float(y)], dtype=np.float32)
         next_xy = current_xy + dt * v_xy
         if self._is_point_in_walkable(next_xy, margin):
             return v_xy
@@ -1457,17 +1482,15 @@ class Human:
             safe_v = safe_v / safe_speed * float(self.max_speed)
         return np.array(safe_v, dtype=np.float32)
 
-    def _apply_wall_constraint_to_action(self, action, data, ctx):
+    def _apply_wall_constraint_to_action(self, action, ctx, current_xy):
         """Apply walkable-area constraints to translational action components."""
         constrained_action = np.array(action, dtype=np.float32)
         if constrained_action.shape[0] < 2:
             return constrained_action
 
-        x, y, _ = self._get_pose(data)
         dt = float(ctx.get("dt", 0.002))
         constrained_v = self._constrain_velocity_with_walkable(
-            x=x,
-            y=y,
+            current_xy=current_xy,
             v_xy=np.array(constrained_action[0:2], dtype=np.float32),
             dt=dt,
             margin=HUMAN_WALL_FOOTPRINT_RADIUS,
