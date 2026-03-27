@@ -23,9 +23,6 @@ HUMAN_ROTATION_STOP_DEG = 3.0
 LISTENING_RING_GAIN = 4.0
 LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 80.0
 LISTENING_FRONT_SECTOR_HALF_ANGLE = np.deg2rad(LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG)
-LISTENING_SECTOR_FORCE_MARGIN_DEG = 15.0
-LISTENING_SECTOR_FORCE_MARGIN = np.deg2rad(LISTENING_SECTOR_FORCE_MARGIN_DEG)
-LISTENING_SECTOR_FORCE_GAIN = 6.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
 DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
@@ -928,7 +925,7 @@ class Human:
         return self._move(dx, dy, yaw, data, ctx)
     
     def _step_listening(self, data, ctx):
-        """LISTENING: continuous force-field motion on a front-sector ring around the robot."""
+        """LISTENING: low-cost motion toward the nearest front-sector point on the listening ring."""
         x, y, yaw = self._get_pose(data)
         robot_xy = ctx.get("robot_xy")
         if robot_xy is None:
@@ -939,11 +936,8 @@ class Human:
             return np.zeros(3, dtype=np.float32)
 
         robot_xy = np.array(robot_xy, dtype=np.float32)
-        current_xy = self._enforce_listening_sector_position(
-            data=data,
-            current_xy=np.array([x, y], dtype=np.float32),
-            ctx=ctx,
-        )
+        current_xy = np.array([x, y], dtype=np.float32)
+        robot_yaw = float(ctx.get("robot_yaw", yaw))
         to_robot = robot_xy - current_xy
         dist_to_robot = float(np.linalg.norm(to_robot))
         listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
@@ -951,21 +945,24 @@ class Human:
             ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
         )
         desired_yaw = np.arctan2(to_robot[1], to_robot[0]) if dist_to_robot > NORM_EPS else float(
-            ctx.get("robot_yaw", yaw)
+            robot_yaw
         )
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
         self.last_in_listening_front_sector = self.is_within_listening_front_sector(
             point_xy=current_xy,
             robot_xy=robot_xy,
-            robot_yaw=float(ctx.get("robot_yaw", yaw)),
+            robot_yaw=robot_yaw,
             sector_half_angle=sector_half_angle,
         )
 
-        v_ring = self._compute_listening_ring_force(
+        target_xy = self._compute_listening_sector_target_point(
             current_xy=current_xy,
             robot_xy=robot_xy,
+            robot_yaw=robot_yaw,
             listen_radius=listen_radius,
+            sector_half_angle=sector_half_angle,
         )
+        v_goal = np.array(LISTENING_RING_GAIN * (target_xy - current_xy), dtype=np.float32)
         v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
         v_hr = self._compute_hr_spacing_force(
             current_xy=current_xy,
@@ -973,21 +970,15 @@ class Human:
             distance_min=self.hr_distance_min,
             distance_max=None,
         )
-        v_sector = self._compute_listening_sector_force(
-            current_xy=current_xy,
-            robot_xy=robot_xy,
-            robot_yaw=float(ctx.get("robot_yaw", yaw)),
-            sector_half_angle=sector_half_angle,
-        )
 
-        v_total = v_ring + v_repulsion + v_hr + v_sector
+        v_total = v_goal + v_repulsion + v_hr
         speed = float(np.linalg.norm(v_total))
         if speed > self.max_speed and speed > NORM_EPS:
             v_total = v_total / speed * self.max_speed
 
-        self.last_v_follow = np.array(v_ring, dtype=np.float32)
+        self.last_v_follow = np.array(v_goal, dtype=np.float32)
         self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
-        self.last_v_hr = np.array(v_hr + v_sector, dtype=np.float32)
+        self.last_v_hr = np.array(v_hr, dtype=np.float32)
         action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
@@ -1047,8 +1038,15 @@ class Human:
 
         return self._apply_wall_constraint_to_action(action, data, ctx)
 
-    def _initialize_listening_distracted_target(self, current_xy, current_yaw: float):
-        """Sample one slight yaw offset, then a backward move target for listening distraction."""
+    def _initialize_listening_distracted_target(
+        self,
+        current_xy,
+        current_yaw: float,
+        robot_xy,
+        robot_yaw: float,
+        sector_half_angle: float,
+    ):
+        """Sample one slight yaw offset, then clamp the move direction back into the front sector."""
         current_xy = np.array(current_xy, dtype=np.float32)
         deviation_deg = float(
             np.random.uniform(
@@ -1057,13 +1055,19 @@ class Human:
             )
         )
         deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
-        target_yaw = self._wrap_to_pi(float(current_yaw) + deviation_sign * np.deg2rad(deviation_deg))
+        sampled_target_yaw = self._wrap_to_pi(float(current_yaw) + deviation_sign * np.deg2rad(deviation_deg))
+        move_absolute_angle = self._wrap_to_pi(float(sampled_target_yaw) + np.pi)
+        clamped_move_angle = self._clamp_absolute_angle_to_listening_sector(
+            absolute_angle=move_absolute_angle,
+            robot_yaw=robot_yaw,
+            sector_half_angle=sector_half_angle,
+        )
+        target_yaw = self._wrap_to_pi(clamped_move_angle + np.pi)
         target_distance = float(LISTENING_DISTRACTED_SPEED_METERS_PER_SEC * LISTENING_DISTRACTED_MOVE_SECONDS)
-        backward_dir = -np.array(
-            [np.cos(target_yaw), np.sin(target_yaw)],
+        sampled_target_xy = np.array(robot_xy, dtype=np.float32) + target_distance * np.array(
+            [np.cos(clamped_move_angle), np.sin(clamped_move_angle)],
             dtype=np.float32,
         )
-        sampled_target_xy = current_xy + target_distance * backward_dir
         target_xy = self._find_farthest_walkable_point_on_segment(
             start_xy=current_xy,
             end_xy=sampled_target_xy,
@@ -1079,24 +1083,26 @@ class Human:
         """DISTRACTED-from-listening: move away for 1 second, then freeze until session end."""
         x, y, yaw = self._get_pose(data)
         self.distracted_timer += 1
-        current_xy = self._enforce_listening_sector_position(
-            data=data,
-            current_xy=np.array([x, y], dtype=np.float32),
-            ctx=ctx,
+        current_xy = np.array([x, y], dtype=np.float32)
+        robot_xy = np.array(ctx.get("robot_xy", current_xy), dtype=np.float32)
+        robot_yaw = float(ctx.get("robot_yaw", yaw))
+        sector_half_angle = float(
+            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
         )
         self.last_in_listening_front_sector = self.is_within_listening_front_sector(
             point_xy=current_xy,
-            robot_xy=np.array(ctx.get("robot_xy", current_xy), dtype=np.float32),
-            robot_yaw=float(ctx.get("robot_yaw", yaw)),
-            sector_half_angle=float(
-                ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
-            ),
+            robot_xy=robot_xy,
+            robot_yaw=robot_yaw,
+            sector_half_angle=sector_half_angle,
         )
 
         if self.distracted_target_yaw is None:
             self._initialize_listening_distracted_target(
                 current_xy=current_xy,
                 current_yaw=yaw,
+                robot_xy=robot_xy,
+                robot_yaw=robot_yaw,
+                sector_half_angle=sector_half_angle,
             )
 
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
@@ -1471,105 +1477,48 @@ class Human:
         )
         return bool(abs(rel_angle) <= float(sector_half_angle) + float(LISTENING_SECTOR_PROJECTION_EPS))
 
-    def _project_point_to_listening_sector(self, point_xy, robot_xy, robot_yaw: float, sector_half_angle: float):
-        """Project one point to the closest point inside the robot-front listening sector."""
-        point_xy = np.array(point_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        rel = point_xy - robot_xy
-        radius = float(np.linalg.norm(rel))
-        if radius <= NORM_EPS:
-            radius = float(self.context.listen_radius)
-        rel_angle = self._compute_listening_sector_relative_angle(
-            point_xy=point_xy,
-            robot_xy=robot_xy,
-            robot_yaw=robot_yaw,
-        )
-        clipped_rel_angle = self._clip_listening_sector_relative_angle(rel_angle, sector_half_angle)
-        absolute_angle = float(robot_yaw) + clipped_rel_angle
-        projected = robot_xy + radius * np.array([np.cos(absolute_angle), np.sin(absolute_angle)], dtype=np.float32)
-        return np.array(projected, dtype=np.float32)
-
-    def _project_point_to_listening_constraints(
+    def _clamp_absolute_angle_to_listening_sector(
         self,
-        point_xy,
-        robot_xy,
+        absolute_angle: float,
         robot_yaw: float,
         sector_half_angle: float,
+    ) -> float:
+        """Clamp one world-frame angle so it stays inside the robot-front listening sector."""
+        relative_angle = self._wrap_to_pi(float(absolute_angle) - float(robot_yaw))
+        clipped_relative_angle = self._clip_listening_sector_relative_angle(
+            relative_angle=relative_angle,
+            sector_half_angle=sector_half_angle,
+        )
+        return float(self._wrap_to_pi(float(robot_yaw) + clipped_relative_angle))
+
+    def _compute_listening_sector_target_point(
+        self,
+        current_xy,
+        robot_xy,
+        robot_yaw: float,
+        listen_radius: float,
+        sector_half_angle: float,
     ):
-        """Project one point to the intersection of walkable space and the front listening sector."""
-        constrained = np.array(point_xy, dtype=np.float32)
-        for _ in range(2):
-            constrained = self._project_point_to_listening_sector(
-                point_xy=constrained,
-                robot_xy=robot_xy,
-                robot_yaw=robot_yaw,
-                sector_half_angle=sector_half_angle,
-            )
-            constrained = self._project_point_to_walkable(constrained, HUMAN_WALL_FOOTPRINT_RADIUS)
-        return self._project_point_to_listening_sector(
-            point_xy=constrained,
-            robot_xy=robot_xy,
+        """Return the nearest low-cost front-sector target point on the listening ring."""
+        current_xy = np.array(current_xy, dtype=np.float32)
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        rel = current_xy - robot_xy
+        if float(np.linalg.norm(rel)) <= NORM_EPS:
+            absolute_angle = float(robot_yaw)
+        else:
+            absolute_angle = float(np.arctan2(rel[1], rel[0]))
+        clamped_angle = self._clamp_absolute_angle_to_listening_sector(
+            absolute_angle=absolute_angle,
             robot_yaw=robot_yaw,
             sector_half_angle=sector_half_angle,
         )
-
-    def _enforce_listening_sector_position(self, data, current_xy, ctx):
-        """Snap current pose into the listening front-sector when this constraint is active."""
-        if not ctx.get("enforce_listening_sector", False):
-            return np.array(current_xy, dtype=np.float32)
-        robot_xy = ctx.get("robot_xy")
-        if robot_xy is None:
-            return np.array(current_xy, dtype=np.float32)
-        robot_yaw = float(ctx.get("robot_yaw", 0.0))
-        sector_half_angle = float(
-            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
-        )
-        current_xy = np.array(current_xy, dtype=np.float32)
-        projected_xy = self._project_point_to_listening_constraints(
-            point_xy=current_xy,
-            robot_xy=np.array(robot_xy, dtype=np.float32),
-            robot_yaw=robot_yaw,
-            sector_half_angle=sector_half_angle,
-        )
-        if float(np.linalg.norm(projected_xy - current_xy)) <= NORM_EPS:
-            return current_xy
-        data.qpos[self.qpos_idx : self.qpos_idx + 2] = projected_xy
-        return projected_xy
-
-    def _compute_listening_ring_force(self, current_xy, robot_xy, listen_radius: float):
-        """Compute continuous radial force that attracts the human to the listening ring."""
-        current_xy = np.array(current_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        to_robot = robot_xy - current_xy
-        dist_to_robot = float(np.linalg.norm(to_robot))
-        if dist_to_robot <= NORM_EPS:
-            return np.zeros(2, dtype=np.float32)
-        dir_to_robot = to_robot / dist_to_robot
-        radial_error = dist_to_robot - float(listen_radius)
-        return np.array(LISTENING_RING_GAIN * radial_error * dir_to_robot, dtype=np.float32)
-
-    def _compute_listening_sector_force(self, current_xy, robot_xy, robot_yaw: float, sector_half_angle: float):
-        """Compute a continuous inward correction near the listening-sector boundary."""
-        current_xy = np.array(current_xy, dtype=np.float32)
-        robot_xy = np.array(robot_xy, dtype=np.float32)
-        rel_angle = self._compute_listening_sector_relative_angle(
-            point_xy=current_xy,
-            robot_xy=robot_xy,
-            robot_yaw=robot_yaw,
-        )
-        soft_half_angle = max(0.0, float(sector_half_angle) - float(LISTENING_SECTOR_FORCE_MARGIN))
-        if abs(rel_angle) <= soft_half_angle:
-            return np.zeros(2, dtype=np.float32)
-        target_rel_angle = float(np.clip(rel_angle, -soft_half_angle, soft_half_angle))
-        radius = float(np.linalg.norm(current_xy - robot_xy))
-        target_xy = np.array(
+        return np.array(
             [
-                robot_xy[0] + radius * np.cos(float(robot_yaw) + target_rel_angle),
-                robot_xy[1] + radius * np.sin(float(robot_yaw) + target_rel_angle),
+                robot_xy[0] + float(listen_radius) * np.cos(clamped_angle),
+                robot_xy[1] + float(listen_radius) * np.sin(clamped_angle),
             ],
             dtype=np.float32,
         )
-        return np.array(LISTENING_SECTOR_FORCE_GAIN * (target_xy - current_xy), dtype=np.float32)
 
     def _compute_hr_spacing_force(
         self,
@@ -1606,34 +1555,6 @@ class Human:
 
         return np.zeros(2, dtype=np.float32)
 
-    def _constrain_velocity_with_listening_sector(self, x: float, y: float, v_xy, dt: float, ctx):
-        """Adjust velocity so the next-step position stays inside the listening front sector."""
-        if not ctx.get("enforce_listening_sector", False):
-            return np.array(v_xy, dtype=np.float32)
-        robot_xy = ctx.get("robot_xy", None)
-        if robot_xy is None:
-            return np.array(v_xy, dtype=np.float32)
-
-        dt = float(dt)
-        if dt <= MIN_SPEED_EPS:
-            return np.array(v_xy, dtype=np.float32)
-
-        current_xy = np.array([float(x), float(y)], dtype=np.float32)
-        next_xy = current_xy + dt * np.array(v_xy, dtype=np.float32)
-        constrained_next_xy = self._project_point_to_listening_constraints(
-            point_xy=next_xy,
-            robot_xy=np.array(robot_xy, dtype=np.float32),
-            robot_yaw=float(ctx.get("robot_yaw", 0.0)),
-            sector_half_angle=float(
-                ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
-            ),
-        )
-        safe_v = (constrained_next_xy - current_xy) / dt
-        safe_speed = float(np.linalg.norm(safe_v))
-        if safe_speed > self.max_speed and safe_speed > MIN_SPEED_EPS:
-            safe_v = safe_v / safe_speed * float(self.max_speed)
-        return np.array(safe_v, dtype=np.float32)
-
     def _constrain_velocity_with_walkable(self, x: float, y: float, v_xy, dt: float, margin: float):
         """Adjust velocity so the next-step position stays in walkable area."""
         # Project next-step position back to walkable area when command exits map bounds.
@@ -1659,29 +1580,20 @@ class Human:
         return np.array(safe_v, dtype=np.float32)
 
     def _apply_wall_constraint_to_action(self, action, data, ctx):
-        """Apply listening-sector and walkable constraints to translational action components."""
+        """Apply walkable-area constraints to translational action components."""
         constrained_action = np.array(action, dtype=np.float32)
         if constrained_action.shape[0] < 2:
             return constrained_action
 
         x, y, _ = self._get_pose(data)
         dt = float(ctx.get("dt", 0.002))
-        constrained_v = np.array(constrained_action[0:2], dtype=np.float32)
-        for _ in range(2):
-            constrained_v = self._constrain_velocity_with_listening_sector(
-                x=x,
-                y=y,
-                v_xy=constrained_v,
-                dt=dt,
-                ctx=ctx,
-            )
-            constrained_v = self._constrain_velocity_with_walkable(
-                x=x,
-                y=y,
-                v_xy=constrained_v,
-                dt=dt,
-                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-            )
+        constrained_v = self._constrain_velocity_with_walkable(
+            x=x,
+            y=y,
+            v_xy=np.array(constrained_action[0:2], dtype=np.float32),
+            dt=dt,
+            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
         constrained_action[0:2] = constrained_v
         return constrained_action
 

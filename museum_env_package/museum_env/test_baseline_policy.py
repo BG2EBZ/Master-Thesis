@@ -370,7 +370,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_listening_sector_hard_constraint_keeps_next_step_in_front_sector(self):
+    def test_listening_sector_target_helper_clamps_to_boundary_angle(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -394,20 +394,31 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
-            action = human.step(env.model, env.data, ctx)
-            next_xy = pos + float(env.timestep) * action[:2]
+            target_xy = human._compute_listening_sector_target_point(
+                current_xy=pos,
+                robot_xy=ctx["robot_xy"],
+                robot_yaw=ctx["robot_yaw"],
+                listen_radius=ctx["listen_radius"],
+                sector_half_angle=ctx["listening_sector_half_angle"],
+            )
             self.assertTrue(
                 human.is_within_listening_front_sector(
-                    point_xy=next_xy,
+                    point_xy=target_xy,
                     robot_xy=np.array([0.0, 0.0], dtype=np.float32),
                     robot_yaw=0.0,
                     sector_half_angle=env.listen_front_sector_half_angle,
                 )
             )
+            target_angle = float(np.arctan2(target_xy[1], target_xy[0]))
+            self.assertAlmostEqual(
+                target_angle,
+                float(env.listen_front_sector_half_angle),
+                delta=np.deg2rad(1.5),
+            )
         finally:
             env.close()
 
-    def test_listening_entry_correction_projects_pose_into_front_sector(self):
+    def test_listening_repulsion_can_pull_next_step_slightly_past_edge_but_target_stays_front(self):
         env = self._make_env(
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
@@ -417,7 +428,54 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=906)
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            theta = env.listen_front_sector_half_angle - np.deg2rad(1.0)
+            pos = env.listen_fan_radius * np.array([np.cos(theta), np.sin(theta)], dtype=np.float32)
+            self._set_human_pose(env, human, x=float(pos[0]), y=float(pos[1]), yaw=0.0)
+            tangent = np.array([-np.sin(theta), np.cos(theta)], dtype=np.float32)
+            ctx = {
+                "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": 4.0 * tangent,
+                "listen_radius": env.listen_fan_radius,
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "enforce_listening_sector": True,
+                "dt": float(env.timestep),
+            }
+            action = human.step(env.model, env.data, ctx)
+            next_xy = pos + float(env.timestep) * action[:2]
+            target_xy = human._compute_listening_sector_target_point(
+                current_xy=pos,
+                robot_xy=ctx["robot_xy"],
+                robot_yaw=ctx["robot_yaw"],
+                listen_radius=ctx["listen_radius"],
+                sector_half_angle=ctx["listening_sector_half_angle"],
+            )
+            self.assertTrue(
+                human.is_within_listening_front_sector(
+                    point_xy=target_xy,
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            )
+            self.assertGreater(float(np.dot(action[:2], target_xy - pos)), 0.0)
+            self.assertGreater(float(np.linalg.norm(next_xy - pos)), 0.0)
+        finally:
+            env.close()
+
+    def test_listening_backside_pose_generates_front_sector_target_without_pose_projection(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=9061)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
             self._set_human_pose(env, human, x=-1.0, y=0.0, yaw=0.0)
+            before_xy = np.array(env.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
             ctx = {
                 "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
                 "robot_yaw": 0.0,
@@ -428,16 +486,52 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
-            human.step(env.model, env.data, ctx)
-            corrected_xy = np.array(env.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            action = human.step(env.model, env.data, ctx)
+            after_xy = np.array(env.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            target_xy = human._compute_listening_sector_target_point(
+                current_xy=before_xy,
+                robot_xy=ctx["robot_xy"],
+                robot_yaw=ctx["robot_yaw"],
+                listen_radius=ctx["listen_radius"],
+                sector_half_angle=ctx["listening_sector_half_angle"],
+            )
+            np.testing.assert_allclose(after_xy, before_xy, atol=1e-6)
             self.assertTrue(
                 human.is_within_listening_front_sector(
-                    point_xy=corrected_xy,
+                    point_xy=target_xy,
                     robot_xy=np.array([0.0, 0.0], dtype=np.float32),
                     robot_yaw=0.0,
                     sector_half_angle=env.listen_front_sector_half_angle,
                 )
             )
+            self.assertGreater(float(np.dot(action[:2], target_xy - before_xy)), 0.0)
+        finally:
+            env.close()
+
+    def test_listening_distracted_sampling_clamps_move_direction_to_front_sector(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=9062)
+            human = env.humans[0]
+            current_xy = np.array([0.8, 0.0], dtype=np.float32)
+            with patch("numpy.random.uniform", return_value=40.0), patch("numpy.random.rand", return_value=0.9):
+                human._initialize_listening_distracted_target(
+                    current_xy=current_xy,
+                    current_yaw=0.0,
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    robot_yaw=0.0,
+                    sector_half_angle=env.listen_front_sector_half_angle,
+                )
+            move_dir = -np.array(
+                [np.cos(human.distracted_target_yaw), np.sin(human.distracted_target_yaw)],
+                dtype=np.float32,
+            )
+            move_angle = float(np.arctan2(move_dir[1], move_dir[0]))
+            self.assertLessEqual(abs(move_angle), float(env.listen_front_sector_half_angle) + 1e-6)
         finally:
             env.close()
 
@@ -1759,7 +1853,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=19)
             human = env.humans[0]
-            current_xy = np.array([9.79, 5.0], dtype=np.float32)
+            current_xy = np.array([9.749, 5.0], dtype=np.float32)
             raw_v = np.array([1.5, 0.0], dtype=np.float32)
             safe_v = human._constrain_velocity_with_walkable(
                 x=float(current_xy[0]),
