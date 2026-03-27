@@ -1,5 +1,6 @@
 import logging
 from importlib import resources
+from typing import Optional
 
 import gymnasium as gym
 import mujoco
@@ -15,6 +16,7 @@ from .human import (
     HumanMode,
     HumanProfile,
 )
+from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout, get_map_layout
 from .robot import (
     ROBOT_WAYPOINT_REACHED_DIST,
     Robot,
@@ -127,6 +129,8 @@ class MuseumEnv(gym.Env):
     def __init__(
         self,
         xml_path=None,
+        map_name: str = DEFAULT_MUSEUM_LAYOUT.name,
+        map_layout: Optional[MapLayout] = None,
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
@@ -159,8 +163,14 @@ class MuseumEnv(gym.Env):
         self.strict_action_validation = bool(strict_action_validation)
         logger.setLevel(logging.INFO if self.enable_event_logs else logging.CRITICAL + 1)
 
+        if map_layout is not None:
+            self.map_layout = map_layout
+        else:
+            self.map_layout = get_map_layout(map_name)
+        self.map_name = self.map_layout.name
+
         if xml_path is None:
-            with resources.path("museum_env.assets", "museum_scene.xml") as xml_file:
+            with resources.path("museum_env.assets", self.map_layout.default_xml_asset) as xml_file:
                 xml_path = str(xml_file)
 
         # Load MuJoCo model
@@ -186,19 +196,13 @@ class MuseumEnv(gym.Env):
         self.max_steps = MAX_STEPS_DEFAULT
         self.step_count = 0
 
-        # Waypoints: room A -> corridor -> room B
-        waypoints = [
-            (1.0, 5.0),
-            (0.6, 4.5),
-            (1.0, 2.0),
-            (8.5, 2.0),
-            (8.5, -10.0),
-            (8.5, -12.5),
-            (11, -12.5),
-        ]
-
         # Robot agent
-        self.robot = Robot(waypoints=waypoints, v_max=1.0, k_v=20.0, k_yaw=20.0)
+        self.robot = Robot(
+            waypoints=self.map_layout.robot_waypoints,
+            v_max=1.0,
+            k_v=20.0,
+            k_yaw=20.0,
+        )
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
@@ -301,6 +305,7 @@ class MuseumEnv(gym.Env):
                 f"person{idx}",
                 qpos_idx=3 * idx,
                 max_speed=HUMAN_MAX_SPEED_DEFAULT,
+                map_layout=self.map_layout,
             )
             for idx in range(1, MAX_HUMANS_CAPACITY + 1)
         ]
@@ -367,7 +372,7 @@ class MuseumEnv(gym.Env):
         sampled_positions = []
         for _ in self.humans:
             for _attempt in range(HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN):
-                candidate_xy = Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.np_random)
+                candidate_xy = self.map_layout.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.np_random)
                 if float(np.linalg.norm(candidate_xy - robot_xy)) < HUMAN_SPAWN_MIN_ROBOT_DISTANCE:
                     continue
                 if any(
@@ -393,7 +398,10 @@ class MuseumEnv(gym.Env):
         for human, spawn_state in zip(self.humans, active_spawn_states):
             self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = spawn_state
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
-            human.current_waypoint = Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.np_random)
+            human.current_waypoint = self.map_layout.sample_spawn_point(
+                HUMAN_WALL_FOOTPRINT_RADIUS,
+                rng=self.np_random,
+            )
 
         inactive_humans = self.all_humans[len(self.humans) :]
         for park_idx, human in enumerate(inactive_humans):
@@ -1349,7 +1357,6 @@ class MuseumEnv(gym.Env):
                 "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
                 "listening_sector_half_angle": self.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(self.timestep),
             }
             human_action = human.step(self.model, self.data, ctx)
@@ -1393,7 +1400,6 @@ class MuseumEnv(gym.Env):
                 "listen_radius": self.listen_fan_radius,
                 "stand_threshold": self.listen_stand_threshold,
                 "listening_sector_half_angle": self.listen_front_sector_half_angle,
-                "enforce_listening_sector": False,
                 "dt": float(self.timestep),
             }
 

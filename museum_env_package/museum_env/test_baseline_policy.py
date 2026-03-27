@@ -1,3 +1,4 @@
+from importlib import resources
 import unittest
 from unittest.mock import patch
 
@@ -13,14 +14,11 @@ from museum_env.env import (
 )
 from museum_env.human import (
     HUMAN_WALL_FOOTPRINT_RADIUS,
-    ROOM_A_X_MAX,
-    ROOM_A_X_MIN,
-    ROOM_A_Y_MAX,
-    ROOM_A_Y_MIN,
     Human,
     HumanMode,
     HumanProfile,
 )
+from museum_env.map_layouts import AxisAlignedRect, DEFAULT_MUSEUM_LAYOUT, MapLayout
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
@@ -56,7 +54,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def _assert_in_walkable(self, human, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-5):
         xy_arr = np.array(xy, dtype=np.float32)
-        projected = human._project_point_to_walkable(xy_arr, margin)
+        projected = human.map_layout.project_point(xy_arr, margin)
         self.assertLessEqual(float(np.linalg.norm(xy_arr - projected)), float(tol))
 
     def _set_human_pose(self, env, human, x, y, yaw):
@@ -84,12 +82,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 self.assertGreaterEqual(dist + tol, float(min_distance))
 
     def _assert_in_room_a(self, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-6):
+        room_a_rect = DEFAULT_MUSEUM_LAYOUT.get_spawn_rects(margin)[0]
         x = float(xy[0])
         y = float(xy[1])
-        self.assertGreaterEqual(x + tol, float(ROOM_A_X_MIN + margin))
-        self.assertLessEqual(x - tol, float(ROOM_A_X_MAX - margin))
-        self.assertGreaterEqual(y + tol, float(ROOM_A_Y_MIN + margin))
-        self.assertLessEqual(y - tol, float(ROOM_A_Y_MAX - margin))
+        self.assertGreaterEqual(x + tol, float(room_a_rect.xmin))
+        self.assertLessEqual(x - tol, float(room_a_rect.xmax))
+        self.assertGreaterEqual(y + tol, float(room_a_rect.ymin))
+        self.assertLessEqual(y - tol, float(room_a_rect.ymax))
 
     def _set_callback_state(
         self,
@@ -208,7 +207,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_human_walkable_sampling_api_returns_walkable_points(self):
         for _ in range(200):
-            sampled_xy = Human.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+            sampled_xy = DEFAULT_MUSEUM_LAYOUT.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
             probe_human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
             self._assert_in_walkable(probe_human, sampled_xy)
 
@@ -218,13 +217,52 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env_a.reset(seed=555)
             env_b.reset(seed=555)
-            samples_a = [Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_a.np_random) for _ in range(10)]
-            samples_b = [Human.sample_room_a_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_b.np_random) for _ in range(10)]
+            samples_a = [
+                DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_a.np_random)
+                for _ in range(10)
+            ]
+            samples_b = [
+                DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=env_b.np_random)
+                for _ in range(10)
+            ]
             for a, b in zip(samples_a, samples_b):
                 np.testing.assert_allclose(a, b, atol=1e-7)
         finally:
             env_a.close()
             env_b.close()
+
+    def test_custom_map_layout_injection_overrides_waypoints_and_spawn_geometry(self):
+        custom_layout = MapLayout(
+            name="test_custom_layout",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 4.0, 0.0, 4.0),),
+            spawn_rects=(AxisAlignedRect(1.0, 2.0, 1.0, 2.0),),
+            robot_waypoints=((1.5, 1.5), (3.0, 3.0)),
+            metadata={"rooms": ("test_room",)},
+        )
+        with resources.path("museum_env.assets", "museum_scene.xml") as xml_file:
+            env = self._make_env(
+                map_layout=custom_layout,
+                xml_path=str(xml_file),
+                n_humans=1,
+                impatient_prob=0.0,
+                overwhelmed_wait_trigger_prob=0.0,
+                attack_wait_trigger_prob=0.0,
+            )
+        try:
+            env.reset(seed=556)
+            self.assertIs(env.map_layout, custom_layout)
+            self.assertEqual(tuple(env.robot.waypoints), custom_layout.robot_waypoints)
+            spawn_rect = custom_layout.get_spawn_rects(HUMAN_WALL_FOOTPRINT_RADIUS)[0]
+            for human in env.humans:
+                self.assertIs(human.map_layout, custom_layout)
+                pose_xy = np.array(env.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+                self.assertGreaterEqual(float(pose_xy[0]), float(spawn_rect.xmin))
+                self.assertLessEqual(float(pose_xy[0]), float(spawn_rect.xmax))
+                self.assertGreaterEqual(float(pose_xy[1]), float(spawn_rect.ymin))
+                self.assertLessEqual(float(pose_xy[1]), float(spawn_rect.ymax))
+        finally:
+            env.close()
 
     def test_assign_target_from_context_matches_expected_follow_and_impatient_geometry(self):
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
@@ -275,7 +313,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -302,7 +339,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -329,7 +365,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             rotate_action = human.step(env.model, env.data, ctx)
@@ -359,7 +394,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             self._set_human_pose(env, human, x=1.2, y=1.0, yaw=0.0)
@@ -391,7 +425,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             target_xy = human._compute_listening_sector_target_point(
@@ -439,7 +472,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -483,7 +515,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             action = human.step(env.model, env.data, ctx)
@@ -553,7 +584,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "listen_radius": env.listen_fan_radius,
                 "stand_threshold": env.listen_stand_threshold,
                 "listening_sector_half_angle": env.listen_front_sector_half_angle,
-                "enforce_listening_sector": True,
                 "dt": float(env.timestep),
             }
             human.current_waypoint = np.array([9.0, 9.0], dtype=np.float32)

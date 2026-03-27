@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout
+
 # Human agent state machine and local motion logic.
 # Env owns high-level scheduling; this class turns mode/context into low-level actions.
 logger = logging.getLogger(__name__)
@@ -64,10 +66,6 @@ ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
 SEGMENT_CHECK_SPACING = 0.05
 MIN_SPEED_EPS = 1e-6
-ROOM_A_X_MIN = 0.0
-ROOM_A_X_MAX = 10.0
-ROOM_A_Y_MIN = 0.0
-ROOM_A_Y_MAX = 10.0
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -125,6 +123,7 @@ class Human:
         qpos_idx,
         max_speed,
         waypoint_threshold=DEFAULT_WAYPOINT_THRESHOLD,
+        map_layout: Optional[MapLayout] = None,
     ):
         """
         Args:
@@ -140,6 +139,7 @@ class Human:
         self.max_speed = float(max_speed)
         self.base_max_speed = float(max_speed)
         self.waypoint_threshold = waypoint_threshold
+        self.map_layout = DEFAULT_MUSEUM_LAYOUT if map_layout is None else map_layout
         setattr(self, "mode", None)
 
         self.context = HumanContext()
@@ -1294,157 +1294,35 @@ class Human:
     # Helpers
     # -------------------------
 
-    @staticmethod
-    def _walkable_rects(margin: float):
-        """Return walkable map rectangles after shrinking by safety margin."""
-        m = max(0.0, float(margin))
-        rects = [
-            # Room A: x[0,10], y[0,10]
-            (0.0 + m, 10.0 - m, 0.0 + m, 10.0 - m),
-            # Corridor: x[7,10], y[-10,0]
-            (7.0 + m, 10.0 - m, -10.0 + m, 0.0 - m),
-            # Room B: x[7,12], y[-15,-10]
-            (7.0 + m, 12.0 - m, -15.0 + m, -10.0 - m),
-            # Opening near y=0 between room A and corridor.
-            (7.0 + m, 10.0 - m, -m, m),
-            # Opening near y=-10 between corridor and room B.
-            (7.0 + m, 10.0 - m, -10.0 - m, -10.0 + m),
-        ]
-        valid = []
-        for xmin, xmax, ymin, ymax in rects:
-            if xmin <= xmax and ymin <= ymax:
-                valid.append((xmin, xmax, ymin, ymax))
-        return valid
-
-    @staticmethod
-    def sample_point_in_rects(rects, rng=None):
-        """Sample one point uniformly over a set of axis-aligned rectangles."""
-        if not rects:
-            return np.array([0.0, 0.0], dtype=np.float32)
-
-        rng_choice = np.random if rng is None else rng
-        areas = np.array(
-            [
-                max(0.0, float(xmax - xmin)) * max(0.0, float(ymax - ymin))
-                for xmin, xmax, ymin, ymax in rects
-            ],
-            dtype=np.float64,
-        )
-        if float(np.sum(areas)) <= 0.0:
-            xmin, xmax, ymin, ymax = rects[0]
-            return np.array([0.5 * (xmin + xmax), 0.5 * (ymin + ymax)], dtype=np.float32)
-
-        probs = areas / float(np.sum(areas))
-        rect_idx = int(rng_choice.choice(len(rects), p=probs))
-        xmin, xmax, ymin, ymax = rects[rect_idx]
-        wx = float(rng_choice.uniform(xmin, xmax))
-        wy = float(rng_choice.uniform(ymin, ymax))
-        return np.array([wx, wy], dtype=np.float32)
-
     @classmethod
     def sample_walkable_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
-        """Sample one point from walkable space."""
-        rects = cls._walkable_rects(margin)
-        return cls.sample_point_in_rects(rects, rng=rng)
+        """Compatibility wrapper returning a sample from the default map layout."""
+        return DEFAULT_MUSEUM_LAYOUT.sample_walkable_point(margin=margin, rng=rng)
 
     @classmethod
     def sample_room_a_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
-        """Sample one point inside Room A."""
-        m = max(0.0, float(margin))
-        rects = [(
-            ROOM_A_X_MIN + m,
-            ROOM_A_X_MAX - m,
-            ROOM_A_Y_MIN + m,
-            ROOM_A_Y_MAX - m,
-        )]
-        valid_rects = []
-        for xmin, xmax, ymin, ymax in rects:
-            if xmin <= xmax and ymin <= ymax:
-                valid_rects.append((xmin, xmax, ymin, ymax))
-        if not valid_rects:
-            return np.array(
-                [0.5 * (ROOM_A_X_MIN + ROOM_A_X_MAX), 0.5 * (ROOM_A_Y_MIN + ROOM_A_Y_MAX)],
-                dtype=np.float32,
-            )
-        return cls.sample_point_in_rects(valid_rects, rng=rng)
-
-    @staticmethod
-    def _is_point_in_rect(x: float, y: float, rect) -> bool:
-        """Check if point lies inside one axis-aligned rectangle."""
-        xmin, xmax, ymin, ymax = rect
-        return bool((xmin <= x <= xmax) and (ymin <= y <= ymax))
+        """Compatibility wrapper returning a spawn sample from the default map layout."""
+        return DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(margin=margin, rng=rng)
 
     def _is_point_in_walkable(self, xy, margin: float) -> bool:
-        """Check if point belongs to any walkable rectangle."""
-        x = float(xy[0])
-        y = float(xy[1])
-        return any(self._is_point_in_rect(x, y, rect) for rect in self._walkable_rects(margin))
+        """Check if point belongs to the active map layout walkable region."""
+        return self.map_layout.contains_point(xy, margin=margin)
 
     def _project_point_to_walkable(self, xy, margin: float):
-        """Project point to nearest point inside walkable region."""
-        point = np.array(xy, dtype=np.float32)
-        rects = self._walkable_rects(margin)
-        if not rects:
-            return point
-        if self._is_point_in_walkable(point, margin):
-            return point
-
-        best_proj = None
-        best_dist_sq = None
-        for xmin, xmax, ymin, ymax in rects:
-            proj_x = float(np.clip(point[0], xmin, xmax))
-            proj_y = float(np.clip(point[1], ymin, ymax))
-            proj = np.array([proj_x, proj_y], dtype=np.float32)
-            dist_sq = float(np.sum((proj - point) ** 2))
-            if best_dist_sq is None or dist_sq < best_dist_sq:
-                best_dist_sq = dist_sq
-                best_proj = proj
-        if best_proj is None:
-            return point
-        return best_proj
+        """Project point to the nearest valid point inside the active map layout."""
+        return self.map_layout.project_point(xy, margin=margin)
 
     def _is_segment_walkable(self, start_xy, end_xy, margin: float):
-        """Check whether the full straight segment stays inside walkable space."""
-        start_xy = np.array(start_xy, dtype=np.float32)
-        end_xy = np.array(end_xy, dtype=np.float32)
-        if not self._is_point_in_walkable(start_xy, margin):
-            return False
-        if not self._is_point_in_walkable(end_xy, margin):
-            return False
-
-        segment = end_xy - start_xy
-        dist = float(np.linalg.norm(segment))
-        if dist <= MIN_SPEED_EPS:
-            return True
-
-        n_steps = max(1, int(np.ceil(dist / SEGMENT_CHECK_SPACING)))
-        for alpha in np.linspace(0.0, 1.0, n_steps + 1, dtype=np.float32):
-            point = start_xy + alpha * segment
-            if not self._is_point_in_walkable(point, margin):
-                return False
-        return True
+        """Check whether a straight segment stays inside the active map layout."""
+        return self.map_layout.is_segment_walkable(start_xy, end_xy, margin=margin)
 
     def _find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float):
-        """Return the farthest point from start that keeps the segment walkable."""
-        start_xy = np.array(start_xy, dtype=np.float32)
-        end_xy = np.array(end_xy, dtype=np.float32)
-        if not self._is_point_in_walkable(start_xy, margin):
-            return self._project_point_to_walkable(start_xy, margin)
-        if self._is_segment_walkable(start_xy, end_xy, margin):
-            return end_xy
-
-        best_point = start_xy.copy()
-        lo = 0.0
-        hi = 1.0
-        for _ in range(10):
-            mid = 0.5 * (lo + hi)
-            candidate = start_xy + mid * (end_xy - start_xy)
-            if self._is_segment_walkable(start_xy, candidate, margin):
-                best_point = candidate
-                lo = mid
-            else:
-                hi = mid
-        return np.array(best_point, dtype=np.float32)
+        """Return the farthest walkable point on a segment under the active map layout."""
+        return self.map_layout.find_farthest_walkable_point_on_segment(
+            start_xy,
+            end_xy,
+            margin=margin,
+        )
 
     @staticmethod
     def _clip_listening_sector_relative_angle(relative_angle: float, sector_half_angle: float):
@@ -1606,7 +1484,7 @@ class Human:
 
     def _random_waypoint(self):
         """Generate random waypoint within walkable museum bounds."""
-        return self.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+        return self.map_layout.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
     
     def _wrap_to_pi(self, ang):
         """Normalize angle to [-pi, pi)."""
