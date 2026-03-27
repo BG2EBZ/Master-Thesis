@@ -337,6 +337,60 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             atol=1e-7,
         )
 
+    def test_human_prefetched_wall_rects_skip_margin_lookup_for_default_margin(self):
+        layout = MapLayout(
+            name="prefetch_layout",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        human = Human("prefetch_probe", "person1", qpos_idx=3, max_speed=1.0, map_layout=layout)
+
+        inside_xy = np.array([0.5, 0.5], dtype=np.float32)
+        outside_xy = np.array([1.5, 0.5], dtype=np.float32)
+        segment_start = np.array([0.3, 0.5], dtype=np.float32)
+        segment_end = np.array([0.9, 0.5], dtype=np.float32)
+        default_margin = HUMAN_WALL_FOOTPRINT_RADIUS
+        non_default_margin = 0.1
+
+        original_get_walkable_rects = MapLayout.get_walkable_rects
+        get_walkable_rect_calls = []
+
+        def tracked_get_walkable_rects(self, margin):
+            if self is layout:
+                get_walkable_rect_calls.append(float(margin))
+            return original_get_walkable_rects(self, margin)
+
+        with patch.object(MapLayout, "get_walkable_rects", new=tracked_get_walkable_rects):
+            self.assertTrue(human._is_point_in_walkable(inside_xy, default_margin))
+            np.testing.assert_allclose(
+                human._project_point_to_walkable(outside_xy, default_margin),
+                np.array([0.75, 0.5], dtype=np.float32),
+                atol=1e-7,
+            )
+            self.assertTrue(human._is_segment_walkable(segment_start, np.array([0.7, 0.5], dtype=np.float32), default_margin))
+            np.testing.assert_allclose(
+                human._find_farthest_walkable_point_on_segment(segment_start, segment_end, default_margin),
+                np.array([0.75, 0.5], dtype=np.float32),
+                atol=1e-7,
+            )
+            self.assertEqual(get_walkable_rect_calls, [])
+
+            self.assertTrue(human._is_point_in_walkable(inside_xy, non_default_margin))
+            np.testing.assert_allclose(
+                human._project_point_to_walkable(outside_xy, non_default_margin),
+                np.array([0.9, 0.5], dtype=np.float32),
+                atol=1e-7,
+            )
+            self.assertTrue(human._is_segment_walkable(segment_start, segment_end, non_default_margin))
+            np.testing.assert_allclose(
+                human._find_farthest_walkable_point_on_segment(segment_start, segment_end, non_default_margin),
+                np.array([0.9, 0.5], dtype=np.float32),
+                atol=1e-7,
+            )
+            self.assertEqual(get_walkable_rect_calls, [non_default_margin] * 4)
+
     def test_assign_target_from_context_matches_expected_follow_and_impatient_geometry(self):
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
         robot_pose = (4.0, 3.0, 0.25)

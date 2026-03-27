@@ -140,6 +140,7 @@ class Human:
         self.base_max_speed = float(max_speed)
         self.waypoint_threshold = waypoint_threshold
         self.map_layout = DEFAULT_MUSEUM_LAYOUT if map_layout is None else map_layout
+        self._wall_walkable_rects = self.map_layout.get_walkable_rects(HUMAN_WALL_FOOTPRINT_RADIUS)
         setattr(self, "mode", None)
 
         self.context = HumanContext()
@@ -1314,23 +1315,46 @@ class Human:
 
     def _is_point_in_walkable(self, xy, margin: float) -> bool:
         """Check if point belongs to the active map layout walkable region."""
+        wall_rects = self._wall_walkable_rects_for_margin(margin)
+        if wall_rects is not None:
+            x = float(xy[0])
+            y = float(xy[1])
+            return self.map_layout._contains_point_in_rects(x, y, wall_rects)
         return self.map_layout.contains_point(xy, margin=margin)
 
     def _project_point_to_walkable(self, xy, margin: float):
         """Project point to the nearest valid point inside the active map layout."""
+        wall_rects = self._wall_walkable_rects_for_margin(margin)
+        if wall_rects is not None:
+            return self.map_layout._project_point_to_rects(xy, wall_rects)
         return self.map_layout.project_point(xy, margin=margin)
 
     def _is_segment_walkable(self, start_xy, end_xy, margin: float):
         """Check whether a straight segment stays inside the active map layout."""
+        wall_rects = self._wall_walkable_rects_for_margin(margin)
+        if wall_rects is not None:
+            return self.map_layout._is_segment_walkable_in_rects(start_xy, end_xy, wall_rects)
         return self.map_layout.is_segment_walkable(start_xy, end_xy, margin=margin)
 
     def _find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float):
         """Return the farthest walkable point on a segment under the active map layout."""
+        wall_rects = self._wall_walkable_rects_for_margin(margin)
+        if wall_rects is not None:
+            return self.map_layout._find_farthest_walkable_point_on_segment_in_rects(
+                start_xy,
+                end_xy,
+                wall_rects,
+            )
         return self.map_layout.find_farthest_walkable_point_on_segment(
             start_xy,
             end_xy,
             margin=margin,
         )
+
+    def _wall_walkable_rects_for_margin(self, margin: float):
+        if float(margin) == float(HUMAN_WALL_FOOTPRINT_RADIUS):
+            return self._wall_walkable_rects
+        return None
 
     @staticmethod
     def _clip_listening_sector_relative_angle(relative_angle: float, sector_half_angle: float):

@@ -154,9 +154,8 @@ class MapLayout:
         rects = self.get_walkable_rects(margin)
         return self._contains_point_in_rects(x, y, rects)
 
-    def project_point(self, xy, margin: float) -> np.ndarray:
+    def _project_point_to_rects(self, xy, rects) -> np.ndarray:
         point = np.array(xy, dtype=np.float32)
-        rects = self.get_walkable_rects(margin)
         if not rects:
             return point
 
@@ -177,6 +176,10 @@ class MapLayout:
                 best_dist_sq = dist_sq
                 best_projection = np.array([projected_x, projected_y], dtype=np.float32)
         return best_projection
+
+    def project_point(self, xy, margin: float) -> np.ndarray:
+        rects = self.get_walkable_rects(margin)
+        return self._project_point_to_rects(xy, rects)
 
     @staticmethod
     def _segment_rect_interval(start_xy, end_xy, rect: AxisAlignedRect):
@@ -217,8 +220,7 @@ class MapLayout:
             return None
         return (max(0.0, t_enter), min(1.0, t_exit))
 
-    def _merged_walkable_intervals(self, start_xy, end_xy, margin: float) -> tuple[tuple[float, float], ...]:
-        rects = self.get_walkable_rects(margin)
+    def _merged_walkable_intervals_in_rects(self, start_xy, end_xy, rects) -> tuple[tuple[float, float], ...]:
         intervals = []
         for rect in rects:
             interval = self._segment_rect_interval(start_xy, end_xy, rect)
@@ -238,10 +240,13 @@ class MapLayout:
                 merged.append((interval_start, interval_end))
         return tuple(merged)
 
-    def is_segment_walkable(self, start_xy, end_xy, margin: float) -> bool:
+    def _merged_walkable_intervals(self, start_xy, end_xy, margin: float) -> tuple[tuple[float, float], ...]:
+        rects = self.get_walkable_rects(margin)
+        return self._merged_walkable_intervals_in_rects(start_xy, end_xy, rects)
+
+    def _is_segment_walkable_in_rects(self, start_xy, end_xy, rects) -> bool:
         start_xy = np.array(start_xy, dtype=np.float32)
         end_xy = np.array(end_xy, dtype=np.float32)
-        rects = self.get_walkable_rects(margin)
         if not rects:
             return False
 
@@ -250,56 +255,29 @@ class MapLayout:
         if not self._contains_point_in_rects(float(end_xy[0]), float(end_xy[1]), rects):
             return False
 
-        intervals = []
-        for rect in rects:
-            interval = self._segment_rect_interval(start_xy, end_xy, rect)
-            if interval is not None:
-                intervals.append(interval)
-        if not intervals:
+        merged = self._merged_walkable_intervals_in_rects(start_xy, end_xy, rects)
+        if len(merged) != 1:
             return False
+        return bool(merged[0][0] <= GEOMETRY_EPS and merged[0][1] >= 1.0 - GEOMETRY_EPS)
 
-        intervals.sort(key=lambda interval: interval[0])
-        current_start, current_end = intervals[0]
-        if current_start <= GEOMETRY_EPS and current_end >= 1.0 - GEOMETRY_EPS:
-            return True
-        for interval_start, interval_end in intervals[1:]:
-            if interval_start <= current_end + GEOMETRY_EPS:
-                current_end = max(current_end, interval_end)
-            else:
-                current_start, current_end = interval_start, interval_end
-            if current_start <= GEOMETRY_EPS and current_end >= 1.0 - GEOMETRY_EPS:
-                return True
-        return False
+    def is_segment_walkable(self, start_xy, end_xy, margin: float) -> bool:
+        rects = self.get_walkable_rects(margin)
+        return self._is_segment_walkable_in_rects(start_xy, end_xy, rects)
 
-    def find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float) -> np.ndarray:
+    def _find_farthest_walkable_point_on_segment_in_rects(self, start_xy, end_xy, rects) -> np.ndarray:
         start_xy = np.array(start_xy, dtype=np.float32)
         end_xy = np.array(end_xy, dtype=np.float32)
-        rects = self.get_walkable_rects(margin)
         if not rects:
             return start_xy
         if not self._contains_point_in_rects(float(start_xy[0]), float(start_xy[1]), rects):
-            return self.project_point(start_xy, margin)
+            return self._project_point_to_rects(start_xy, rects)
 
-        farthest_t = 0.0
-        intervals = []
-        for rect in rects:
-            interval = self._segment_rect_interval(start_xy, end_xy, rect)
-            if interval is not None:
-                intervals.append(interval)
-        if not intervals:
+        merged = self._merged_walkable_intervals_in_rects(start_xy, end_xy, rects)
+        if not merged:
             return start_xy
 
-        intervals.sort(key=lambda interval: interval[0])
-        merged_start, merged_end = intervals[0]
-        merged_intervals = [(merged_start, merged_end)]
-        for interval_start, interval_end in intervals[1:]:
-            prev_start, prev_end = merged_intervals[-1]
-            if interval_start <= prev_end + GEOMETRY_EPS:
-                merged_intervals[-1] = (prev_start, max(prev_end, interval_end))
-            else:
-                merged_intervals.append((interval_start, interval_end))
-
-        for interval_start, interval_end in merged_intervals:
+        farthest_t = 0.0
+        for interval_start, interval_end in merged:
             if interval_start <= GEOMETRY_EPS <= interval_end + GEOMETRY_EPS:
                 farthest_t = min(1.0, interval_end)
                 break
@@ -307,6 +285,10 @@ class MapLayout:
         if farthest_t >= 1.0 - GEOMETRY_EPS:
             return end_xy
         return np.array(start_xy + farthest_t * (end_xy - start_xy), dtype=np.float32)
+
+    def find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float) -> np.ndarray:
+        rects = self.get_walkable_rects(margin)
+        return self._find_farthest_walkable_point_on_segment_in_rects(start_xy, end_xy, rects)
 
 
 DEFAULT_MUSEUM_LAYOUT = MapLayout(
