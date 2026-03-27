@@ -11,6 +11,9 @@ from museum_env.env import (
     INACTIVE_HUMAN_PARK_X,
     MOVE_BACK_SPEED,
     MuseumEnv,
+    ROBOT_EXPLANATION_LABEL_GROUP,
+    ROBOT_FOLLOWME_LABEL_GROUP,
+    ROBOT_NEED_SPACE_LABEL_GROUP,
 )
 from museum_env.human import (
     HUMAN_WALL_FOOTPRINT_RADIUS,
@@ -80,6 +83,23 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             for jdx in range(idx + 1, len(xy_points)):
                 dist = float(np.linalg.norm(xy_points[idx] - xy_points[jdx]))
                 self.assertGreaterEqual(dist + tol, float(min_distance))
+
+    @staticmethod
+    def _dense_social_repulsion_reference(human_xy, social_distance: float, repulsion_gain: float):
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        if not human_xy.size or social_distance <= 1e-6:
+            return np.zeros((human_xy.shape[0], 2), dtype=np.float32)
+
+        repulsion_vectors = np.zeros((human_xy.shape[0], 2), dtype=np.float32)
+        for idx in range(human_xy.shape[0]):
+            diff = human_xy[idx] - human_xy
+            neighbor_dist = np.linalg.norm(diff, axis=1)
+            mask = (neighbor_dist > 1e-6) & (neighbor_dist < social_distance)
+            if np.any(mask):
+                directions = diff[mask] / neighbor_dist[mask][:, None]
+                strengths = (social_distance - neighbor_dist[mask]) / social_distance
+                repulsion_vectors[idx] = repulsion_gain * (directions * strengths[:, None]).sum(axis=0)
+        return repulsion_vectors
 
     def _assert_in_room_a(self, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-6):
         room_a_rect = DEFAULT_MUSEUM_LAYOUT.get_spawn_rects(margin)[0]
@@ -1115,6 +1135,315 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertAlmostEqual(info["status"]["callback_trigger_distance_meters"], 1.75)
             self.assertEqual(info["status"]["perceived_distracted_indices"], [])
             self.assertFalse(info["status"]["callback_visual_active"])
+        finally:
+            env.close()
+
+    def test_active_branch_reuses_analysis_for_pre_and_post_step_snapshots(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=140)
+            with patch.object(env, "_analyze_human_state", wraps=env._analyze_human_state) as mock_analyze:
+                with patch.object(env, "_build_callback_request", wraps=env._build_callback_request) as mock_callback:
+                    with patch.object(
+                        env,
+                        "_update_robot_emotion_and_visual",
+                        wraps=env._update_robot_emotion_and_visual,
+                    ) as mock_update:
+                        env.step(None)
+
+            self.assertEqual(mock_analyze.call_count, 2)
+            self.assertIsNotNone(mock_callback.call_args.kwargs["human_analysis"])
+            self.assertIsNotNone(mock_update.call_args.kwargs["human_analysis"])
+        finally:
+            env.close()
+
+    def test_wait_branch_reuses_single_post_step_analysis(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=141)
+            env.listen_intro_delay_steps = 1
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = False
+            env.robot.listen_done = False
+            env.robot.turn_done = True
+            self._set_robot_pose(env, x=1.0, y=5.0, yaw=0.0)
+            self._set_human_pose(env, env.humans[0], x=0.0, y=5.0, yaw=0.0)
+
+            env.step(None)
+            self.assertTrue(env.listen_wait_active)
+
+            with patch.object(env, "_analyze_human_state", wraps=env._analyze_human_state) as mock_analyze:
+                with patch.object(
+                    env,
+                    "_update_robot_emotion_and_visual",
+                    wraps=env._update_robot_emotion_and_visual,
+                ) as mock_update:
+                    env.step(None)
+
+            self.assertEqual(mock_analyze.call_count, 1)
+            self.assertIsNotNone(mock_update.call_args.kwargs["human_analysis"])
+        finally:
+            env.close()
+
+    def test_robot_base_color_writes_only_on_emotion_transitions(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=142)
+
+            self.assertFalse(env._apply_robot_base_color_from_robot_emotion())
+
+            env.robot.emotion = RobotEmotion.SAD
+            self.assertTrue(env._apply_robot_base_color_from_robot_emotion())
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.robot_base_geom_id],
+                env._robot_base_rgba_for_emotion(),
+                atol=1e-7,
+            )
+            self.assertFalse(env._apply_robot_base_color_from_robot_emotion())
+
+            env.robot.emotion = RobotEmotion.HAPPY
+            self.assertTrue(env._apply_robot_base_color_from_robot_emotion())
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.robot_base_geom_id],
+                env._robot_base_rgba_for_emotion(),
+                atol=1e-7,
+            )
+            self.assertFalse(env._apply_robot_base_color_from_robot_emotion())
+        finally:
+            env.close()
+
+    def test_robot_speaking_halo_writes_only_when_speaker_state_toggles(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=143)
+
+            self.assertFalse(env._apply_robot_speaking_halo_visual())
+
+            env.robot.set_speaker_active(True)
+            self.assertTrue(env._apply_robot_speaking_halo_visual())
+            self.assertGreater(float(env.model.geom_rgba[env.robot_speaking_halo_geom_id][3]), 0.0)
+            self.assertFalse(env._apply_robot_speaking_halo_visual())
+
+            env.robot.set_speaker_active(False)
+            self.assertTrue(env._apply_robot_speaking_halo_visual())
+            self.assertEqual(float(env.model.geom_rgba[env.robot_speaking_halo_geom_id][3]), 0.0)
+            self.assertFalse(env._apply_robot_speaking_halo_visual())
+        finally:
+            env.close()
+
+    def test_robot_text_label_priority_is_preserved_under_dirty_sync(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=144)
+            self.assertFalse(env._sync_robot_text_label_visibility())
+
+            env.robot.set_speaker_active(True)
+            self.assertTrue(env._sync_robot_text_label_visibility())
+            self.assertEqual(env._get_robot_text_label(), "explanation")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP], 1)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 0)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP], 0)
+            self.assertFalse(env._sync_robot_text_label_visibility())
+
+            self._set_callback_state(env, target_idx=1, phase=RobotCallbackPhase.CUE, cue_elapsed_steps=1)
+            self.assertTrue(env._sync_robot_text_label_visibility())
+            self.assertEqual(env._get_robot_text_label(), "Please_follow_me")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP], 0)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP], 0)
+
+            env.fear_active = True
+            self.assertTrue(env._sync_robot_text_label_visibility())
+            self.assertEqual(env._get_robot_text_label(), "I_need_more_space")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP], 0)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 0)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP], 1)
+        finally:
+            env.close()
+
+    def test_analyze_human_state_handles_empty_pose_array(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=145)
+            analysis = env._analyze_human_state(
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                human_xy=np.zeros((0, 2), dtype=np.float32),
+            )
+            self.assertEqual(analysis["perceived_distracted_indices"], [])
+            self.assertIsNone(analysis["callback_target_idx"])
+            self.assertIsNone(analysis["nearest_attack_threat"])
+            self.assertEqual(analysis["emotion_modes"], [])
+        finally:
+            env.close()
+
+    def test_analyze_human_state_selects_nearest_attack_and_farthest_eligible_callback_target(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=2.0,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=146)
+            env.humans[0].transition_to(HumanMode.ATTACK, reason="test_force_attack")
+            env.humans[1].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[2].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[3].transition_to(HumanMode.FOLLOWING, reason="test_force_following")
+            env.callback_triggered_for_current_distracted[1] = True
+
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[0] = np.array([0.5, 0.0], dtype=np.float32)
+            human_xy[1] = np.array([2.5, 0.0], dtype=np.float32)
+            human_xy[2] = np.array([3.5, 0.0], dtype=np.float32)
+            human_xy[3] = np.array([1.0, 1.0], dtype=np.float32)
+
+            analysis = env._analyze_human_state(
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                human_xy=human_xy,
+            )
+
+            self.assertEqual(analysis["perceived_distracted_indices"], [1, 2])
+            self.assertEqual(analysis["callback_target_idx"], 2)
+            self.assertIsNotNone(analysis["nearest_attack_threat"])
+            self.assertEqual(analysis["nearest_attack_threat"]["idx"], 0)
+            self.assertAlmostEqual(analysis["nearest_attack_threat"]["dist"], 0.5)
+            self.assertEqual(
+                analysis["emotion_modes"],
+                [HumanMode.ATTACK, HumanMode.FOLLOWING] + [human.mode for human in env.humans[4:]],
+            )
+        finally:
+            env.close()
+
+    def test_analyze_human_state_threshold_and_rearm_flags_control_callback_selection(self):
+        env = self._make_env(
+            callback_trigger_distance_meters=1.5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=147)
+            env.humans[0].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.humans[1].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
+            env.callback_triggered_for_current_distracted[1] = True
+
+            human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
+            human_xy[0] = np.array([1.5000, 0.0], dtype=np.float32)
+            human_xy[1] = np.array([1.5001, 0.0], dtype=np.float32)
+
+            analysis = env._analyze_human_state(
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                human_xy=human_xy,
+            )
+
+            self.assertEqual(analysis["perceived_distracted_indices"], [1])
+            self.assertIsNone(analysis["callback_target_idx"])
+        finally:
+            env.close()
+
+    def test_social_repulsion_matches_dense_reference_for_isolated_and_far_humans(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=148)
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [2.0, 0.0],
+                    [0.0, 2.0],
+                ],
+                dtype=np.float32,
+            )
+            repulsion = env._compute_social_repulsion(human_xy)
+            expected = self._dense_social_repulsion_reference(
+                human_xy,
+                social_distance=env.social_distance,
+                repulsion_gain=env.repulsion_gain,
+            )
+            np.testing.assert_allclose(repulsion, expected, atol=1e-7)
+        finally:
+            env.close()
+
+    def test_social_repulsion_matches_dense_reference_for_close_pair_and_boundary_neighbors(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=149)
+            human_xy = np.array(
+                [
+                    [0.79, 0.79],
+                    [1.01, 0.79],
+                    [0.79, 1.01],
+                    [1.01, 1.01],
+                ],
+                dtype=np.float32,
+            )
+            repulsion = env._compute_social_repulsion(human_xy)
+            expected = self._dense_social_repulsion_reference(
+                human_xy,
+                social_distance=env.social_distance,
+                repulsion_gain=env.repulsion_gain,
+            )
+            np.testing.assert_allclose(repulsion, expected, atol=1e-7)
+        finally:
+            env.close()
+
+    def test_social_repulsion_matches_dense_reference_for_mixed_local_cluster(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=150)
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [0.3, 0.1],
+                    [0.55, 0.2],
+                    [1.5, 1.5],
+                    [1.9, 1.5],
+                    [3.5, 3.5],
+                ],
+                dtype=np.float32,
+            )
+            repulsion = env._compute_social_repulsion(human_xy)
+            expected = self._dense_social_repulsion_reference(
+                human_xy,
+                social_distance=env.social_distance,
+                repulsion_gain=env.repulsion_gain,
+            )
+            np.testing.assert_allclose(repulsion, expected, atol=1e-7)
         finally:
             env.close()
 

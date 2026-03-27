@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from importlib import resources
 from typing import Optional
 
@@ -303,6 +304,9 @@ class MuseumEnv(gym.Env):
         self.fear_last_response = None
         self.fear_last_response_target_idx = None
         self.perceived_distracted_indices = []
+        self._last_robot_base_visual_emotion = None
+        self._last_robot_speaking_halo_active = None
+        self._last_robot_label_visibility_state = None
 
         # --- Initialize humans ---
         self.all_humans = [
@@ -352,10 +356,8 @@ class MuseumEnv(gym.Env):
             human.body_id = body_id
         self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
         self._label_scene_option = self._build_label_scene_option()
-        self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
-        self._sync_robot_text_label_visibility()
-        self._apply_robot_speaking_halo_visual()
+        self._sync_robot_visual_state(force=True)
 
     def _log_event(self, msg: str):
         """Emit environment-level log message when logging is enabled."""
@@ -638,9 +640,7 @@ class MuseumEnv(gym.Env):
     def _analyze_human_state(self, robot_xy, human_xy):
         """Collect per-step human aggregates used by robot decision and diagnostics."""
         perceived_distracted_indices = []
-        emotion_modes = []
         callback_target_idx = None
-        callback_target_dist = None
         nearest_attack_threat = None
         threshold = float(self.callback_trigger_distance_meters)
 
@@ -649,45 +649,53 @@ class MuseumEnv(gym.Env):
                 "perceived_distracted_indices": perceived_distracted_indices,
                 "callback_target_idx": callback_target_idx,
                 "nearest_attack_threat": nearest_attack_threat,
-                "emotion_modes": emotion_modes,
+                "emotion_modes": [],
             }
 
-        robot_x = float(robot_xy[0])
-        robot_y = float(robot_xy[1])
-        nearest_attack_dist = None
-        for idx, human in enumerate(self.humans):
-            mode = human.mode
-            if mode != HumanMode.DISTRACTED:
-                emotion_modes.append(mode)
-            if idx >= human_xy.shape[0]:
-                continue
+        n_humans = min(len(self.humans), int(human_xy.shape[0]))
+        if n_humans <= 0:
+            return {
+                "perceived_distracted_indices": perceived_distracted_indices,
+                "callback_target_idx": callback_target_idx,
+                "nearest_attack_threat": nearest_attack_threat,
+                "emotion_modes": [],
+            }
 
-            dx = float(human_xy[idx, 0]) - robot_x
-            dy = float(human_xy[idx, 1]) - robot_y
-            dist = float(np.hypot(dx, dy))
+        human_xy = np.asarray(human_xy[:n_humans], dtype=np.float32)
+        robot_xy = np.asarray(robot_xy, dtype=np.float32)
+        human_modes = [self.humans[idx].mode for idx in range(n_humans)]
+        emotion_modes = [mode for mode in human_modes if mode != HumanMode.DISTRACTED]
+        mode_array = np.asarray(human_modes, dtype=object)
+        dist = np.linalg.norm(human_xy - robot_xy, axis=1)
 
-            if mode == HumanMode.ATTACK:
-                if nearest_attack_dist is None or dist < nearest_attack_dist:
-                    nearest_attack_dist = dist
-                    nearest_attack_threat = {
-                        "idx": int(idx),
-                        "dist": float(dist),
-                        "xy": np.array(human_xy[idx], dtype=np.float32),
-                    }
-                continue
+        attack_mask = mode_array == HumanMode.ATTACK
+        if np.any(attack_mask):
+            attack_indices = np.flatnonzero(attack_mask)
+            nearest_attack_local_idx = int(np.argmin(dist[attack_mask]))
+            nearest_attack_idx = int(attack_indices[nearest_attack_local_idx])
+            nearest_attack_threat = {
+                "idx": nearest_attack_idx,
+                "dist": float(dist[nearest_attack_idx]),
+                "xy": np.array(human_xy[nearest_attack_idx], dtype=np.float32),
+            }
 
-            if mode != HumanMode.DISTRACTED:
-                continue
+        distracted_mask = mode_array == HumanMode.DISTRACTED
+        far_distracted_mask = distracted_mask & (dist > threshold)
+        perceived_distracted_indices = [int(idx) for idx in np.flatnonzero(far_distracted_mask)]
 
-            if dist > threshold:
-                perceived_distracted_indices.append(int(idx))
-                if (
-                    idx < len(self.callback_triggered_for_current_distracted)
-                    and not self.callback_triggered_for_current_distracted[idx]
-                    and (callback_target_dist is None or dist > callback_target_dist)
-                ):
-                    callback_target_idx = int(idx)
-                    callback_target_dist = float(dist)
+        rearm_eligible_mask = np.zeros(n_humans, dtype=bool)
+        eligible_count = min(n_humans, len(self.callback_triggered_for_current_distracted))
+        if eligible_count > 0:
+            rearm_eligible_mask[:eligible_count] = ~np.asarray(
+                self.callback_triggered_for_current_distracted[:eligible_count],
+                dtype=bool,
+            )
+
+        callback_candidate_mask = far_distracted_mask & rearm_eligible_mask
+        if np.any(callback_candidate_mask):
+            callback_candidate_indices = np.flatnonzero(callback_candidate_mask)
+            farthest_candidate_local_idx = int(np.argmax(dist[callback_candidate_mask]))
+            callback_target_idx = int(callback_candidate_indices[farthest_candidate_local_idx])
 
         return {
             "perceived_distracted_indices": perceived_distracted_indices,
@@ -936,18 +944,24 @@ class MuseumEnv(gym.Env):
         self.fear_current_response_mode = None
         self.fear_current_response_target_idx = None
 
-    def _apply_robot_base_color_from_robot_emotion(self):
-        """Sync robot base color with current emotion."""
+    def _robot_base_rgba_for_emotion(self):
+        """Return target robot base RGBA for the current emotion."""
         if self.robot.emotion == RobotEmotion.FEAR:
-            self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_FEAR
-            return
+            return ROBOT_COLOR_FEAR
         if self.robot.emotion == RobotEmotion.SAD:
-            self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_SAD
-            return
+            return ROBOT_COLOR_SAD
         if self.robot.emotion == RobotEmotion.HAPPY:
-            self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_HAPPY
-            return
-        self.model.geom_rgba[self.robot_base_geom_id] = ROBOT_COLOR_NATURAL
+            return ROBOT_COLOR_HAPPY
+        return ROBOT_COLOR_NATURAL
+
+    def _apply_robot_base_color_from_robot_emotion(self, force: bool = False) -> bool:
+        """Sync robot base color with current emotion only when visual state changes."""
+        current_emotion = str(self.robot.emotion)
+        if (not force) and self._last_robot_base_visual_emotion == current_emotion:
+            return False
+        self.model.geom_rgba[self.robot_base_geom_id] = self._robot_base_rgba_for_emotion()
+        self._last_robot_base_visual_emotion = current_emotion
+        return True
 
     def _sync_robot_speaker_state(self):
         """Update speaker on/off state from listening wait status."""
@@ -962,21 +976,43 @@ class MuseumEnv(gym.Env):
         """Return True only during callback cue phase."""
         return self._is_callback_cue_active()
 
-    def _sync_robot_text_label_visibility(self):
-        """Toggle robot text labels with priority: need-space > follow-me > explanation."""
+    def _robot_text_label_visibility_state(self):
+        """Return desired visibility tuple for robot text labels."""
         show_need_space = bool(self.fear_active)
         show_follow_me = (not show_need_space) and self._is_callback_visual_active()
         show_explanation = (not show_need_space) and (not show_follow_me) and bool(self.robot.speaker_active)
+        return (show_need_space, show_follow_me, show_explanation)
+
+    def _sync_robot_text_label_visibility(self, force: bool = False) -> bool:
+        """Toggle robot text labels with priority: need-space > follow-me > explanation."""
+        label_state = self._robot_text_label_visibility_state()
+        if (not force) and self._last_robot_label_visibility_state == label_state:
+            return False
+
+        show_need_space, show_follow_me, show_explanation = label_state
         self._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 1 if show_need_space else 0
         self._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 1 if show_follow_me else 0
         self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if show_explanation else 0
+        self._last_robot_label_visibility_state = label_state
+        return True
 
-    def _apply_robot_speaking_halo_visual(self):
-        """Show/hide speaking halo geometry based on speaker state."""
-        if self.robot.speaker_active:
+    def _apply_robot_speaking_halo_visual(self, force: bool = False) -> bool:
+        """Show/hide speaking halo geometry only when speaker state changes."""
+        speaker_active = bool(self.robot.speaker_active)
+        if (not force) and self._last_robot_speaking_halo_active == speaker_active:
+            return False
+        if speaker_active:
             self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_ON
-            return
-        self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
+        else:
+            self.model.geom_rgba[self.robot_speaking_halo_geom_id] = SPEAKING_HALO_RGBA_OFF
+        self._last_robot_speaking_halo_active = speaker_active
+        return True
+
+    def _sync_robot_visual_state(self, force: bool = False):
+        """Apply robot visuals only when the rendered state changed."""
+        self._apply_robot_base_color_from_robot_emotion(force=force)
+        self._sync_robot_text_label_visibility(force=force)
+        self._apply_robot_speaking_halo_visual(force=force)
 
     def _get_robot_text_label(self):
         """Return semantic name of currently active robot text cue."""
@@ -989,7 +1025,7 @@ class MuseumEnv(gym.Env):
         return "none"
 
     def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy, human_analysis=None):
-        """Update fear/happy/sad states and apply corresponding robot visuals."""
+        """Update fear/happy/sad state from one analyzed human snapshot."""
         if human_analysis is None:
             human_analysis = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
         fear_before = bool(self.fear_active)
@@ -1015,7 +1051,6 @@ class MuseumEnv(gym.Env):
         happy_after = int(self.robot.happy_hold_steps_remaining)
         if happy_before > 0 and happy_after == 0 and (not sad_now) and (not self.fear_active):
             events["happy_completed"] = True
-        self._apply_robot_base_color_from_robot_emotion()
 
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
@@ -1067,10 +1102,8 @@ class MuseumEnv(gym.Env):
         self._reset_human_listening_session_states()
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
-        self._apply_robot_base_color_from_robot_emotion()
         self._sync_robot_speaker_state()
-        self._sync_robot_text_label_visibility()
-        self._apply_robot_speaking_halo_visual()
+        self._sync_robot_visual_state(force=True)
 
         obs = self._get_obs()
         info = {}
@@ -1166,8 +1199,7 @@ class MuseumEnv(gym.Env):
             human_analysis=human_analysis,
         )
         self._sync_robot_speaker_state()
-        self._sync_robot_text_label_visibility()
-        self._apply_robot_speaking_halo_visual()
+        self._sync_robot_visual_state()
 
         human_v_follow, human_v_repulsion, human_v_hr = self._collect_human_velocity_components()
         human_state_snapshot = self._collect_human_state_snapshot()
@@ -1344,8 +1376,7 @@ class MuseumEnv(gym.Env):
         self._apply_fear_response_on_trigger(events)
         self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
-        self._sync_robot_text_label_visibility()
-        self._apply_robot_speaking_halo_visual()
+        self._sync_robot_visual_state()
         human_state_snapshot = self._collect_human_state_snapshot()
 
         snapshot = self._collect_step_snapshot(
@@ -1384,10 +1415,23 @@ class MuseumEnv(gym.Env):
         if not human_xy.size:
             return np.zeros((len(self.humans), 2), dtype=np.float32)
 
+        if self.social_distance <= 1e-6:
+            return np.zeros((human_xy.shape[0], 2), dtype=np.float32)
+
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        spatial_hash, cell_coords = self._build_social_repulsion_spatial_hash(human_xy)
         repulsion_vectors = np.zeros((human_xy.shape[0], 2), dtype=np.float32)
         for i in range(human_xy.shape[0]):
             pos = human_xy[i]
-            diff = pos - human_xy
+            candidate_indices = self._query_social_repulsion_neighbor_indices(
+                spatial_hash=spatial_hash,
+                cell_coord=(int(cell_coords[i, 0]), int(cell_coords[i, 1])),
+                self_idx=i,
+            )
+            if candidate_indices.size == 0:
+                continue
+
+            diff = pos - human_xy[candidate_indices]
             neighbor_dist = np.linalg.norm(diff, axis=1)
             mask = (neighbor_dist > 1e-6) & (neighbor_dist < self.social_distance)
             if np.any(mask):
@@ -1397,6 +1441,35 @@ class MuseumEnv(gym.Env):
                 repulsion_vectors[i] = self.repulsion_gain * repulsion
 
         return repulsion_vectors
+
+    def _build_social_repulsion_spatial_hash(self, human_xy):
+        """Bucket human positions into a fixed grid sized by social-distance radius."""
+        cell_size = float(self.social_distance)
+        cell_coords = np.floor(np.asarray(human_xy, dtype=np.float32) / cell_size).astype(np.int32)
+        spatial_hash = defaultdict(list)
+        for idx, coord in enumerate(cell_coords):
+            spatial_hash[(int(coord[0]), int(coord[1]))].append(int(idx))
+        return spatial_hash, cell_coords
+
+    @staticmethod
+    def _neighboring_spatial_hash_cells(cell_coord):
+        """Return the 3x3 neighborhood around one grid cell."""
+        cell_x, cell_y = int(cell_coord[0]), int(cell_coord[1])
+        return [
+            (neighbor_x, neighbor_y)
+            for neighbor_x in range(cell_x - 1, cell_x + 2)
+            for neighbor_y in range(cell_y - 1, cell_y + 2)
+        ]
+
+    def _query_social_repulsion_neighbor_indices(self, spatial_hash, cell_coord, self_idx: int):
+        """Return candidate neighbor indices from the local 3x3 spatial-hash neighborhood."""
+        candidate_indices = []
+        for neighbor_cell in self._neighboring_spatial_hash_cells(cell_coord):
+            candidate_indices.extend(spatial_hash.get(neighbor_cell, ()))
+        if not candidate_indices:
+            return np.empty((0,), dtype=np.int32)
+        candidates = np.asarray(candidate_indices, dtype=np.int32)
+        return candidates[candidates != int(self_idx)]
 
     def _update_listening_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
         """Apply the minimal listening-force controller to every active human."""
