@@ -442,6 +442,148 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         )
         np.testing.assert_allclose(human.current_waypoint, expected_impatient, atol=1e-7)
 
+    def test_assign_target_from_context_uses_reachable_point_for_follow_and_impatient_when_current_xy_given(self):
+        layout = MapLayout(
+            name="narrow_room",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        human = Human("probe", "person1", qpos_idx=3, max_speed=1.0, map_layout=layout)
+        current_xy = np.array([0.75, 0.5], dtype=np.float32)
+
+        follow_robot_pose = (0.1, 0.5, np.pi)
+        human.set_context(
+            index=0,
+            n_humans=1,
+            robot_pose=follow_robot_pose,
+            follow_radius=1.0,
+            fan_half_angle=np.deg2rad(60.0),
+            impatient_front_offset=1.0,
+        )
+        raw_follow = Human._compute_fan_target(
+            robot_pose=follow_robot_pose,
+            radius=1.0,
+            relative_angle=0.0,
+            base_angle_offset=np.pi,
+        )
+        expected_follow = human._find_farthest_walkable_point_on_segment(
+            current_xy,
+            raw_follow,
+            HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
+        human._assign_target_from_context(mode=HumanMode.FOLLOWING, current_xy=current_xy)
+        np.testing.assert_allclose(human.current_waypoint, expected_follow, atol=1e-7)
+        self.assertFalse(np.allclose(human.current_waypoint, raw_follow))
+
+        impatient_robot_pose = (0.9, 0.5, np.pi)
+        human.set_context(
+            index=0,
+            n_humans=1,
+            robot_pose=impatient_robot_pose,
+            follow_radius=1.0,
+            fan_half_angle=np.deg2rad(60.0),
+            impatient_front_offset=1.0,
+        )
+        raw_impatient = Human._compute_fan_target(
+            robot_pose=impatient_robot_pose,
+            radius=1.0,
+            relative_angle=0.0,
+            base_angle_offset=0.0,
+        )
+        expected_impatient = human._find_farthest_walkable_point_on_segment(
+            current_xy,
+            raw_impatient,
+            HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
+        human._assign_target_from_context(mode=HumanMode.IMPATIENT, current_xy=current_xy)
+        np.testing.assert_allclose(human.current_waypoint, expected_impatient, atol=1e-7)
+        self.assertFalse(np.allclose(human.current_waypoint, raw_impatient))
+
+    def test_following_target_near_wall_stays_on_reachable_segment(self):
+        layout = MapLayout(
+            name="right_wall_room",
+            default_xml_asset="museum_scene.xml",
+            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.5, 0.5),),
+        )
+        human = Human("probe", "person1", qpos_idx=3, max_speed=1.0, map_layout=layout)
+        current_xy = np.array([0.7, 0.5], dtype=np.float32)
+        robot_pose = (0.1, 0.5, np.pi)
+        human.set_context(
+            index=0,
+            n_humans=1,
+            robot_pose=robot_pose,
+            follow_radius=1.0,
+            fan_half_angle=np.deg2rad(60.0),
+        )
+
+        raw_follow = Human._compute_fan_target(
+            robot_pose=robot_pose,
+            radius=1.0,
+            relative_angle=0.0,
+            base_angle_offset=np.pi,
+        )
+        expected_follow = human._find_farthest_walkable_point_on_segment(
+            current_xy,
+            raw_follow,
+            HUMAN_WALL_FOOTPRINT_RADIUS,
+        )
+
+        human._assign_target_from_context(mode=HumanMode.FOLLOWING, current_xy=current_xy)
+
+        np.testing.assert_allclose(human.current_waypoint, expected_follow, atol=1e-7)
+        self.assertTrue(human._is_point_in_walkable(human.current_waypoint, HUMAN_WALL_FOOTPRINT_RADIUS))
+        self.assertFalse(np.allclose(human.current_waypoint, raw_follow))
+
+    def test_following_step_uses_pose_xy_for_reachable_target_without_nameerror(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=902)
+            human = env.humans[0]
+            human.transition_to(HumanMode.FOLLOWING, reason="test_force_following")
+            self._set_human_pose(env, human, x=9.7, y=2.0, yaw=0.0)
+
+            robot_pose = (8.7, 2.0, np.pi)
+            robot_xy = np.array(robot_pose[:2], dtype=np.float32)
+            human.set_context(
+                index=0,
+                n_humans=1,
+                robot_pose=robot_pose,
+                follow_radius=1.0,
+                fan_half_angle=np.deg2rad(60.0),
+                robot_xy=robot_xy,
+                robot_yaw=robot_pose[2],
+            )
+            human.set_following_distracted_window_active(False)
+
+            ctx = {
+                "robot_xy": robot_xy,
+                "robot_yaw": robot_pose[2],
+                "robot_speed": 0.5,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "dt": float(env.timestep),
+            }
+
+            action = human.step(env.model, env.data, ctx)
+
+            self.assertEqual(action.shape, (3,))
+            self.assertTrue(np.all(np.isfinite(action)))
+            self.assertTrue(
+                human._is_point_in_walkable(
+                    human.current_waypoint,
+                    HUMAN_WALL_FOOTPRINT_RADIUS,
+                )
+            )
+        finally:
+            env.close()
+
     def test_listening_moves_toward_robot_when_outside_distance_band(self):
         env = self._make_env(
             impatient_prob=0.0,
@@ -2243,6 +2385,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_nonfinal_listen_wait_completes_without_all_humans_reached(self):
         env = self._make_env(
+            n_humans=1,
             impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -2268,7 +2411,107 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertFalse(info["events"]["final_listen_ready"])
             self.assertFalse(info["status"]["listen_mode"])
             self.assertFalse(info["status"]["listen_wait"]["active"])
+            self.assertTrue(info["status"]["post_explanation_hold"]["active"])
+            self.assertTrue(env.post_explanation_hold_active)
+            self.assertNotEqual(info["humans"]["mode"][0], HumanMode.WANDERING)
             self.assertTrue(env.robot.listen_done)
+        finally:
+            env.close()
+
+    def test_post_explanation_hold_wait_role_does_not_reuse_stale_waypoint(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=117)
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = True
+            env.robot.listen_done = False
+            env.listen_wait_active = True
+            env.listen_wait_counter = env.listen_wait_steps - 1
+            env.listen_wait_is_final = False
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
+            stale_waypoint = np.array([0.5, 0.5], dtype=np.float32)
+            human.current_waypoint = stale_waypoint.copy()
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+            self._set_human_pose(env, human, x=3.5, y=1.0, yaw=0.0)
+
+            env.step(None)
+            _, _, terminated, truncated, info = env.step(None)
+
+            self.assertFalse(terminated)
+            self.assertFalse(truncated)
+            self.assertTrue(info["status"]["post_explanation_hold"]["active"])
+            self.assertEqual(info["humans"]["yield_role"][0], "wait")
+            self.assertEqual(info["humans"]["mode"][0], HumanMode.LISTENING)
+            action_xy = np.array(
+                [float(info["humans"]["action"]["vx"][0]), float(info["humans"]["action"]["vy"][0])],
+                dtype=np.float32,
+            )
+            self.assertLess(float(np.linalg.norm(action_xy)), 1e-4)
+            self.assertTrue(np.allclose(human.current_waypoint, stale_waypoint))
+        finally:
+            env.close()
+
+    def test_post_explanation_hold_close_human_gets_walkable_yield_target(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=118)
+            env.robot.current_waypoint_idx = 0
+            env.robot.listen_mode = True
+            env.robot.listen_done = False
+            env.listen_wait_active = True
+            env.listen_wait_counter = env.listen_wait_steps - 1
+            env.listen_wait_is_final = False
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+            self._set_human_pose(env, human, x=1.1, y=2.0, yaw=0.0)
+
+            _, _, terminated, truncated, info = env.step(None)
+
+            self.assertFalse(terminated)
+            self.assertFalse(truncated)
+            self.assertEqual(info["humans"]["yield_role"][0], "yield")
+            target_xy = np.array(info["humans"]["yield_target_xy"][0], dtype=np.float32)
+            self.assertTrue(human._is_point_in_walkable(target_xy, HUMAN_WALL_FOOTPRINT_RADIUS))
+            self.assertGreater(
+                float(np.linalg.norm(target_xy - np.array([2.0, 2.0], dtype=np.float32))),
+                float(np.linalg.norm(np.array([1.1, 2.0], dtype=np.float32) - np.array([2.0, 2.0], dtype=np.float32))),
+            )
+        finally:
+            env.close()
+
+    def test_post_explanation_hold_restores_following_after_robot_restart_threshold(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=119)
+            robot_xy = np.array([2.0, 2.0], dtype=np.float32)
+            human_xy = np.array([[3.0, 2.0]], dtype=np.float32)
+            env.follow_humans = False
+            env._start_post_explanation_hold(robot_xy=robot_xy, robot_yaw=0.0, human_xy=human_xy)
+
+            env._maybe_finish_post_explanation_hold(
+                robot_xy=np.array([2.3, 2.0], dtype=np.float32),
+                robot_speed=0.2,
+            )
+
+            self.assertFalse(env.post_explanation_hold_active)
+            self.assertTrue(env.follow_humans)
         finally:
             env.close()
 

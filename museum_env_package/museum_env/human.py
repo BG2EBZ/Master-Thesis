@@ -803,7 +803,7 @@ class Human:
         """
         self.context = HumanContext.from_kwargs(**kwargs)
 
-    def _assign_target_from_context(self, mode: Optional[str] = None):
+    def _assign_target_from_context(self, mode: Optional[str] = None, current_xy=None):
         """
         Decide where to stand based on social context.
         """
@@ -817,9 +817,10 @@ class Human:
         fan_half_angle = self.context.fan_half_angle
         relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
         target_mode = self.mode if mode is None else mode
+        raw_target_xy = None
         if target_mode == HumanMode.FOLLOWING:
             radius = self.context.follow_radius
-            self.current_waypoint = self._compute_fan_target(
+            raw_target_xy = self._compute_fan_target(
                 robot_pose=robot_pose,
                 radius=radius,
                 relative_angle=relative_angle,
@@ -830,12 +831,25 @@ class Human:
             radius = self.context.impatient_front_offset
             if radius is None:
                 radius = self.impatient_front_offset
-            self.current_waypoint = self._compute_fan_target(
+            raw_target_xy = self._compute_fan_target(
                 robot_pose=robot_pose,
                 radius=radius,
                 relative_angle=relative_angle,
                 base_angle_offset=0.0,
             )
+
+        if raw_target_xy is None:
+            return
+
+        if current_xy is not None:
+            self.current_waypoint = self._find_farthest_walkable_point_on_segment(
+                start_xy=np.array(current_xy, dtype=np.float32),
+                end_xy=raw_target_xy,
+                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+            )
+            return
+
+        self.current_waypoint = np.array(raw_target_xy, dtype=np.float32)
     
     def step(self, model, data, ctx):
         """
@@ -883,7 +897,8 @@ class Human:
                 self._log_event(f">>> {self.name} became DISTRACTED!")
                 return self._step_distracted(data, ctx, pose)
 
-            self._assign_target_from_context()
+            current_xy = np.array(pose[:2], dtype=np.float32)
+            self._assign_target_from_context(current_xy=current_xy)
             return self._step_following(data, ctx, pose)
 
         if self.mode == HumanMode.LISTENING:
@@ -1206,7 +1221,8 @@ class Human:
     def _step_impatient(self, data, ctx, pose):
         """IMPATIENT: fast following toward front slot, with timeout recovery."""
         self.impatient_timer += 1
-        self._assign_target_from_context()
+        x, y, _ = pose
+        self._assign_target_from_context(current_xy=np.array([x, y], dtype=np.float32))
         action = self._step_following(data, ctx, pose)
 
         if self.impatient_timer >= self.impatient_duration:

@@ -306,7 +306,7 @@ DEFAULT_MUSEUM_LAYOUT = MapLayout(
     ),
     robot_waypoints=(
         (1.0, 5.0),
-        (0.6, 4.5),
+        (1.0, 4.5),
         (1.0, 2.0),
         (8.5, 2.0),
         (8.5, -10.0),

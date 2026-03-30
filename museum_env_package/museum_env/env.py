@@ -40,8 +40,8 @@ MAX_STEPS_DEFAULT = 100000
 HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
 SOCIAL_DISTANCE_DEFAULT = 0.8
 REPULSION_GAIN_DEFAULT = 4.0
-FOLLOW_FAN_HALF_ANGLE_DEG = 85.0
-LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 80.0
+FOLLOW_FAN_HALF_ANGLE_DEG = 75.0
+LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 75.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
@@ -53,6 +53,13 @@ ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.1
+POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD = 0.5
+POST_EXPLANATION_HOLD_RESUME_DISTANCE = 2.5
+POST_EXPLANATION_YIELD_CORRIDOR_WIDTH = 0.8
+POST_EXPLANATION_YIELD_CLOSE_DISTANCE = 1.1
+POST_EXPLANATION_YIELD_DISTANCE = 0.5
+POST_EXPLANATION_YIELD_ROLE_WAIT = "wait"
+POST_EXPLANATION_YIELD_ROLE_YIELD = "yield"
 DIST_EPS = 1e-8
 HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
 HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
@@ -240,6 +247,13 @@ class MuseumEnv(gym.Env):
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
+        self.post_explanation_hold_active = False
+        self.post_explanation_hold_robot_start_xy = None
+        self.post_explanation_hold_anchor_robot_xy = None
+        self.post_explanation_hold_anchor_robot_yaw = 0.0
+        self.post_explanation_hold_roles = []
+        self.post_explanation_hold_targets = np.zeros((0, 2), dtype=np.float32)
+        self.post_explanation_hold_listen_radii = np.zeros((0,), dtype=np.float32)
         self.distracted_lambda_max_nd_per_sec = float(distracted_lambda_max_nd_per_sec)
         self.distracted_lambda_max_normal_per_sec = float(distracted_lambda_max_normal_per_sec)
         self.distracted_ramp_start_nd_seconds = float(distracted_ramp_start_nd_seconds)
@@ -498,6 +512,147 @@ class MuseumEnv(gym.Env):
         """Clear per-session listening counters and flags."""
         for human in self.humans:
             human.reset_listening_session_state()
+
+    def _clear_post_explanation_hold_state(self):
+        """Clear temporary state used right after a non-final explanation."""
+        self.post_explanation_hold_active = False
+        self.post_explanation_hold_robot_start_xy = None
+        self.post_explanation_hold_anchor_robot_xy = None
+        self.post_explanation_hold_anchor_robot_yaw = 0.0
+        self.post_explanation_hold_roles = []
+        self.post_explanation_hold_targets = np.zeros((0, 2), dtype=np.float32)
+        self.post_explanation_hold_listen_radii = np.zeros((0,), dtype=np.float32)
+
+    @staticmethod
+    def _scalar_cross_2d(a_xy, b_xy) -> float:
+        """Return the scalar z-component of the 2D cross product."""
+        return float(a_xy[0] * b_xy[1] - a_xy[1] * b_xy[0])
+
+    def _build_post_explanation_yield_target(self, human, current_xy, robot_xy, outbound_dir):
+        """Build one small walkable yield target using away-first, side-fallback search."""
+        current_xy = np.array(current_xy, dtype=np.float32)
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        outbound_dir = np.array(outbound_dir, dtype=np.float32)
+        diff = current_xy - robot_xy
+        dist_to_robot = float(np.linalg.norm(diff))
+        if dist_to_robot > 1e-6:
+            away_dir = diff / dist_to_robot
+        else:
+            away_dir = -outbound_dir
+            away_norm = float(np.linalg.norm(away_dir))
+            if away_norm <= 1e-6:
+                away_dir = np.array([1.0, 0.0], dtype=np.float32)
+            else:
+                away_dir = away_dir / away_norm
+
+        left_perp = np.array([-outbound_dir[1], outbound_dir[0]], dtype=np.float32)
+        left_norm = float(np.linalg.norm(left_perp))
+        if left_norm <= 1e-6:
+            left_perp = np.array([0.0, 1.0], dtype=np.float32)
+        else:
+            left_perp = left_perp / left_norm
+        right_perp = -left_perp
+
+        side_sign = self._scalar_cross_2d(diff, outbound_dir)
+        preferred_lateral = left_perp if side_sign >= 0.0 else right_perp
+        fallback_lateral = right_perp if side_sign >= 0.0 else left_perp
+        candidate_dirs = (away_dir, preferred_lateral, fallback_lateral)
+
+        current_clearance = abs(self._scalar_cross_2d(diff, outbound_dir))
+        best_target = current_xy.copy()
+        best_score = 0.0
+        for direction in candidate_dirs:
+            cand_xy = current_xy + float(POST_EXPLANATION_YIELD_DISTANCE) * np.array(direction, dtype=np.float32)
+            safe_xy = human._find_farthest_walkable_point_on_segment(
+                start_xy=current_xy,
+                end_xy=cand_xy,
+                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+            )
+            move_vec = safe_xy - current_xy
+            move_dist = float(np.linalg.norm(move_vec))
+            if move_dist <= 0.02:
+                continue
+
+            new_diff = safe_xy - robot_xy
+            new_dist = float(np.linalg.norm(new_diff))
+            new_clearance = abs(self._scalar_cross_2d(new_diff, outbound_dir))
+            score = (new_dist - dist_to_robot) + 0.5 * (new_clearance - current_clearance)
+            if score > best_score:
+                best_score = score
+                best_target = np.array(safe_xy, dtype=np.float32)
+
+        return best_target
+
+    def _start_post_explanation_hold(self, robot_xy, robot_yaw: float, human_xy):
+        """Start one short transition window instead of falling back to wandering."""
+        robot_xy = np.array(robot_xy, dtype=np.float32)
+        goal_xy = np.array(self.robot.get_current_waypoint(), dtype=np.float32)
+        outbound_vec = goal_xy - robot_xy
+        outbound_norm = float(np.linalg.norm(outbound_vec))
+        if outbound_norm <= 1e-6:
+            outbound_dir = np.array([np.cos(robot_yaw), np.sin(robot_yaw)], dtype=np.float32)
+            fallback_norm = float(np.linalg.norm(outbound_dir))
+            if fallback_norm <= 1e-6:
+                outbound_dir = np.array([1.0, 0.0], dtype=np.float32)
+            else:
+                outbound_dir = outbound_dir / fallback_norm
+        else:
+            outbound_dir = outbound_vec / outbound_norm
+
+        self.post_explanation_hold_active = True
+        self.post_explanation_hold_robot_start_xy = robot_xy.copy()
+        self.post_explanation_hold_anchor_robot_xy = robot_xy.copy()
+        self.post_explanation_hold_anchor_robot_yaw = float(robot_yaw)
+
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        n_humans = len(self.humans)
+        targets = np.zeros((n_humans, 2), dtype=np.float32)
+        listen_radii = np.zeros((n_humans,), dtype=np.float32)
+        roles = [POST_EXPLANATION_YIELD_ROLE_WAIT] * n_humans
+        half_width = 0.5 * float(POST_EXPLANATION_YIELD_CORRIDOR_WIDTH)
+        for idx, human in enumerate(self.humans):
+            if idx < human_xy.shape[0]:
+                current_xy = np.array(human_xy[idx], dtype=np.float32)
+            else:
+                current_xy = np.array(self.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            diff = current_xy - robot_xy
+            dist_to_robot = float(np.linalg.norm(diff))
+            forward = float(np.dot(diff, outbound_dir))
+            lateral = abs(self._scalar_cross_2d(diff, outbound_dir))
+            should_yield = bool(
+                dist_to_robot <= float(POST_EXPLANATION_YIELD_CLOSE_DISTANCE)
+                or (forward >= 0.0 and lateral <= half_width)
+            )
+
+            listen_radii[idx] = max(float(np.linalg.norm(diff)), self.listen_stand_threshold)
+            if should_yield:
+                roles[idx] = POST_EXPLANATION_YIELD_ROLE_YIELD
+                targets[idx] = self._build_post_explanation_yield_target(
+                    human=human,
+                    current_xy=current_xy,
+                    robot_xy=robot_xy,
+                    outbound_dir=outbound_dir,
+                )
+            else:
+                targets[idx] = current_xy
+
+        self.post_explanation_hold_roles = roles
+        self.post_explanation_hold_targets = targets
+        self.post_explanation_hold_listen_radii = listen_radii
+
+    def _maybe_finish_post_explanation_hold(self, robot_xy, robot_speed: float):
+        """Restore following once the robot has clearly resumed moving."""
+        if not self.post_explanation_hold_active or self.post_explanation_hold_robot_start_xy is None:
+            return
+        moved_dist = float(
+            np.linalg.norm(np.asarray(robot_xy, dtype=np.float32) - self.post_explanation_hold_robot_start_xy)
+        )
+        if (
+            robot_speed >= float(POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD)
+            and moved_dist >= float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
+        ):
+            self._clear_post_explanation_hold_state()
+            self.follow_humans = True
 
     def _update_human_listening_session_progress(self):
         """Advance per-human listening counters while the listening session is active."""
@@ -1076,6 +1231,7 @@ class MuseumEnv(gym.Env):
         self.listen_wait_active = False
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
+        self._clear_post_explanation_hold_state()
         self.attack_hit_once = False
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
@@ -1179,6 +1335,11 @@ class MuseumEnv(gym.Env):
                 self.robot.on_listening_complete()
                 self.follow_humans = False
                 self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
+                self._start_post_explanation_hold(
+                    robot_xy=np.array([rx, ry], dtype=np.float32),
+                    robot_yaw=ryaw,
+                    human_xy=human_xy,
+                )
                 self._log_event(">>> Listening wait complete. Resume MOVE to Room B.")
 
             self.listen_intro_delay_active = False
@@ -1188,8 +1349,7 @@ class MuseumEnv(gym.Env):
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
-
-            human_goals = np.array([h.current_waypoint for h in self.humans], dtype=np.float32)
+            human_goals = self._build_human_goals(human_xy=human_xy, robot_xy=robot_xy)
 
         human_analysis = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
         self._update_robot_emotion_and_visual(
@@ -1307,6 +1467,7 @@ class MuseumEnv(gym.Env):
                 f"silent 3s preparation started while humans regulate to a "
                 f"{self.listen_fan_radius:.2f}m ring inside the front 160 deg sector."
             )
+            self._clear_post_explanation_hold_state()
 
         # Apply robot action
         self.data.ctrl[:] = 0.0
@@ -1314,9 +1475,17 @@ class MuseumEnv(gym.Env):
 
         rx, ry, ryaw = self._get_robot_pose()
         robot_xy = np.array([rx, ry], dtype=np.float32)
+        self._maybe_finish_post_explanation_hold(
+            robot_xy=robot_xy,
+            robot_speed=float(np.hypot(rb_action[0], rb_action[1])),
+        )
 
         # Switch to follow once the robot has started moving toward the display
-        if not self.robot.listen_mode and not self.follow_humans:
+        if (
+            (not self.post_explanation_hold_active)
+            and (not self.robot.listen_mode)
+            and (not self.follow_humans)
+        ):
             moved_dist = float(np.hypot(rx - self.robot_start_xy[0], ry - self.robot_start_xy[1]))
             if moved_dist >= self.human_follow_distance:
                 self.follow_humans = True
@@ -1499,8 +1668,79 @@ class MuseumEnv(gym.Env):
 
         return human_actions
 
+    def _update_post_explanation_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
+        """Run the reuse-first post-explanation transition without falling back to wandering."""
+        n_humans = len(self.humans)
+        human_actions = np.zeros((n_humans, 3), dtype=np.float32)
+        anchor_robot_xy = (
+            np.array(self.post_explanation_hold_anchor_robot_xy, dtype=np.float32)
+            if self.post_explanation_hold_anchor_robot_xy is not None
+            else np.array(robot_xy, dtype=np.float32)
+        )
+        anchor_robot_yaw = float(self.post_explanation_hold_anchor_robot_yaw)
+        move_ctx = {
+            "robot_xy": robot_xy,
+            "robot_yaw": ryaw,
+            "robot_speed": float(np.hypot(self.data.ctrl[0], self.data.ctrl[1])),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "dt": self.timestep_float,
+        }
+
+        for i, human in enumerate(self.humans):
+            repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
+            role = (
+                self.post_explanation_hold_roles[i]
+                if i < len(self.post_explanation_hold_roles)
+                else POST_EXPLANATION_YIELD_ROLE_WAIT
+            )
+            target_xy = (
+                np.array(self.post_explanation_hold_targets[i], dtype=np.float32)
+                if i < len(self.post_explanation_hold_targets)
+                else np.array(self.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            )
+
+            if human.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT, HumanMode.ATTACK):
+                move_ctx["repulsion"] = repulsion_vec
+                human_action = human.step(self.model, self.data, move_ctx)
+            elif role == POST_EXPLANATION_YIELD_ROLE_YIELD:
+                human.set_mode(HumanMode.FOLLOWING)
+                human.set_following_distracted_window_active(False)
+                human.current_waypoint = target_xy.copy()
+                move_ctx["repulsion"] = repulsion_vec
+                human_action = human._step_following(self.data, move_ctx, human._get_pose(self.data))
+            else:
+                human.set_mode(HumanMode.LISTENING)
+                human.set_following_distracted_window_active(False)
+                listen_ctx = {
+                    "robot_xy": anchor_robot_xy,
+                    "robot_yaw": anchor_robot_yaw,
+                    "robot_speed": 0.0,
+                    "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
+                    "listen_radius": (
+                        float(self.post_explanation_hold_listen_radii[i])
+                        if i < len(self.post_explanation_hold_listen_radii)
+                        else self.listen_fan_radius
+                    ),
+                    "stand_threshold": self.listen_stand_threshold,
+                    "listening_sector_half_angle": self.listen_front_sector_half_angle,
+                    "dt": self.timestep_float,
+                }
+                human_action = human.step(self.model, self.data, listen_ctx)
+
+            human_actions[i] = human_action
+            ctrl_idx = 3 + i * 3
+            self.data.ctrl[ctrl_idx:ctrl_idx + 3] = human_action
+
+        return human_actions
+
     def _update_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
         """Update all humans and write their commands to control buffer."""
+        if self.post_explanation_hold_active:
+            return self._update_post_explanation_humans_and_apply_ctrl(
+                robot_xy=robot_xy,
+                ryaw=ryaw,
+                repulsion_vectors=repulsion_vectors,
+            )
         if self.robot.listen_mode:
             return self._update_listening_humans_and_apply_ctrl(
                 robot_xy=robot_xy,
@@ -1637,7 +1877,9 @@ class MuseumEnv(gym.Env):
 
         goals = np.empty((n_humans, 2), dtype=np.float32)
         for idx, human in enumerate(self.humans):
-            if human.mode == HumanMode.LISTENING:
+            if self.post_explanation_hold_active and idx < len(self.post_explanation_hold_targets):
+                goals[idx] = np.array(self.post_explanation_hold_targets[idx], dtype=np.float32)
+            elif human.mode == HumanMode.LISTENING:
                 goals[idx] = robot_xy
             else:
                 goals[idx] = human.current_waypoint
@@ -1649,7 +1891,10 @@ class MuseumEnv(gym.Env):
         human_in_listening_front_sector = np.zeros(len(self.humans), dtype=bool)
         robot_xy_arr = None if robot_xy is None else np.asarray(robot_xy, dtype=np.float32)
         for i, (human, pos, goal) in enumerate(zip(self.humans, human_xy, human_goals)):
-            if human.mode == HumanMode.LISTENING and robot_xy_arr is not None and robot_yaw is not None:
+            if self.post_explanation_hold_active and i < len(self.post_explanation_hold_targets):
+                dist_to_goal = float(np.linalg.norm(pos - goal))
+                reached = dist_to_goal < HUMAN_GOAL_THRESHOLD
+            elif human.mode == HumanMode.LISTENING and robot_xy_arr is not None and robot_yaw is not None:
                 dist_to_robot = float(np.linalg.norm(pos - robot_xy_arr))
                 in_sector = self._is_human_in_listening_front_sector(
                     human=human,
@@ -1732,6 +1977,9 @@ class MuseumEnv(gym.Env):
             "all_humans_reached": bool(all_humans_reached),
             "active_overwhelmed_indices": human_state_snapshot["active_overwhelmed_indices"],
             "active_attack_indices": human_state_snapshot["active_attack_indices"],
+            "post_explanation_hold_active": bool(self.post_explanation_hold_active),
+            "human_yield_role": list(self.post_explanation_hold_roles),
+            "human_yield_target_xy": np.array(self.post_explanation_hold_targets, dtype=np.float32),
         }
 
     def _build_info(
@@ -1806,6 +2054,9 @@ class MuseumEnv(gym.Env):
                     "steps": int(self.listen_wait_steps),
                     "remaining": int(listen_wait_remaining),
                     "is_final": bool(self.listen_wait_is_final),
+                },
+                "post_explanation_hold": {
+                    "active": bool(snapshot["post_explanation_hold_active"]),
                 },
                 "callback_active": bool(self.robot.callback_active),
                 "callback_target_idx": (
@@ -1910,6 +2161,8 @@ class MuseumEnv(gym.Env):
                 "overwhelmed_stage": snapshot["human_overwhelmed_stage"],
                 "overwhelmed_leave_timer": snapshot["human_overwhelmed_leave_timer"],
                 "impatient_timer": snapshot["human_impatient_timer"],
+                "yield_role": snapshot["human_yield_role"],
+                "yield_target_xy": snapshot["human_yield_target_xy"],
                 "reached_goal_indices": snapshot["human_reached_goal"],
                 "all_reached": bool(snapshot["all_humans_reached"]),
                 "action": {
