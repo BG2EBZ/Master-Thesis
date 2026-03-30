@@ -40,8 +40,8 @@ MAX_STEPS_DEFAULT = 100000
 HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
 SOCIAL_DISTANCE_DEFAULT = 0.8
 REPULSION_GAIN_DEFAULT = 4.0
-FOLLOW_FAN_HALF_ANGLE_DEG = 75.0
-LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 75.0
+FOLLOW_FAN_HALF_ANGLE_DEG = 80.0
+LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 70.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
@@ -1712,8 +1712,8 @@ class MuseumEnv(gym.Env):
                 human.set_mode(HumanMode.LISTENING)
                 human.set_following_distracted_window_active(False)
                 listen_ctx = {
-                    "robot_xy": anchor_robot_xy,
-                    "robot_yaw": anchor_robot_yaw,
+                    "robot_xy": robot_xy,
+                    "robot_yaw": ryaw,
                     "robot_speed": 0.0,
                     "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
                     "listen_radius": (
@@ -1725,7 +1725,14 @@ class MuseumEnv(gym.Env):
                     "listening_sector_half_angle": self.listen_front_sector_half_angle,
                     "dt": self.timestep_float,
                 }
-                human_action = human.step(self.model, self.data, listen_ctx)
+                human_action = human._step_listening_with_anchor_target_and_live_repulsion(
+                    self.data,
+                    listen_ctx,
+                    human._get_pose(self.data),
+                    anchor_robot_xy=anchor_robot_xy,
+                    anchor_robot_yaw=anchor_robot_yaw,
+                    live_robot_xy=robot_xy,
+                )
 
             human_actions[i] = human_action
             ctrl_idx = 3 + i * 3

@@ -11,6 +11,8 @@ from museum_env.env import (
     INACTIVE_HUMAN_PARK_X,
     MOVE_BACK_SPEED,
     MuseumEnv,
+    POST_EXPLANATION_HOLD_RESUME_DISTANCE,
+    POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD,
     ROBOT_EXPLANATION_LABEL_GROUP,
     ROBOT_FOLLOWME_LABEL_GROUP,
     ROBOT_NEED_SPACE_LABEL_GROUP,
@@ -2457,6 +2459,82 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_anchor_listening_helper_keeps_hold_target_without_live_robot_pressure(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=120)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_anchor_wait")
+            self._set_human_pose(env, human, x=3.5, y=1.0, yaw=0.0)
+            pose = human._get_pose(env.data)
+            ctx = {
+                "robot_xy": np.array([4.5, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "robot_speed": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": float(np.linalg.norm(np.array([3.5, 1.0], dtype=np.float32) - np.array([2.0, 2.0], dtype=np.float32))),
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "dt": float(env.timestep),
+            }
+
+            action = human._step_listening_with_anchor_target_and_live_repulsion(
+                env.data,
+                ctx,
+                pose,
+                anchor_robot_xy=np.array([2.0, 2.0], dtype=np.float32),
+                anchor_robot_yaw=0.0,
+                live_robot_xy=np.array([4.5, 1.0], dtype=np.float32),
+            )
+
+            self.assertLess(float(np.linalg.norm(action[:2])), 1e-4)
+        finally:
+            env.close()
+
+    def test_anchor_listening_helper_uses_live_robot_repulsion_when_robot_approaches(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=121)
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_anchor_wait")
+            self._set_human_pose(env, human, x=3.5, y=1.0, yaw=0.0)
+            pose = human._get_pose(env.data)
+            ctx = {
+                "robot_xy": np.array([3.9, 1.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "robot_speed": 0.2,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "listen_radius": float(np.linalg.norm(np.array([3.5, 1.0], dtype=np.float32) - np.array([2.0, 2.0], dtype=np.float32))),
+                "stand_threshold": env.listen_stand_threshold,
+                "listening_sector_half_angle": env.listen_front_sector_half_angle,
+                "dt": float(env.timestep),
+            }
+
+            action = human._step_listening_with_anchor_target_and_live_repulsion(
+                env.data,
+                ctx,
+                pose,
+                anchor_robot_xy=np.array([2.0, 2.0], dtype=np.float32),
+                anchor_robot_yaw=0.0,
+                live_robot_xy=np.array([3.9, 1.0], dtype=np.float32),
+            )
+
+            self.assertLess(float(action[0]), 0.0)
+            self.assertGreater(float(np.linalg.norm(action[:2])), 1e-4)
+            self.assertLess(float(human.last_v_hr[0]), 0.0)
+        finally:
+            env.close()
+
     def test_post_explanation_hold_close_human_gets_walkable_yield_target(self):
         env = self._make_env(
             n_humans=1,
@@ -2506,8 +2584,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env._start_post_explanation_hold(robot_xy=robot_xy, robot_yaw=0.0, human_xy=human_xy)
 
             env._maybe_finish_post_explanation_hold(
-                robot_xy=np.array([2.3, 2.0], dtype=np.float32),
-                robot_speed=0.2,
+                robot_xy=np.array([2.0 + POST_EXPLANATION_HOLD_RESUME_DISTANCE + 0.1, 2.0], dtype=np.float32),
+                robot_speed=POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD + 0.1,
             )
 
             self.assertFalse(env.post_explanation_hold_active)

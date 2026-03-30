@@ -999,6 +999,79 @@ class Human:
         action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
+    def _step_listening_with_anchor_target_and_live_repulsion(
+        self,
+        data,
+        ctx,
+        pose,
+        *,
+        anchor_robot_xy,
+        anchor_robot_yaw: float,
+        live_robot_xy,
+    ):
+        """LISTENING variant using an anchor pose for target geometry and a live pose for HR repulsion."""
+        del data
+        x, y, yaw = pose
+        if anchor_robot_xy is None:
+            self.last_v_follow = np.zeros(2, dtype=np.float32)
+            self.last_v_repulsion = np.zeros(2, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            self.last_in_listening_front_sector = False
+            return np.zeros(3, dtype=np.float32)
+
+        current_xy = np.array([x, y], dtype=np.float32)
+        anchor_robot_xy = np.asarray(anchor_robot_xy, dtype=np.float32)
+        live_robot_xy = (
+            anchor_robot_xy
+            if live_robot_xy is None
+            else np.asarray(live_robot_xy, dtype=np.float32)
+        )
+        listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
+        sector_half_angle = float(
+            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
+        )
+        to_anchor_robot = anchor_robot_xy - current_xy
+        dist_to_anchor_robot = float(np.hypot(float(to_anchor_robot[0]), float(to_anchor_robot[1])))
+        desired_yaw = (
+            np.arctan2(to_anchor_robot[1], to_anchor_robot[0])
+            if dist_to_anchor_robot > NORM_EPS
+            else float(anchor_robot_yaw)
+        )
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+        self.last_in_listening_front_sector = self.is_within_listening_front_sector(
+            point_xy=current_xy,
+            robot_xy=anchor_robot_xy,
+            robot_yaw=float(anchor_robot_yaw),
+            sector_half_angle=sector_half_angle,
+        )
+
+        target_xy = self._compute_listening_sector_target_point(
+            current_xy=current_xy,
+            robot_xy=anchor_robot_xy,
+            robot_yaw=float(anchor_robot_yaw),
+            listen_radius=listen_radius,
+            sector_half_angle=sector_half_angle,
+        )
+        v_goal = np.array(LISTENING_RING_GAIN * (target_xy - current_xy), dtype=np.float32)
+        v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
+        v_hr = self._compute_hr_spacing_force(
+            current_xy=current_xy,
+            robot_xy=live_robot_xy,
+            distance_min=self.hr_distance_min,
+            distance_max=None,
+        )
+
+        v_total = v_goal + v_repulsion + v_hr
+        speed = float(np.linalg.norm(v_total))
+        if speed > self.max_speed and speed > NORM_EPS:
+            v_total = v_total / speed * self.max_speed
+
+        self.last_v_follow = np.array(v_goal, dtype=np.float32)
+        self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
+        self.last_v_hr = np.array(v_hr, dtype=np.float32)
+        action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
+
     def _step_distracted(self, data, ctx, pose):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
         if self.distracted_source == DISTRACTED_SOURCE_LISTENING:
