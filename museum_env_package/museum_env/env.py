@@ -390,6 +390,7 @@ class MuseumEnv(gym.Env):
             self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
         if hasattr(self, "timestep_float"):
             self._reset_hh_distance_metrics_state()
+            self._reset_hr_distance_metrics_state()
 
     def _sample_active_human_spawn_states(self, robot_xy):
         """Sample collision-free initial poses for the active humans."""
@@ -1233,6 +1234,21 @@ class MuseumEnv(gym.Env):
         self.hh_nearest_distance_rolling_count = np.zeros((n_humans,), dtype=np.int32)
         self.hh_nearest_distance_window_cursor = 0
 
+    def _reset_hr_distance_metrics_state(self, window_steps: Optional[int] = None):
+        """Reset rolling human-robot distance metrics for the current active population."""
+        n_humans = len(self.humans)
+        if window_steps is None:
+            window_steps = max(
+                1,
+                int(round(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS / self.timestep_float)),
+            )
+        self.hr_distance_window_steps = int(max(1, window_steps))
+        self.hr_distance_history = np.zeros((self.hr_distance_window_steps, n_humans), dtype=np.float32)
+        self.hr_distance_valid_history = np.zeros((self.hr_distance_window_steps, n_humans), dtype=bool)
+        self.hr_distance_rolling_sum = np.zeros((n_humans,), dtype=np.float32)
+        self.hr_distance_rolling_count = np.zeros((n_humans,), dtype=np.int32)
+        self.hr_distance_window_cursor = 0
+
     @staticmethod
     def _compute_nearest_human_distances(human_xy):
         """Return each human's nearest human-human Euclidean distance."""
@@ -1284,6 +1300,51 @@ class MuseumEnv(gym.Env):
             ).astype(np.float32)
         return rolling_mean
 
+    @staticmethod
+    def _compute_human_robot_distances(human_xy, robot_xy):
+        """Return each human's Euclidean distance to the robot."""
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        if human_xy.size == 0:
+            return np.zeros((0,), dtype=np.float32)
+        robot_xy = np.asarray(robot_xy, dtype=np.float32)
+        return np.linalg.norm(human_xy - robot_xy[None, :], axis=1).astype(np.float32)
+
+    def _update_hr_distance_metrics(self, human_robot_distance):
+        """Update the 1-second rolling mean of per-human human-robot distances."""
+        human_robot_distance = np.asarray(human_robot_distance, dtype=np.float32)
+        if human_robot_distance.shape != (len(self.humans),):
+            raise ValueError(
+                "human_robot_distance shape must match active humans, "
+                f"got {human_robot_distance.shape} for {len(self.humans)} humans"
+            )
+        if human_robot_distance.size == 0:
+            return np.zeros((0,), dtype=np.float32)
+
+        cursor = int(self.hr_distance_window_cursor)
+        old_valid = self.hr_distance_valid_history[cursor]
+        old_values = self.hr_distance_history[cursor]
+        if np.any(old_valid):
+            self.hr_distance_rolling_sum[old_valid] -= old_values[old_valid]
+            self.hr_distance_rolling_count[old_valid] -= 1
+
+        new_valid = np.isfinite(human_robot_distance)
+        self.hr_distance_history[cursor] = human_robot_distance
+        self.hr_distance_valid_history[cursor] = new_valid
+        if np.any(new_valid):
+            self.hr_distance_rolling_sum[new_valid] += human_robot_distance[new_valid]
+            self.hr_distance_rolling_count[new_valid] += 1
+
+        self.hr_distance_window_cursor = (cursor + 1) % self.hr_distance_window_steps
+
+        rolling_mean = np.full(human_robot_distance.shape, np.nan, dtype=np.float32)
+        valid_mean = self.hr_distance_rolling_count > 0
+        if np.any(valid_mean):
+            rolling_mean[valid_mean] = (
+                self.hr_distance_rolling_sum[valid_mean]
+                / self.hr_distance_rolling_count[valid_mean]
+            ).astype(np.float32)
+        return rolling_mean
+
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
         super().reset(seed=seed)
@@ -1326,6 +1387,7 @@ class MuseumEnv(gym.Env):
         self.fear_last_response_target_idx = None
         self.perceived_distracted_indices = []
         self._reset_hh_distance_metrics_state()
+        self._reset_hr_distance_metrics_state()
 
         # Reset humans
         for human in self.humans:
@@ -1386,8 +1448,11 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
+        robot_xy = np.array([rx, ry], dtype=np.float32)
         nearest_human_distance = self._compute_nearest_human_distances(human_xy)
         nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
+        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
+        human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
 
         wx, wy = self.robot.get_current_waypoint()
         dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
@@ -1460,6 +1525,8 @@ class MuseumEnv(gym.Env):
             human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
+            human_robot_distance=human_robot_distance,
+            human_robot_distance_mean_1s=human_robot_distance_mean_1s,
             human_state_snapshot=human_state_snapshot,
             human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
@@ -1589,6 +1656,8 @@ class MuseumEnv(gym.Env):
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
         nearest_human_distance = self._compute_nearest_human_distances(human_xy)
         nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
+        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
+        human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
 
         human_goals = self._build_human_goals(
             human_xy=human_xy,
@@ -1648,6 +1717,8 @@ class MuseumEnv(gym.Env):
             human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
+            human_robot_distance=human_robot_distance,
+            human_robot_distance_mean_1s=human_robot_distance_mean_1s,
             human_state_snapshot=human_state_snapshot,
             human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
@@ -2022,6 +2093,8 @@ class MuseumEnv(gym.Env):
         human_v_hr,
         nearest_human_distance,
         nearest_human_distance_mean_1s,
+        human_robot_distance,
+        human_robot_distance_mean_1s,
         human_state_snapshot,
         human_in_listening_front_sector,
         human_reached_goal,
@@ -2058,6 +2131,8 @@ class MuseumEnv(gym.Env):
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "nearest_human_distance": np.array(nearest_human_distance, dtype=np.float32),
             "nearest_human_distance_mean_1s": np.array(nearest_human_distance_mean_1s, dtype=np.float32),
+            "human_robot_distance": np.array(human_robot_distance, dtype=np.float32),
+            "human_robot_distance_mean_1s": np.array(human_robot_distance_mean_1s, dtype=np.float32),
             "human_mode": human_state_snapshot["human_mode"],
             "human_profile": human_state_snapshot["human_profile"],
             "human_distracted_timer": human_state_snapshot["human_distracted_timer"],
@@ -2231,6 +2306,8 @@ class MuseumEnv(gym.Env):
                 "humans": {
                     "nearest_human_distance": snapshot["nearest_human_distance"],
                     "nearest_human_distance_mean_1s": snapshot["nearest_human_distance_mean_1s"],
+                    "human_robot_distance": snapshot["human_robot_distance"],
+                    "human_robot_distance_mean_1s": snapshot["human_robot_distance_mean_1s"],
                     "window_seconds": float(self.hh_distance_window_seconds),
                     "window_steps": int(self.hh_distance_window_steps),
                 },

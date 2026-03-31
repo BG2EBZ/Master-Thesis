@@ -5,6 +5,7 @@ from test_env import (
     SLEEP_SCALE_MAX,
     SLEEP_SCALE_MIN,
     _build_hh_distance_mean_1s_extra,
+    _build_hr_distance_mean_1s_extra,
     _combine_periodic_extras,
     _update_sleep_scale_from_events,
     build_arg_parser,
@@ -92,6 +93,24 @@ class TestDemoSpeedControls(unittest.TestCase):
         self.assertEqual(_build_hh_distance_mean_1s_extra({"metrics": {}}), "")
         self.assertEqual(_build_hh_distance_mean_1s_extra(None), "")
 
+    def test_build_hr_distance_mean_1s_extra_formats_all_humans(self):
+        info = {
+            "metrics": {
+                "humans": {
+                    "human_robot_distance_mean_1s": [1.823, 2.04, float("nan")],
+                }
+            }
+        }
+
+        extra = _build_hr_distance_mean_1s_extra(info)
+
+        self.assertEqual(extra, "hr_mean_1s=[h1:1.82, h2:2.04, h3:nan]")
+
+    def test_build_hr_distance_mean_1s_extra_returns_empty_for_missing_metrics(self):
+        self.assertEqual(_build_hr_distance_mean_1s_extra({}), "")
+        self.assertEqual(_build_hr_distance_mean_1s_extra({"metrics": {}}), "")
+        self.assertEqual(_build_hr_distance_mean_1s_extra(None), "")
+
     def test_combine_periodic_extras_preserves_single_or_multiple_parts(self):
         self.assertEqual(_combine_periodic_extras("", "hh_mean_1s=[h1:1.00]"), "hh_mean_1s=[h1:1.00]")
         self.assertEqual(_combine_periodic_extras("follow_eff/start=[h1:0.1/1.0s]", ""), "follow_eff/start=[h1:0.1/1.0s]")
@@ -102,6 +121,13 @@ class TestDemoSpeedControls(unittest.TestCase):
             ),
             "follow_eff/start=[h1:0.1/1.0s], hh_mean_1s=[h1:1.00]",
         )
+        self.assertEqual(
+            _combine_periodic_extras(
+                "hh_mean_1s=[h1:1.00]",
+                "hr_mean_1s=[h1:2.00]",
+            ),
+            "hh_mean_1s=[h1:1.00], hr_mean_1s=[h1:2.00]",
+        )
 
     def test_arg_parser_accepts_hh_distance_mean_flag(self):
         parser = build_arg_parser()
@@ -109,6 +135,13 @@ class TestDemoSpeedControls(unittest.TestCase):
         args = parser.parse_args(["--print-hh-distance-mean-1s"])
 
         self.assertTrue(args.print_hh_distance_mean_1s)
+
+    def test_arg_parser_accepts_hr_distance_mean_flag(self):
+        parser = build_arg_parser()
+
+        args = parser.parse_args(["--print-hr-distance-mean-1s"])
+
+        self.assertTrue(args.print_hr_distance_mean_1s)
 
 
 if __name__ == "__main__":

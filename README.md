@@ -16,9 +16,11 @@
 - `info["humans"]["impatient_timer"]`
 - `info["humans"]["impatient_cooldown_timer"]`
 
-`info["metrics"]["humans"]` includes human-human spacing metrics:
+`info["metrics"]["humans"]` includes per-human distance metrics:
 - `info["metrics"]["humans"]["nearest_human_distance"]`
 - `info["metrics"]["humans"]["nearest_human_distance_mean_1s"]`
+- `info["metrics"]["humans"]["human_robot_distance"]`
+- `info["metrics"]["humans"]["human_robot_distance_mean_1s"]`
 - `info["metrics"]["humans"]["window_seconds"]`
 - `info["metrics"]["humans"]["window_steps"]`
 
@@ -33,6 +35,7 @@ if info["events"]["final_listen_ready"]:
 print(info["robot"]["pose_xy"])
 print(info["humans"]["action"]["vx"])
 print(info["metrics"]["humans"]["nearest_human_distance_mean_1s"])
+print(info["metrics"]["humans"]["human_robot_distance_mean_1s"])
 print(info["status"]["listen_wait"]["remaining"])
 ```
 
@@ -40,6 +43,7 @@ print(info["status"]["listen_wait"]["remaining"])
 
 - Interactive near real-time demo (default): `python3 test_env.py --mode demo`
 - Periodic printing human human distance (nearest): `python3 test_env.py --mode train --rtf-print-every 500 --print-hh-distance-mean-1s`
+- Periodic printing human robot distance: `python3 test_env.py --mode train --rtf-print-every 500 --print-hr-distance-mean-1s`
 - Strict real-time alignment demo: `python3 test_env.py --mode demo --realtime-policy strict`
 - Fast training run (no render, no sleep): `python3 test_env.py --mode train`
 - Video recording with simulation-time playback: `python3 test_env.py --mode record --video-fps 500`

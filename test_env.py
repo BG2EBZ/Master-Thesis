@@ -194,6 +194,30 @@ def _build_hh_distance_mean_1s_extra(info):
     return f"hh_mean_1s=[{', '.join(chunks)}]"
 
 
+def _build_hr_distance_mean_1s_extra(info):
+    if info is None:
+        return ""
+
+    try:
+        hr_mean_1s = info["metrics"]["humans"]["human_robot_distance_mean_1s"]
+    except (KeyError, TypeError):
+        return ""
+
+    try:
+        values = list(hr_mean_1s)
+    except TypeError:
+        return ""
+    if not values:
+        return ""
+
+    chunks = []
+    for idx, value in enumerate(values, start=1):
+        value_float = float(value)
+        value_str = "nan" if value_float != value_float else f"{value_float:.2f}"
+        chunks.append(f"h{idx}:{value_str}")
+    return f"hr_mean_1s=[{', '.join(chunks)}]"
+
+
 def _combine_periodic_extras(*extras):
     parts = [str(extra) for extra in extras if str(extra)]
     return ", ".join(parts)
@@ -361,6 +385,11 @@ def _run_demo_stable(
                             if args.print_hh_distance_mean_1s
                             else ""
                         ),
+                        (
+                            _build_hr_distance_mean_1s_extra(info)
+                            if args.print_hr_distance_mean_1s
+                            else ""
+                        ),
                     ),
                 )
 
@@ -470,6 +499,11 @@ def _run_demo_strict(
                         if args.print_hh_distance_mean_1s
                         else ""
                     ),
+                    (
+                        _build_hr_distance_mean_1s_extra(info)
+                        if args.print_hr_distance_mean_1s
+                        else ""
+                    ),
                 ),
             )
 
@@ -497,6 +531,11 @@ def _run_fast_loop(env, args, sim_dt, tag):
                     (
                         _build_hh_distance_mean_1s_extra(info)
                         if args.print_hh_distance_mean_1s
+                        else ""
+                    ),
+                    (
+                        _build_hr_distance_mean_1s_extra(info)
+                        if args.print_hr_distance_mean_1s
                         else ""
                     ),
                 ),
@@ -634,6 +673,11 @@ def build_arg_parser():
         "--print-hh-distance-mean-1s",
         action="store_true",
         help="print per-human nearest_human_distance_mean_1s at each rtf_print_every interval",
+    )
+    parser.add_argument(
+        "--print-hr-distance-mean-1s",
+        action="store_true",
+        help="print per-human human_robot_distance_mean_1s at each rtf_print_every interval",
     )
     return parser
 
