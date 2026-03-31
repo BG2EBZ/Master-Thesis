@@ -170,6 +170,35 @@ def _build_distracted_progress_extra(base_env, info, sim_dt):
     return f"listen_eff/start=[{', '.join(listening_chunks)}]"
 
 
+def _build_hh_distance_mean_1s_extra(info):
+    if info is None:
+        return ""
+
+    try:
+        hh_mean_1s = info["metrics"]["humans"]["nearest_human_distance_mean_1s"]
+    except (KeyError, TypeError):
+        return ""
+
+    try:
+        values = list(hh_mean_1s)
+    except TypeError:
+        return ""
+    if not values:
+        return ""
+
+    chunks = []
+    for idx, value in enumerate(values, start=1):
+        value_float = float(value)
+        value_str = "nan" if value_float != value_float else f"{value_float:.2f}"
+        chunks.append(f"h{idx}:{value_str}")
+    return f"hh_mean_1s=[{', '.join(chunks)}]"
+
+
+def _combine_periodic_extras(*extras):
+    parts = [str(extra) for extra in extras if str(extra)]
+    return ", ".join(parts)
+
+
 def _configure_base_env(base_env, args):
     base_env.max_steps = args.max_steps
     base_env.render_width = args.render_width
@@ -325,7 +354,14 @@ def _run_demo_stable(
                     steps_done,
                     sim_dt,
                     wall_start,
-                    extra=_build_distracted_progress_extra(base_env, info, sim_dt),
+                    extra=_combine_periodic_extras(
+                        _build_distracted_progress_extra(base_env, info, sim_dt),
+                        (
+                            _build_hh_distance_mean_1s_extra(info)
+                            if args.print_hh_distance_mean_1s
+                            else ""
+                        ),
+                    ),
                 )
 
             # Checks if the goal was met or the simulation ended during these steps.
@@ -426,7 +462,15 @@ def _run_demo_strict(
                 steps_done,
                 sim_dt,
                 wall_start,
-                extra=f"lag_steps={lag_steps}, {_build_distracted_progress_extra(base_env, info, sim_dt)}",
+                extra=_combine_periodic_extras(
+                    f"lag_steps={lag_steps}",
+                    _build_distracted_progress_extra(base_env, info, sim_dt),
+                    (
+                        _build_hh_distance_mean_1s_extra(info)
+                        if args.print_hh_distance_mean_1s
+                        else ""
+                    ),
+                ),
             )
 
         if _report_step(steps_done - 1, terminated, truncated, info, wall_start, sim_dt):
@@ -448,7 +492,14 @@ def _run_fast_loop(env, args, sim_dt, tag):
                 step + 1,
                 sim_dt,
                 wall_start,
-                extra=_build_distracted_progress_extra(base_env, info, sim_dt),
+                extra=_combine_periodic_extras(
+                    _build_distracted_progress_extra(base_env, info, sim_dt),
+                    (
+                        _build_hh_distance_mean_1s_extra(info)
+                        if args.print_hh_distance_mean_1s
+                        else ""
+                    ),
+                ),
             )
 
         if _report_step(step, terminated, truncated, info):
@@ -579,6 +630,11 @@ def build_arg_parser():
     parser.add_argument("--video-root", default=DEFAULT_VIDEO_ROOT)
     parser.add_argument("--name-prefix", default=DEFAULT_NAME_PREFIX)
     parser.add_argument("--no-timestamp-subfolder", action="store_true")
+    parser.add_argument(
+        "--print-hh-distance-mean-1s",
+        action="store_true",
+        help="print per-human nearest_human_distance_mean_1s at each rtf_print_every interval",
+    )
     return parser
 
 

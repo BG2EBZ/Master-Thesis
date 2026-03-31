@@ -174,6 +174,12 @@ Robot emotion rule:
   - speaker_active (and no fear, no DISTRACTED) -> `explanation` (site group 3)
   - otherwise -> none
 
+- info["metrics"]
+  - humans
+  - nearest_human_distance
+  - nearest_human_distance_mean_1s
+  - window_seconds, window_steps
+
 - info["humans"]
   - pose_xy, goal_xy
   - actual_yaw, desired_yaw
@@ -207,5 +213,6 @@ if info["events"]["final_listen_ready"]:
     print("done")
 print(info["status"]["listen_wait"]["remaining"])
 print(info["robot"]["action"]["vx"])
+print(info["metrics"]["humans"]["nearest_human_distance"])
 print(info["humans"]["all_reached"])
 ```

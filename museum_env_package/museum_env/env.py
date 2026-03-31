@@ -61,6 +61,7 @@ POST_EXPLANATION_YIELD_DISTANCE = 0.5
 POST_EXPLANATION_YIELD_ROLE_WAIT = "wait"
 POST_EXPLANATION_YIELD_ROLE_YIELD = "yield"
 DIST_EPS = 1e-8
+HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS = 1.0
 HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
 HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
@@ -387,6 +388,8 @@ class MuseumEnv(gym.Env):
             self.humans[0].set_profile(HumanProfile.NEURODIVERGENT)
         if hasattr(self, "all_human_body_ids"):
             self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
+        if hasattr(self, "timestep_float"):
+            self._reset_hh_distance_metrics_state()
 
     def _sample_active_human_spawn_states(self, robot_xy):
         """Sample collision-free initial poses for the active humans."""
@@ -1207,6 +1210,80 @@ class MuseumEnv(gym.Env):
         if happy_before > 0 and happy_after == 0 and (not sad_now) and (not self.fear_active):
             events["happy_completed"] = True
 
+    def _reset_hh_distance_metrics_state(self, window_steps: Optional[int] = None):
+        """Reset rolling human-human distance metrics for the current active population."""
+        n_humans = len(self.humans)
+        if window_steps is None:
+            window_steps = max(
+                1,
+                int(round(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS / self.timestep_float)),
+            )
+        self.hh_distance_window_seconds = float(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS)
+        self.hh_distance_window_steps = int(max(1, window_steps))
+        self.hh_nearest_distance_history = np.full(
+            (self.hh_distance_window_steps, n_humans),
+            np.nan,
+            dtype=np.float32,
+        )
+        self.hh_nearest_distance_valid_history = np.zeros(
+            (self.hh_distance_window_steps, n_humans),
+            dtype=bool,
+        )
+        self.hh_nearest_distance_rolling_sum = np.zeros((n_humans,), dtype=np.float32)
+        self.hh_nearest_distance_rolling_count = np.zeros((n_humans,), dtype=np.int32)
+        self.hh_nearest_distance_window_cursor = 0
+
+    @staticmethod
+    def _compute_nearest_human_distances(human_xy):
+        """Return each human's nearest human-human Euclidean distance."""
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        n_humans = int(human_xy.shape[0])
+        if n_humans == 0:
+            return np.zeros((0,), dtype=np.float32)
+        if n_humans == 1:
+            return np.array([np.nan], dtype=np.float32)
+
+        pairwise_diff = human_xy[:, None, :] - human_xy[None, :, :]
+        pairwise_dist = np.linalg.norm(pairwise_diff, axis=2)
+        np.fill_diagonal(pairwise_dist, np.inf)
+        return np.min(pairwise_dist, axis=1).astype(np.float32)
+
+    def _update_hh_distance_metrics(self, nearest_human_distance):
+        """Update the 1-second rolling mean of nearest human-human distances."""
+        nearest_human_distance = np.asarray(nearest_human_distance, dtype=np.float32)
+        if nearest_human_distance.shape != (len(self.humans),):
+            raise ValueError(
+                "nearest_human_distance shape must match active humans, "
+                f"got {nearest_human_distance.shape} for {len(self.humans)} humans"
+            )
+        if nearest_human_distance.size == 0:
+            return np.zeros((0,), dtype=np.float32)
+
+        cursor = int(self.hh_nearest_distance_window_cursor)
+        old_valid = self.hh_nearest_distance_valid_history[cursor]
+        old_values = self.hh_nearest_distance_history[cursor]
+        if np.any(old_valid):
+            self.hh_nearest_distance_rolling_sum[old_valid] -= old_values[old_valid]
+            self.hh_nearest_distance_rolling_count[old_valid] -= 1
+
+        new_valid = np.isfinite(nearest_human_distance)
+        self.hh_nearest_distance_history[cursor] = nearest_human_distance
+        self.hh_nearest_distance_valid_history[cursor] = new_valid
+        if np.any(new_valid):
+            self.hh_nearest_distance_rolling_sum[new_valid] += nearest_human_distance[new_valid]
+            self.hh_nearest_distance_rolling_count[new_valid] += 1
+
+        self.hh_nearest_distance_window_cursor = (cursor + 1) % self.hh_distance_window_steps
+
+        rolling_mean = np.full(nearest_human_distance.shape, np.nan, dtype=np.float32)
+        valid_mean = self.hh_nearest_distance_rolling_count > 0
+        if np.any(valid_mean):
+            rolling_mean[valid_mean] = (
+                self.hh_nearest_distance_rolling_sum[valid_mean]
+                / self.hh_nearest_distance_rolling_count[valid_mean]
+            ).astype(np.float32)
+        return rolling_mean
+
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
         super().reset(seed=seed)
@@ -1248,6 +1325,7 @@ class MuseumEnv(gym.Env):
         self.fear_last_response = None
         self.fear_last_response_target_idx = None
         self.perceived_distracted_indices = []
+        self._reset_hh_distance_metrics_state()
 
         # Reset humans
         for human in self.humans:
@@ -1308,6 +1386,8 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
+        nearest_human_distance = self._compute_nearest_human_distances(human_xy)
+        nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
 
         wx, wy = self.robot.get_current_waypoint()
         dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
@@ -1378,6 +1458,8 @@ class MuseumEnv(gym.Env):
             human_v_follow=human_v_follow,
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
+            nearest_human_distance=nearest_human_distance,
+            nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
             human_state_snapshot=human_state_snapshot,
             human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
@@ -1505,6 +1587,8 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
+        nearest_human_distance = self._compute_nearest_human_distances(human_xy)
+        nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
 
         human_goals = self._build_human_goals(
             human_xy=human_xy,
@@ -1562,6 +1646,8 @@ class MuseumEnv(gym.Env):
             human_v_follow=human_v_follow,
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
+            nearest_human_distance=nearest_human_distance,
+            nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
             human_state_snapshot=human_state_snapshot,
             human_in_listening_front_sector=human_in_listening_front_sector,
             human_reached_goal=human_reached_goal,
@@ -1934,6 +2020,8 @@ class MuseumEnv(gym.Env):
         human_v_follow,
         human_v_repulsion,
         human_v_hr,
+        nearest_human_distance,
+        nearest_human_distance_mean_1s,
         human_state_snapshot,
         human_in_listening_front_sector,
         human_reached_goal,
@@ -1968,6 +2056,8 @@ class MuseumEnv(gym.Env):
             "human_v_repulsion": human_v_repulsion,
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
+            "nearest_human_distance": np.array(nearest_human_distance, dtype=np.float32),
+            "nearest_human_distance_mean_1s": np.array(nearest_human_distance_mean_1s, dtype=np.float32),
             "human_mode": human_state_snapshot["human_mode"],
             "human_profile": human_state_snapshot["human_profile"],
             "human_distracted_timer": human_state_snapshot["human_distracted_timer"],
@@ -2136,6 +2226,14 @@ class MuseumEnv(gym.Env):
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,
+            },
+            "metrics": {
+                "humans": {
+                    "nearest_human_distance": snapshot["nearest_human_distance"],
+                    "nearest_human_distance_mean_1s": snapshot["nearest_human_distance_mean_1s"],
+                    "window_seconds": float(self.hh_distance_window_seconds),
+                    "window_steps": int(self.hh_distance_window_steps),
+                },
             },
             "robot": {
                 "pose_xy": snapshot["robot_xy"],

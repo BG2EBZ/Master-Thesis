@@ -103,6 +103,19 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 repulsion_vectors[idx] = repulsion_gain * (directions * strengths[:, None]).sum(axis=0)
         return repulsion_vectors
 
+    @staticmethod
+    def _dense_nearest_human_distance_reference(human_xy):
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        n_humans = int(human_xy.shape[0])
+        if n_humans == 0:
+            return np.zeros((0,), dtype=np.float32)
+        if n_humans == 1:
+            return np.array([np.nan], dtype=np.float32)
+
+        pairwise_dist = np.linalg.norm(human_xy[:, None, :] - human_xy[None, :, :], axis=2)
+        np.fill_diagonal(pairwise_dist, np.inf)
+        return np.min(pairwise_dist, axis=1).astype(np.float32)
+
     def _assert_in_room_a(self, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-6):
         room_a_rect = DEFAULT_MUSEUM_LAYOUT.get_spawn_rects(margin)[0]
         x = float(xy[0])
@@ -1588,6 +1601,126 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 repulsion_gain=env.repulsion_gain,
             )
             np.testing.assert_allclose(repulsion, expected, atol=1e-7)
+        finally:
+            env.close()
+
+    def test_nearest_human_distance_helper_matches_dense_reference(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=151)
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [1.0, 0.0],
+                    [1.5, 0.5],
+                    [4.0, 0.0],
+                ],
+                dtype=np.float32,
+            )
+            nearest = env._compute_nearest_human_distances(human_xy)
+            expected = self._dense_nearest_human_distance_reference(human_xy)
+            np.testing.assert_allclose(nearest, expected, atol=1e-7)
+        finally:
+            env.close()
+
+    def test_nearest_human_distance_helper_handles_empty_and_singleton_inputs(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=152)
+            empty = env._compute_nearest_human_distances(np.zeros((0, 2), dtype=np.float32))
+            singleton = env._compute_nearest_human_distances(np.array([[2.0, 3.0]], dtype=np.float32))
+            self.assertEqual(empty.shape, (0,))
+            self.assertEqual(singleton.shape, (1,))
+            self.assertTrue(np.isnan(singleton[0]))
+        finally:
+            env.close()
+
+    def test_hh_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
+        env = self._make_env(
+            n_humans=2,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=153)
+            env._reset_hh_distance_metrics_state(window_steps=3)
+
+            avg_1 = env._update_hh_distance_metrics(np.array([1.0, 4.0], dtype=np.float32))
+            avg_2 = env._update_hh_distance_metrics(np.array([2.0, 5.0], dtype=np.float32))
+            avg_3 = env._update_hh_distance_metrics(np.array([3.0, 6.0], dtype=np.float32))
+            avg_4 = env._update_hh_distance_metrics(np.array([10.0, 20.0], dtype=np.float32))
+
+            np.testing.assert_allclose(avg_1, np.array([1.0, 4.0], dtype=np.float32), atol=1e-7)
+            np.testing.assert_allclose(avg_2, np.array([1.5, 4.5], dtype=np.float32), atol=1e-7)
+            np.testing.assert_allclose(avg_3, np.array([2.0, 5.0], dtype=np.float32), atol=1e-7)
+            np.testing.assert_allclose(avg_4, np.array([5.0, 31.0 / 3.0], dtype=np.float32), atol=1e-7)
+        finally:
+            env.close()
+
+    def test_step_info_metrics_match_pose_xy_reference_in_active_branch(self):
+        env = self._make_env(
+            n_humans=5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=154)
+            _, _, _, _, info = env.step(None)
+
+            self.assertIn("metrics", info)
+            self.assertIn("humans", info["metrics"])
+            nearest = info["metrics"]["humans"]["nearest_human_distance"]
+            mean_1s = info["metrics"]["humans"]["nearest_human_distance_mean_1s"]
+            pose_xy = np.array(info["humans"]["pose_xy"], dtype=np.float32)
+            expected = self._dense_nearest_human_distance_reference(pose_xy)
+
+            self.assertEqual(nearest.shape, (len(env.humans),))
+            self.assertEqual(mean_1s.shape, (len(env.humans),))
+            self.assertEqual(info["metrics"]["humans"]["window_seconds"], 1.0)
+            self.assertEqual(info["metrics"]["humans"]["window_steps"], env.hh_distance_window_steps)
+            np.testing.assert_allclose(nearest, expected, atol=1e-6)
+            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
+        finally:
+            env.close()
+
+    def test_step_info_metrics_match_pose_xy_reference_in_waiting_branch(self):
+        env = self._make_env(
+            n_humans=5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=155)
+            env.robot.listen_mode = True
+            env.listen_wait_active = True
+            env.listen_wait_counter = 0
+            env.listen_wait_is_final = False
+            env.robot.mode = "stop"
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+
+            _, _, _, _, info = env.step(None)
+
+            nearest = info["metrics"]["humans"]["nearest_human_distance"]
+            mean_1s = info["metrics"]["humans"]["nearest_human_distance_mean_1s"]
+            pose_xy = np.array(info["humans"]["pose_xy"], dtype=np.float32)
+            expected = self._dense_nearest_human_distance_reference(pose_xy)
+
+            self.assertEqual(nearest.shape, (len(env.humans),))
+            self.assertEqual(mean_1s.shape, (len(env.humans),))
+            np.testing.assert_allclose(nearest, expected, atol=1e-6)
+            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
         finally:
             env.close()
 
