@@ -218,6 +218,28 @@ def _build_hr_distance_mean_1s_extra(info):
     return f"hr_mean_1s=[{', '.join(chunks)}]"
 
 
+def _build_local_crowding_count_1m_extra(info):
+    if info is None:
+        return ""
+
+    try:
+        local_crowding = info["metrics"]["humans"]["local_crowding_count_1m"]
+    except (KeyError, TypeError):
+        return ""
+
+    try:
+        values = list(local_crowding)
+    except TypeError:
+        return ""
+    if not values:
+        return ""
+
+    chunks = []
+    for idx, value in enumerate(values, start=1):
+        chunks.append(f"h{idx}:{int(value)}")
+    return f"crowd_1m=[{', '.join(chunks)}]"
+
+
 def _combine_periodic_extras(*extras):
     parts = [str(extra) for extra in extras if str(extra)]
     return ", ".join(parts)
@@ -390,6 +412,11 @@ def _run_demo_stable(
                             if args.print_hr_distance_mean_1s
                             else ""
                         ),
+                        (
+                            _build_local_crowding_count_1m_extra(info)
+                            if args.print_local_crowding_count_1m
+                            else ""
+                        ),
                     ),
                 )
 
@@ -504,6 +531,11 @@ def _run_demo_strict(
                         if args.print_hr_distance_mean_1s
                         else ""
                     ),
+                    (
+                        _build_local_crowding_count_1m_extra(info)
+                        if args.print_local_crowding_count_1m
+                        else ""
+                    ),
                 ),
             )
 
@@ -536,6 +568,11 @@ def _run_fast_loop(env, args, sim_dt, tag):
                     (
                         _build_hr_distance_mean_1s_extra(info)
                         if args.print_hr_distance_mean_1s
+                        else ""
+                    ),
+                    (
+                        _build_local_crowding_count_1m_extra(info)
+                        if args.print_local_crowding_count_1m
                         else ""
                     ),
                 ),
@@ -678,6 +715,11 @@ def build_arg_parser():
         "--print-hr-distance-mean-1s",
         action="store_true",
         help="print per-human human_robot_distance_mean_1s at each rtf_print_every interval",
+    )
+    parser.add_argument(
+        "--print-local-crowding-count-1m",
+        action="store_true",
+        help="print per-human local_crowding_count_1m at each rtf_print_every interval",
     )
     return parser
 

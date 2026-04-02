@@ -18,11 +18,14 @@
 
 `info["metrics"]["humans"]` includes per-human distance metrics:
 - `info["metrics"]["humans"]["nearest_human_distance"]`
+- `info["metrics"]["humans"]["local_crowding_count_1m"]`
 - `info["metrics"]["humans"]["nearest_human_distance_mean_1s"]`
 - `info["metrics"]["humans"]["human_robot_distance"]`
 - `info["metrics"]["humans"]["human_robot_distance_mean_1s"]`
 - `info["metrics"]["humans"]["window_seconds"]`
 - `info["metrics"]["humans"]["window_steps"]`
+
+`info["metrics"]["humans"]["local_crowding_count_1m"]` is the per-human count of other humans strictly within a `1.0m` radius. This metric exposes the current-step value only; there is no `local_crowding_count_1m_mean_1s`.
 
 Example:
 
@@ -34,6 +37,7 @@ if info["events"]["final_listen_ready"]:
 
 print(info["robot"]["pose_xy"])
 print(info["humans"]["action"]["vx"])
+print(info["metrics"]["humans"]["local_crowding_count_1m"])
 print(info["metrics"]["humans"]["nearest_human_distance_mean_1s"])
 print(info["metrics"]["humans"]["human_robot_distance_mean_1s"])
 print(info["status"]["listen_wait"]["remaining"])
@@ -44,10 +48,13 @@ print(info["status"]["listen_wait"]["remaining"])
 - Interactive near real-time demo (default): `python3 test_env.py --mode demo`
 - Periodic printing human human distance (nearest): `python3 test_env.py --mode train --rtf-print-every 500 --print-hh-distance-mean-1s`
 - Periodic printing human robot distance: `python3 test_env.py --mode train --rtf-print-every 500 --print-hr-distance-mean-1s`
+- Periodic printing local 1m crowding counts: `python3 test_env.py --mode train --rtf-print-every 500 --print-local-crowding-count-1m`
 - Strict real-time alignment demo: `python3 test_env.py --mode demo --realtime-policy strict`
 - Fast training run (no render, no sleep): `python3 test_env.py --mode train`
 - Video recording with simulation-time playback: `python3 test_env.py --mode record --video-fps 500`
 - Legacy recording entry (thin wrapper): `python3 record_env.py`
+
+When `--print-local-crowding-count-1m` is enabled, the periodic log appends a single-line summary such as `crowd_1m=[h1:4, h2:7, h3:2]`.
 
 ### Recommended speed-related flags
 

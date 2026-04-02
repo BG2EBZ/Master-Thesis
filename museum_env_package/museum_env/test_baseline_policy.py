@@ -117,6 +117,17 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         return np.min(pairwise_dist, axis=1).astype(np.float32)
 
     @staticmethod
+    def _dense_local_crowding_count_1m_reference(human_xy):
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        n_humans = int(human_xy.shape[0])
+        if n_humans == 0:
+            return np.zeros((0,), dtype=np.int32)
+
+        pairwise_dist = np.linalg.norm(human_xy[:, None, :] - human_xy[None, :, :], axis=2)
+        np.fill_diagonal(pairwise_dist, np.inf)
+        return np.count_nonzero(pairwise_dist < 1.0, axis=1).astype(np.int32)
+
+    @staticmethod
     def _dense_human_robot_distance_reference(human_xy, robot_xy):
         human_xy = np.asarray(human_xy, dtype=np.float32)
         if human_xy.size == 0:
@@ -1652,6 +1663,77 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_local_crowding_count_1m_helper_matches_dense_reference(self):
+        env = self._make_env(
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=161)
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [1.0, 0.0],
+                    [1.5, 0.5],
+                    [4.0, 0.0],
+                ],
+                dtype=np.float32,
+            )
+            local_crowding_count_1m = env._compute_local_crowding_count_1m(human_xy)
+            expected = self._dense_local_crowding_count_1m_reference(human_xy)
+            np.testing.assert_array_equal(local_crowding_count_1m, expected)
+        finally:
+            env.close()
+
+    def test_local_crowding_count_1m_helper_handles_empty_and_singleton_inputs(self):
+        env = self._make_env(
+            n_humans=1,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=162)
+            empty = env._compute_local_crowding_count_1m(np.zeros((0, 2), dtype=np.float32))
+            singleton = env._compute_local_crowding_count_1m(
+                np.array([[2.0, 3.0]], dtype=np.float32)
+            )
+            self.assertEqual(empty.shape, (0,))
+            self.assertEqual(singleton.shape, (1,))
+            self.assertTrue(np.issubdtype(empty.dtype, np.integer))
+            self.assertTrue(np.issubdtype(singleton.dtype, np.integer))
+            self.assertEqual(int(singleton[0]), 0)
+        finally:
+            env.close()
+
+    def test_local_crowding_count_1m_helper_uses_strict_radius_boundary(self):
+        env = self._make_env(
+            n_humans=3,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=163)
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [1.0, 0.0],
+                    [0.5, 0.0],
+                ],
+                dtype=np.float32,
+            )
+
+            local_crowding_count_1m = env._compute_local_crowding_count_1m(human_xy)
+
+            np.testing.assert_array_equal(
+                local_crowding_count_1m,
+                np.array([1, 1, 2], dtype=np.int32),
+            )
+        finally:
+            env.close()
+
     def test_hh_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
         env = self._make_env(
             n_humans=2,
@@ -1793,6 +1875,55 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(mean_1s.shape, (len(env.humans),))
             np.testing.assert_allclose(nearest, expected, atol=1e-6)
             np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
+        finally:
+            env.close()
+
+    def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_active_branch(self):
+        env = self._make_env(
+            n_humans=5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=164)
+            _, _, _, _, info = env.step(None)
+
+            local_crowding_count_1m = info["metrics"]["humans"]["local_crowding_count_1m"]
+            pose_xy = np.array(info["humans"]["pose_xy"], dtype=np.float32)
+            expected = self._dense_local_crowding_count_1m_reference(pose_xy)
+
+            self.assertEqual(local_crowding_count_1m.shape, (len(env.humans),))
+            self.assertTrue(np.issubdtype(local_crowding_count_1m.dtype, np.integer))
+            np.testing.assert_array_equal(local_crowding_count_1m, expected)
+        finally:
+            env.close()
+
+    def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_waiting_branch(self):
+        env = self._make_env(
+            n_humans=5,
+            impatient_prob=0.0,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=165)
+            env.robot.listen_mode = True
+            env.listen_wait_active = True
+            env.listen_wait_counter = 0
+            env.listen_wait_is_final = False
+            env.robot.mode = "stop"
+            self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
+
+            _, _, _, _, info = env.step(None)
+
+            local_crowding_count_1m = info["metrics"]["humans"]["local_crowding_count_1m"]
+            pose_xy = np.array(info["humans"]["pose_xy"], dtype=np.float32)
+            expected = self._dense_local_crowding_count_1m_reference(pose_xy)
+
+            self.assertEqual(local_crowding_count_1m.shape, (len(env.humans),))
+            self.assertTrue(np.issubdtype(local_crowding_count_1m.dtype, np.integer))
+            np.testing.assert_array_equal(local_crowding_count_1m, expected)
         finally:
             env.close()
 

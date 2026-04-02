@@ -62,6 +62,7 @@ POST_EXPLANATION_YIELD_ROLE_WAIT = "wait"
 POST_EXPLANATION_YIELD_ROLE_YIELD = "yield"
 DIST_EPS = 1e-8
 HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS = 1.0
+LOCAL_CROWDING_RADIUS_METERS = 1.0
 HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
 HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
@@ -1252,17 +1253,48 @@ class MuseumEnv(gym.Env):
     @staticmethod
     def _compute_nearest_human_distances(human_xy):
         """Return each human's nearest human-human Euclidean distance."""
+        pairwise_dist = MuseumEnv._compute_human_pairwise_distances(human_xy)
+        return MuseumEnv._compute_nearest_human_distances_from_pairwise(pairwise_dist)
+
+    @staticmethod
+    def _compute_human_pairwise_distances(human_xy):
+        """Return dense pairwise human-human Euclidean distances with self-distance masked."""
         human_xy = np.asarray(human_xy, dtype=np.float32)
         n_humans = int(human_xy.shape[0])
         if n_humans == 0:
-            return np.zeros((0,), dtype=np.float32)
-        if n_humans == 1:
-            return np.array([np.nan], dtype=np.float32)
-
+            return np.zeros((0, 0), dtype=np.float32)
         pairwise_diff = human_xy[:, None, :] - human_xy[None, :, :]
-        pairwise_dist = np.linalg.norm(pairwise_diff, axis=2)
+        pairwise_dist = np.linalg.norm(pairwise_diff, axis=2).astype(np.float32)
         np.fill_diagonal(pairwise_dist, np.inf)
-        return np.min(pairwise_dist, axis=1).astype(np.float32)
+        return pairwise_dist
+
+    @staticmethod
+    def _compute_nearest_human_distances_from_pairwise(pairwise_dist):
+        """Return each human's nearest human-human Euclidean distance from a dense matrix."""
+        pairwise_dist = np.asarray(pairwise_dist, dtype=np.float32)
+        if pairwise_dist.shape == (0, 0):
+            return np.zeros((0,), dtype=np.float32)
+
+        nearest_human_distance = np.min(pairwise_dist, axis=1).astype(np.float32)
+        nearest_human_distance[~np.isfinite(nearest_human_distance)] = np.nan
+        return nearest_human_distance
+
+    @staticmethod
+    def _compute_local_crowding_count_1m(human_xy):
+        """Return each human's count of other humans strictly within 1 meter."""
+        pairwise_dist = MuseumEnv._compute_human_pairwise_distances(human_xy)
+        return MuseumEnv._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
+
+    @staticmethod
+    def _compute_local_crowding_count_1m_from_pairwise(pairwise_dist):
+        """Return each human's count of other humans strictly within the local crowding radius."""
+        pairwise_dist = np.asarray(pairwise_dist, dtype=np.float32)
+        if pairwise_dist.shape == (0, 0):
+            return np.zeros((0,), dtype=np.int32)
+
+        return np.count_nonzero(pairwise_dist < LOCAL_CROWDING_RADIUS_METERS, axis=1).astype(
+            np.int32
+        )
 
     def _update_hh_distance_metrics(self, nearest_human_distance):
         """Update the 1-second rolling mean of nearest human-human distances."""
@@ -1449,7 +1481,9 @@ class MuseumEnv(gym.Env):
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
         robot_xy = np.array([rx, ry], dtype=np.float32)
-        nearest_human_distance = self._compute_nearest_human_distances(human_xy)
+        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
+        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
+        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
         nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
         human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
         human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
@@ -1524,6 +1558,7 @@ class MuseumEnv(gym.Env):
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
+            local_crowding_count_1m=local_crowding_count_1m,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
             human_robot_distance=human_robot_distance,
             human_robot_distance_mean_1s=human_robot_distance_mean_1s,
@@ -1654,7 +1689,9 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
-        nearest_human_distance = self._compute_nearest_human_distances(human_xy)
+        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
+        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
+        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
         nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
         human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
         human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
@@ -1716,6 +1753,7 @@ class MuseumEnv(gym.Env):
             human_v_repulsion=human_v_repulsion,
             human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
+            local_crowding_count_1m=local_crowding_count_1m,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
             human_robot_distance=human_robot_distance,
             human_robot_distance_mean_1s=human_robot_distance_mean_1s,
@@ -2092,6 +2130,7 @@ class MuseumEnv(gym.Env):
         human_v_repulsion,
         human_v_hr,
         nearest_human_distance,
+        local_crowding_count_1m,
         nearest_human_distance_mean_1s,
         human_robot_distance,
         human_robot_distance_mean_1s,
@@ -2130,6 +2169,7 @@ class MuseumEnv(gym.Env):
             "human_v_hr": human_v_hr,
             "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "nearest_human_distance": np.array(nearest_human_distance, dtype=np.float32),
+            "local_crowding_count_1m": np.array(local_crowding_count_1m, dtype=np.int32),
             "nearest_human_distance_mean_1s": np.array(nearest_human_distance_mean_1s, dtype=np.float32),
             "human_robot_distance": np.array(human_robot_distance, dtype=np.float32),
             "human_robot_distance_mean_1s": np.array(human_robot_distance_mean_1s, dtype=np.float32),
@@ -2305,6 +2345,7 @@ class MuseumEnv(gym.Env):
             "metrics": {
                 "humans": {
                     "nearest_human_distance": snapshot["nearest_human_distance"],
+                    "local_crowding_count_1m": snapshot["local_crowding_count_1m"],
                     "nearest_human_distance_mean_1s": snapshot["nearest_human_distance_mean_1s"],
                     "human_robot_distance": snapshot["human_robot_distance"],
                     "human_robot_distance_mean_1s": snapshot["human_robot_distance_mean_1s"],
