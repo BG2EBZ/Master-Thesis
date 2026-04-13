@@ -67,21 +67,6 @@ HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
 HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
 HR_DISTANCE_MAX_ND_DEFAULT = 2.0
-IMPATIENT_PROB_DEFAULT = 0.000
-IMPATIENT_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
-IMPATIENT_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
-IMPATIENT_RAMP_START_NORMAL_SECONDS_DEFAULT = 10.0
-IMPATIENT_RAMP_START_ND_SECONDS_DEFAULT = 5.0
-IMPATIENT_RISE_NORMAL_SECONDS_DEFAULT = 10.0
-IMPATIENT_RISE_ND_SECONDS_DEFAULT = 5.0
-IMPATIENT_ROBOT_SPEED_THRESHOLD_NORMAL_DEFAULT = 0.2
-IMPATIENT_ROBOT_SPEED_THRESHOLD_ND_DEFAULT = 0.5
-DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
-DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
-DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
-DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
-DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
-DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
 LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
 LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
 LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
@@ -120,6 +105,8 @@ ROBOT_FEAR_DISTANCE_THRESHOLD = 0.8
 FEAR_RESPONSE_MOVE_BACK_PROB = 0.4
 FEAR_RESPONSE_STAY_PROB = 0.3
 FEAR_RESPONSE_CONTINUE_HIT_PROB = 0.3
+FOLLOW_PHASE_PRE_LISTEN_ENGAGE = "pre_listen_engage"
+FOLLOW_PHASE_TRANSIT = "transit_follow"
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
@@ -144,12 +131,6 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
-        distracted_lambda_max_nd_per_sec: float = DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
-        distracted_lambda_max_normal_per_sec: float = DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
-        distracted_ramp_start_nd_seconds: float = DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
-        distracted_ramp_start_normal_seconds: float = DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
-        distracted_rise_nd_seconds: float = DISTRACTED_RISE_ND_SECONDS_DEFAULT,
-        distracted_rise_normal_seconds: float = DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
         listening_distracted_lambda_max_nd_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
         listening_distracted_lambda_max_normal_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
         listening_distracted_ramp_start_nd_seconds: float = LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
@@ -157,7 +138,6 @@ class MuseumEnv(gym.Env):
         listening_distracted_rise_nd_seconds: float = LISTENING_DISTRACTED_RISE_ND_SECONDS_DEFAULT,
         listening_distracted_rise_normal_seconds: float = LISTENING_DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
         max_distracted_duration_seconds: float = MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
-        impatient_prob: float = IMPATIENT_PROB_DEFAULT,
         overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
         attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
         callback_rejoin_prob_normal: float = CALLBACK_REJOIN_PROB_NORMAL_DEFAULT,
@@ -222,6 +202,7 @@ class MuseumEnv(gym.Env):
 
         # Human follow switch (start with random walking)
         self.follow_humans = False
+        self.follow_phase = None
         self.robot_start_xy = None
         self.human_follow_distance = HUMAN_FOLLOW_DISTANCE_DEFAULT
 
@@ -256,12 +237,6 @@ class MuseumEnv(gym.Env):
         self.post_explanation_hold_roles = []
         self.post_explanation_hold_targets = np.zeros((0, 2), dtype=np.float32)
         self.post_explanation_hold_listen_radii = np.zeros((0,), dtype=np.float32)
-        self.distracted_lambda_max_nd_per_sec = float(distracted_lambda_max_nd_per_sec)
-        self.distracted_lambda_max_normal_per_sec = float(distracted_lambda_max_normal_per_sec)
-        self.distracted_ramp_start_nd_seconds = float(distracted_ramp_start_nd_seconds)
-        self.distracted_ramp_start_normal_seconds = float(distracted_ramp_start_normal_seconds)
-        self.distracted_rise_nd_seconds = float(distracted_rise_nd_seconds)
-        self.distracted_rise_normal_seconds = float(distracted_rise_normal_seconds)
         self.listening_distracted_lambda_max_nd_per_sec = float(listening_distracted_lambda_max_nd_per_sec)
         self.listening_distracted_lambda_max_normal_per_sec = float(listening_distracted_lambda_max_normal_per_sec)
         self.listening_distracted_ramp_start_nd_seconds = float(listening_distracted_ramp_start_nd_seconds)
@@ -274,7 +249,6 @@ class MuseumEnv(gym.Env):
                 "max_distracted_duration_seconds must be > 0, "
                 f"got {max_distracted_duration_seconds}"
             )
-        self.impatient_prob = float(impatient_prob)
         self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
         self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
         self.callback_rejoin_prob_normal = float(callback_rejoin_prob_normal)
@@ -282,6 +256,14 @@ class MuseumEnv(gym.Env):
         self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
         self.callback_ignore_prob_nd = float(callback_ignore_prob_nd)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
+        try:
+            from .fuzzy import FollowingFuzzyEngine
+        except ImportError as exc:
+            raise ImportError(
+                "MuseumEnv now requires the optional 'scikit-fuzzy' dependency "
+                "because following-state triggers are fuzzy-only."
+            ) from exc
+        self.following_fuzzy_engine = FollowingFuzzyEngine()
         self.n_humans = int(n_humans)
         if self.n_humans < 1 or self.n_humans > MAX_HUMANS_CAPACITY:
             raise ValueError(
@@ -348,6 +330,7 @@ class MuseumEnv(gym.Env):
             dtype=np.float32,
         )
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
+        self._reset_following_fuzzy_debug_state()
 
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
@@ -380,6 +363,23 @@ class MuseumEnv(gym.Env):
         if self.enable_event_logs:
             logger.info(msg)
 
+    def _reset_following_fuzzy_debug_state(self):
+        n_humans = len(self.humans)
+        self.last_following_fuzzy_scores = [
+            {state: 0.0 for state in ("overwhelmed", "distracted", "impatient", "engaged")}
+            for _ in range(n_humans)
+        ]
+        self.last_following_fuzzy_dominant_state = [None] * n_humans
+        self.last_following_fuzzy_inputs = [
+            {
+                "following_time": 0.0,
+                "hhd": 0.0,
+                "hrd": 0.0,
+                "density": 0.0,
+            }
+            for _ in range(n_humans)
+        ]
+
     def _set_active_humans(self, n_humans: int):
         """Select the active prefix of humans and assign per-profile defaults."""
         self.humans = list(self.all_humans[: int(n_humans)])
@@ -387,6 +387,7 @@ class MuseumEnv(gym.Env):
             human.set_profile(HumanProfile.NORMAL)
         if self.humans:
             self.humans[0].set_profile(HumanProfile.NEURODIVERGENT)
+        self._reset_following_fuzzy_debug_state()
         if hasattr(self, "all_human_body_ids"):
             self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
         if hasattr(self, "timestep_float"):
@@ -440,14 +441,9 @@ class MuseumEnv(gym.Env):
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
 
     def _configure_human_following_variants(self):
-        """Apply profile-specific distracted/impatient parameters to all humans."""
+        """Apply profile-specific listening hazard and spacing parameters to all humans."""
         for human in self.humans:
             if human.profile == HumanProfile.NEURODIVERGENT:
-                human.configure_distracted_follow_hazard(
-                    lambda_max_per_sec=self.distracted_lambda_max_nd_per_sec,
-                    ramp_start_seconds=self.distracted_ramp_start_nd_seconds,
-                    rise_seconds=self.distracted_rise_nd_seconds,
-                )
                 human.configure_distracted_listening_hazard(
                     lambda_max_per_sec=self.listening_distracted_lambda_max_nd_per_sec,
                     ramp_start_seconds=self.listening_distracted_ramp_start_nd_seconds,
@@ -457,18 +453,7 @@ class MuseumEnv(gym.Env):
                     hr_distance_min=HR_DISTANCE_MIN_ND_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_ND_DEFAULT,
                 )
-                human.configure_impatient_follow_hazard(
-                    lambda_max_per_sec=IMPATIENT_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
-                    ramp_start_seconds=IMPATIENT_RAMP_START_ND_SECONDS_DEFAULT,
-                    rise_seconds=IMPATIENT_RISE_ND_SECONDS_DEFAULT,
-                    robot_speed_threshold=IMPATIENT_ROBOT_SPEED_THRESHOLD_ND_DEFAULT,
-                )
             else:
-                human.configure_distracted_follow_hazard(
-                    lambda_max_per_sec=self.distracted_lambda_max_normal_per_sec,
-                    ramp_start_seconds=self.distracted_ramp_start_normal_seconds,
-                    rise_seconds=self.distracted_rise_normal_seconds,
-                )
                 human.configure_distracted_listening_hazard(
                     lambda_max_per_sec=self.listening_distracted_lambda_max_normal_per_sec,
                     ramp_start_seconds=self.listening_distracted_ramp_start_normal_seconds,
@@ -477,12 +462,6 @@ class MuseumEnv(gym.Env):
                 human.configure_hr_distance_band(
                     hr_distance_min=HR_DISTANCE_MIN_NORMAL_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_NORMAL_DEFAULT,
-                )
-                human.configure_impatient_follow_hazard(
-                    lambda_max_per_sec=IMPATIENT_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
-                    ramp_start_seconds=IMPATIENT_RAMP_START_NORMAL_SECONDS_DEFAULT,
-                    rise_seconds=IMPATIENT_RISE_NORMAL_SECONDS_DEFAULT,
-                    robot_speed_threshold=IMPATIENT_ROBOT_SPEED_THRESHOLD_NORMAL_DEFAULT,
                 )
             human.configure_listening_distracted_motion(dt=float(self.timestep))
 
@@ -493,14 +472,6 @@ class MuseumEnv(gym.Env):
                 max_duration_seconds=self.max_distracted_duration_seconds,
                 dt=float(self.timestep),
             )
-
-    def _is_distracted_follow_window_active(self):
-        """Return whether follow->distracted transitions are currently allowed."""
-        return bool(
-            self.robot.listen_done
-            and (not self.robot.listen_mode)
-            and (not self.listen_wait_active)
-        )
 
     def _is_human_in_listening_front_sector(self, human, pos_xy, robot_xy, robot_yaw: float) -> bool:
         """Return whether one human position lies inside the robot-front listening sector."""
@@ -527,6 +498,37 @@ class MuseumEnv(gym.Env):
         self.post_explanation_hold_roles = []
         self.post_explanation_hold_targets = np.zeros((0, 2), dtype=np.float32)
         self.post_explanation_hold_listen_radii = np.zeros((0,), dtype=np.float32)
+
+    def _set_follow_phase(self, phase):
+        """Set high-level follow phase and keep follow_humans in sync."""
+        if phase not in (None, FOLLOW_PHASE_PRE_LISTEN_ENGAGE, FOLLOW_PHASE_TRANSIT):
+            raise ValueError(f"Unknown follow phase: {phase}")
+        self.follow_phase = phase
+        self.follow_humans = bool(phase is not None)
+
+    def _clear_follow_phase(self):
+        """Disable follow-like motion until the next engage/transit phase starts."""
+        self._set_follow_phase(None)
+
+    def _is_following_fuzzy_active(self) -> bool:
+        """Return whether following fuzzy transitions are enabled this step."""
+        return bool(self.follow_phase == FOLLOW_PHASE_TRANSIT)
+
+    def _maybe_activate_follow_phase_from_robot_progress(self, robot_xy):
+        """Start pre-listen engage or transit follow once robot moved far enough."""
+        if self.post_explanation_hold_active or self.robot.listen_mode or self.follow_humans:
+            return
+        if self.robot_start_xy is None:
+            return
+
+        moved_dist = float(
+            np.linalg.norm(np.asarray(robot_xy, dtype=np.float32) - np.asarray(self.robot_start_xy, dtype=np.float32))
+        )
+        if moved_dist < float(self.human_follow_distance):
+            return
+
+        next_phase = FOLLOW_PHASE_TRANSIT if bool(self.robot.listen_done) else FOLLOW_PHASE_PRE_LISTEN_ENGAGE
+        self._set_follow_phase(next_phase)
 
     @staticmethod
     def _scalar_cross_2d(a_xy, b_xy) -> float:
@@ -657,7 +659,7 @@ class MuseumEnv(gym.Env):
             and moved_dist >= float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
         ):
             self._clear_post_explanation_hold_state()
-            self.follow_humans = True
+            self._set_follow_phase(FOLLOW_PHASE_TRANSIT)
 
     def _update_human_listening_session_progress(self):
         """Advance per-human listening counters while the listening session is active."""
@@ -866,6 +868,8 @@ class MuseumEnv(gym.Env):
 
     def _build_callback_request(self, human_xy, robot_pose, human_analysis=None):
         """Build callback request targeting the farthest eligible distracted human."""
+        if not self._is_following_fuzzy_active():
+            return None
         if not self._is_robot_in_move_stage(robot_pose):
             return None
         if human_analysis is None:
@@ -1377,6 +1381,90 @@ class MuseumEnv(gym.Env):
             ).astype(np.float32)
         return rolling_mean
 
+    @staticmethod
+    def _rolling_mean_from_sum_and_count(rolling_sum, rolling_count):
+        rolling_sum = np.asarray(rolling_sum, dtype=np.float32)
+        rolling_count = np.asarray(rolling_count, dtype=np.int32)
+        rolling_mean = np.full(rolling_sum.shape, np.nan, dtype=np.float32)
+        valid = rolling_count > 0
+        if np.any(valid):
+            rolling_mean[valid] = (rolling_sum[valid] / rolling_count[valid]).astype(np.float32)
+        return rolling_mean
+
+    def _get_current_hh_distance_mean_1s(self):
+        return self._rolling_mean_from_sum_and_count(
+            rolling_sum=self.hh_nearest_distance_rolling_sum,
+            rolling_count=self.hh_nearest_distance_rolling_count,
+        )
+
+    def _get_current_hr_distance_mean_1s(self):
+        return self._rolling_mean_from_sum_and_count(
+            rolling_sum=self.hr_distance_rolling_sum,
+            rolling_count=self.hr_distance_rolling_count,
+        )
+
+    @staticmethod
+    def _resolve_fuzzy_metric_input(rolling_mean_value: float, current_value: float) -> float:
+        if np.isfinite(rolling_mean_value):
+            return float(rolling_mean_value)
+        if np.isfinite(current_value):
+            return float(current_value)
+        return 0.0
+
+    def _compute_following_fuzzy_diagnostics(
+        self,
+        human,
+        idx: int,
+        nearest_human_distance,
+        nearest_human_distance_mean_1s,
+        human_robot_distance,
+        human_robot_distance_mean_1s,
+        local_crowding_count_1m,
+    ):
+        if self.following_fuzzy_engine is None:
+            return None
+
+        inputs = self.following_fuzzy_engine.clip_inputs(
+            following_time=float(human.following_steps) * float(self.timestep_float),
+            hhd=self._resolve_fuzzy_metric_input(
+                rolling_mean_value=float(nearest_human_distance_mean_1s[idx]),
+                current_value=float(nearest_human_distance[idx]),
+            ),
+            hrd=self._resolve_fuzzy_metric_input(
+                rolling_mean_value=float(human_robot_distance_mean_1s[idx]),
+                current_value=float(human_robot_distance[idx]),
+            ),
+            density=float(local_crowding_count_1m[idx]),
+        )
+        result = self.following_fuzzy_engine.compute(**inputs)
+        return {"inputs": inputs, "result": result}
+
+    def _apply_following_fuzzy_transition(self, human, idx: int, fuzzy_result: dict, robot_xy, robot_yaw: float):
+        del idx
+        dominant_state = fuzzy_result["dominant_state"]
+        if dominant_state == "engaged":
+            return
+
+        if dominant_state == "distracted":
+            human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+            human.transition_to(HumanMode.DISTRACTED, reason="fuzzy_following_distracted")
+            human._log_event(f">>> {human.name} became DISTRACTED!")
+            return
+
+        if dominant_state == "impatient":
+            robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(robot_yaw))
+            human.start_impatient(
+                robot_pose=robot_pose,
+                index=human.context.index,
+                n_humans=human.context.n_humans,
+            )
+            return
+
+        if dominant_state == "overwhelmed":
+            current_xy = np.array(self.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
+            human.start_overwhelmed(robot_xy=np.array(robot_xy, dtype=np.float32), current_xy=current_xy)
+            return
+
     def reset(self, seed=None, options=None):
         """Reset MuJoCo state and all episode-level state machines."""
         super().reset(seed=seed)
@@ -1392,7 +1480,7 @@ class MuseumEnv(gym.Env):
         # Store robot start position (for follow trigger)
         rx, ry, _ = self._get_robot_pose()
         self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
-        self.follow_humans = False
+        self._clear_follow_phase()
 
         # Reset listening state
         self.listen_intro_delay_active = False
@@ -1420,6 +1508,7 @@ class MuseumEnv(gym.Env):
         self.perceived_distracted_indices = []
         self._reset_hh_distance_metrics_state()
         self._reset_hr_distance_metrics_state()
+        self._reset_following_fuzzy_debug_state()
 
         # Reset humans
         for human in self.humans:
@@ -1452,6 +1541,7 @@ class MuseumEnv(gym.Env):
     def _step_waiting_branch(self, external_action_received=False):
         """Step branch used during listening wait window (explanation phase)."""
         events = self._default_events()
+        self._reset_following_fuzzy_debug_state()
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
         self.move_back_active = False
@@ -1512,7 +1602,7 @@ class MuseumEnv(gym.Env):
                 self._log_event(">>> Listening wait complete at final display.")
             else:
                 self.robot.on_listening_complete()
-                self.follow_humans = False
+                self._clear_follow_phase()
                 self.robot_start_xy = np.array([rx, ry], dtype=np.float32)
                 self._start_post_explanation_hold(
                     robot_xy=np.array([rx, ry], dtype=np.float32),
@@ -1582,6 +1672,7 @@ class MuseumEnv(gym.Env):
         """Main simulation branch outside wait window."""
         # Main runtime branch: robot decision, human updates, MuJoCo step, and info assembly.
         events = self._default_events()
+        self._reset_following_fuzzy_debug_state()
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
 
@@ -1630,6 +1721,7 @@ class MuseumEnv(gym.Env):
         if enter_listen:
             rx, ry, ryaw = robot_pose
             final_waypoint_reached_at_entry = self.robot.is_final_reached(float(dist))
+            self._clear_follow_phase()
             self.listen_intro_delay_active = True
             self.listen_intro_delay_counter = 0
             self.listen_intro_delay_is_final = bool(final_waypoint_reached_at_entry)
@@ -1664,18 +1756,12 @@ class MuseumEnv(gym.Env):
             robot_speed=float(np.hypot(rb_action[0], rb_action[1])),
         )
 
-        # Switch to follow once the robot has started moving toward the display
-        if (
-            (not self.post_explanation_hold_active)
-            and (not self.robot.listen_mode)
-            and (not self.follow_humans)
-        ):
-            moved_dist = float(np.hypot(rx - self.robot_start_xy[0], ry - self.robot_start_xy[1]))
-            if moved_dist >= self.human_follow_distance:
-                self.follow_humans = True
+        # Start pre-listen engage on the first leg and transit-follow after the first explanation.
+        self._maybe_activate_follow_phase_from_robot_progress(robot_xy=robot_xy)
 
         repulsion_vectors = self._compute_social_repulsion(human_xy)
         human_actions = self._update_humans_and_apply_ctrl(
+            human_xy=human_xy,
             robot_xy=robot_xy,
             ryaw=ryaw,
             repulsion_vectors=repulsion_vectors,
@@ -1852,7 +1938,6 @@ class MuseumEnv(gym.Env):
 
         for i, human in enumerate(self.humans):
             human.set_mode(HumanMode.LISTENING)
-            human.set_following_distracted_window_active(False)
             repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
             ctx["repulsion"] = LISTENING_REPULSION_SCALE * repulsion_vec
             human_action = human.step(self.model, self.data, ctx)
@@ -1899,13 +1984,11 @@ class MuseumEnv(gym.Env):
                 human_action = human.step(self.model, self.data, move_ctx)
             elif role == POST_EXPLANATION_YIELD_ROLE_YIELD:
                 human.set_mode(HumanMode.FOLLOWING)
-                human.set_following_distracted_window_active(False)
                 human.current_waypoint = target_xy.copy()
                 move_ctx["repulsion"] = repulsion_vec
                 human_action = human._step_following(self.data, move_ctx, human._get_pose(self.data))
             else:
                 human.set_mode(HumanMode.LISTENING)
-                human.set_following_distracted_window_active(False)
                 listen_ctx = {
                     "robot_xy": robot_xy,
                     "robot_yaw": ryaw,
@@ -1935,7 +2018,7 @@ class MuseumEnv(gym.Env):
 
         return human_actions
 
-    def _update_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
+    def _update_humans_and_apply_ctrl(self, human_xy, robot_xy, ryaw, repulsion_vectors):
         """Update all humans and write their commands to control buffer."""
         if self.post_explanation_hold_active:
             return self._update_post_explanation_humans_and_apply_ctrl(
@@ -1953,13 +2036,13 @@ class MuseumEnv(gym.Env):
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
-        distracted_follow_window_active = self._is_distracted_follow_window_active()
         robot_speed = float(np.hypot(self.data.ctrl[0], self.data.ctrl[1]))
-        impatient_following_eligible = bool(
-            self.follow_humans
-            and (not self.listen_wait_active)
-            and (not self.robot.callback_active)
-        )
+        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
+        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
+        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
+        nearest_human_distance_mean_1s = self._get_current_hh_distance_mean_1s()
+        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
+        human_robot_distance_mean_1s = self._get_current_hr_distance_mean_1s()
         robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(ryaw))
         ctx = {
             "robot_xy": robot_xy,
@@ -1991,17 +2074,35 @@ class MuseumEnv(gym.Env):
                     robot_yaw=ryaw,
                 )
 
-            eligible_following = bool(
-                distracted_follow_window_active
-                and self.follow_humans
-                and human.mode == HumanMode.FOLLOWING
+            human.update_following_duration(
+                eligible_following=bool(self.follow_humans and human.mode == HumanMode.FOLLOWING)
             )
-            human.set_following_distracted_window_active(distracted_follow_window_active)
-            human.update_following_duration(eligible_following=eligible_following)
-            human.update_impatient_trigger_progress(
-                eligible_following=bool(impatient_following_eligible and human.mode == HumanMode.FOLLOWING),
-                robot_speed=robot_speed,
-            )
+            if human.mode == HumanMode.FOLLOWING and self._is_following_fuzzy_active():
+                fuzzy_debug = self._compute_following_fuzzy_diagnostics(
+                    human=human,
+                    idx=i,
+                    nearest_human_distance=nearest_human_distance,
+                    nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
+                    human_robot_distance=human_robot_distance,
+                    human_robot_distance_mean_1s=human_robot_distance_mean_1s,
+                    local_crowding_count_1m=local_crowding_count_1m,
+                )
+                if fuzzy_debug is not None:
+                    self.last_following_fuzzy_inputs[i] = dict(fuzzy_debug["inputs"])
+                    self.last_following_fuzzy_scores[i] = {
+                        state: float(fuzzy_debug["result"][state])
+                        for state in ("overwhelmed", "distracted", "impatient", "engaged")
+                    }
+                    self.last_following_fuzzy_dominant_state[i] = str(
+                        fuzzy_debug["result"]["dominant_state"]
+                    )
+                    self._apply_following_fuzzy_transition(
+                        human=human,
+                        idx=i,
+                        fuzzy_result=fuzzy_debug["result"],
+                        robot_xy=robot_xy,
+                        robot_yaw=ryaw,
+                    )
 
             human_action = human.step(self.model, self.data, ctx)
             human_actions[i] = human_action
@@ -2030,9 +2131,11 @@ class MuseumEnv(gym.Env):
         human_profiles = [None] * n_humans
         human_distracted_source = [None] * n_humans
         human_overwhelmed_stage = [None] * n_humans
+        human_fuzzy_scores = [None] * n_humans
+        human_fuzzy_dominant_state = [None] * n_humans
+        human_fuzzy_inputs = [None] * n_humans
         human_distracted_timer = np.empty(n_humans, dtype=np.int32)
         human_following_steps = np.empty(n_humans, dtype=np.int32)
-        human_following_low_robot_speed_steps = np.empty(n_humans, dtype=np.int32)
         human_listening_steps = np.empty(n_humans, dtype=np.int32)
         human_overwhelmed_leave_timer = np.empty(n_humans, dtype=np.int32)
         human_impatient_timer = np.empty(n_humans, dtype=np.int32)
@@ -2045,9 +2148,11 @@ class MuseumEnv(gym.Env):
             human_profiles[idx] = human.profile
             human_distracted_source[idx] = human.distracted_source
             human_overwhelmed_stage[idx] = human.overwhelmed_stage
+            human_fuzzy_scores[idx] = dict(self.last_following_fuzzy_scores[idx])
+            human_fuzzy_dominant_state[idx] = self.last_following_fuzzy_dominant_state[idx]
+            human_fuzzy_inputs[idx] = dict(self.last_following_fuzzy_inputs[idx])
             human_distracted_timer[idx] = int(human.distracted_timer)
             human_following_steps[idx] = int(human.following_steps)
-            human_following_low_robot_speed_steps[idx] = int(human.following_low_robot_speed_steps)
             human_listening_steps[idx] = int(human.listening_steps)
             human_overwhelmed_leave_timer[idx] = int(human.overwhelmed_leave_timer)
             human_impatient_timer[idx] = int(human.impatient_timer)
@@ -2061,9 +2166,11 @@ class MuseumEnv(gym.Env):
             "human_profile": human_profiles,
             "human_distracted_source": human_distracted_source,
             "human_overwhelmed_stage": human_overwhelmed_stage,
+            "human_fuzzy_scores": human_fuzzy_scores,
+            "human_fuzzy_dominant_state": human_fuzzy_dominant_state,
+            "human_fuzzy_inputs": human_fuzzy_inputs,
             "human_distracted_timer": human_distracted_timer,
             "human_following_steps": human_following_steps,
-            "human_following_low_robot_speed_steps": human_following_low_robot_speed_steps,
             "human_listening_steps": human_listening_steps,
             "human_overwhelmed_leave_timer": human_overwhelmed_leave_timer,
             "human_impatient_timer": human_impatient_timer,
@@ -2175,9 +2282,11 @@ class MuseumEnv(gym.Env):
             "human_robot_distance_mean_1s": np.array(human_robot_distance_mean_1s, dtype=np.float32),
             "human_mode": human_state_snapshot["human_mode"],
             "human_profile": human_state_snapshot["human_profile"],
+            "human_fuzzy_scores": human_state_snapshot["human_fuzzy_scores"],
+            "human_fuzzy_dominant_state": human_state_snapshot["human_fuzzy_dominant_state"],
+            "human_fuzzy_inputs": human_state_snapshot["human_fuzzy_inputs"],
             "human_distracted_timer": human_state_snapshot["human_distracted_timer"],
             "human_following_steps": human_state_snapshot["human_following_steps"],
-            "human_following_low_robot_speed_steps": human_state_snapshot["human_following_low_robot_speed_steps"],
             "human_listening_steps": human_state_snapshot["human_listening_steps"],
             "human_in_listening_front_sector": human_in_listening_front_sector,
             "human_distracted_source": human_state_snapshot["human_distracted_source"],
@@ -2252,6 +2361,7 @@ class MuseumEnv(gym.Env):
             },
             "status": {
                 "step_count": int(self.step_count),
+                "follow_phase": self.follow_phase,
                 "listen_mode": bool(self.robot.listen_mode),
                 "listen_intro_delay": {
                     "active": bool(self.listen_intro_delay_active),
@@ -2323,7 +2433,6 @@ class MuseumEnv(gym.Env):
                 "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
-                "distracted_follow_window_active": bool(self._is_distracted_follow_window_active()),
                 "listening_distracted_window_active": [
                     bool(human.listening_distracted_window_active) for human in self.humans
                 ],
@@ -2375,9 +2484,11 @@ class MuseumEnv(gym.Env):
                 "desired_yaw": snapshot["human_desired_yaw"],
                 "mode": snapshot["human_mode"],
                 "profile": snapshot["human_profile"],
+                "fuzzy_scores": snapshot["human_fuzzy_scores"],
+                "fuzzy_dominant_state": snapshot["human_fuzzy_dominant_state"],
+                "fuzzy_inputs": snapshot["human_fuzzy_inputs"],
                 "distracted_timer": snapshot["human_distracted_timer"],
                 "following_steps": snapshot["human_following_steps"],
-                "following_low_robot_speed_steps": snapshot["human_following_low_robot_speed_steps"],
                 "listening_steps": snapshot["human_listening_steps"],
                 "in_listening_front_sector": snapshot["human_in_listening_front_sector"],
                 "distracted_source": snapshot["human_distracted_source"],

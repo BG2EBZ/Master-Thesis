@@ -12,5 +12,6 @@ setup(
         "gymnasium",
         "mujoco",
         "numpy",
+        "scikit-fuzzy",
     ],
 )

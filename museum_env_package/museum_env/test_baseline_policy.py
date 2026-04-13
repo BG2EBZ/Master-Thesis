@@ -37,10 +37,19 @@ class _FixedRandom:
 
 class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def _make_env(self, **kwargs):
-        defaults = {
-            "distracted_lambda_max_nd_per_sec": 0.0,
-            "distracted_lambda_max_normal_per_sec": 0.0,
+        legacy_following_kwargs = {
+            "distracted_lambda_max_nd_per_sec",
+            "distracted_lambda_max_normal_per_sec",
+            "distracted_ramp_start_nd_seconds",
+            "distracted_ramp_start_normal_seconds",
+            "distracted_rise_nd_seconds",
+            "distracted_rise_normal_seconds",
+            "impatient_prob",
         }
+        for key in legacy_following_kwargs:
+            kwargs.pop(key, None)
+
+        defaults = {}
         defaults.update(kwargs)
         return MuseumEnv(
             render_mode=None,
@@ -173,7 +182,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_person1_defaults_to_neurodivergent_profile(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -189,7 +197,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         for n_humans in (5, 10, 15):
             env = self._make_env(
                 n_humans=n_humans,
-                impatient_prob=0.0,
                 overwhelmed_wait_trigger_prob=0.0,
                 attack_wait_trigger_prob=0.0,
             )
@@ -214,7 +221,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_random_reset_spawns_active_humans_in_room_a_and_separated(self):
         env = self._make_env(
             n_humans=15,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -238,7 +244,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_setting_human_qpos_updates_world_xy_without_xml_base_offset(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -299,7 +304,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 map_layout=custom_layout,
                 xml_path=str(xml_file),
                 n_humans=1,
-                impatient_prob=0.0,
                 overwhelmed_wait_trigger_prob=0.0,
                 attack_wait_trigger_prob=0.0,
             )
@@ -574,7 +578,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_following_step_uses_pose_xy_for_reachable_target_without_nameerror(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -595,7 +598,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 robot_xy=robot_xy,
                 robot_yaw=robot_pose[2],
             )
-            human.set_following_distracted_window_active(False)
 
             ctx = {
                 "robot_xy": robot_xy,
@@ -620,7 +622,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_moves_toward_robot_when_outside_distance_band(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -646,7 +647,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_moves_outward_when_inside_distance_band_core(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -672,7 +672,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_on_ring_rotates_toward_robot_without_translation(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -702,7 +701,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_force_scales_with_radius_error(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -729,7 +727,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_sector_target_helper_clamps_to_boundary_angle(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -776,7 +773,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_repulsion_can_pull_next_step_slightly_past_edge_but_target_stays_front(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -821,7 +817,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_backside_pose_generates_front_sector_target_without_pose_projection(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -864,7 +859,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_distracted_sampling_clamps_move_direction_to_front_sector(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -891,7 +885,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_listening_step_does_not_depend_on_current_waypoint(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -917,38 +910,20 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_hazard_config_helpers_preserve_validation_and_assignment(self):
+    def test_listening_hazard_config_helpers_preserve_validation_and_assignment(self):
 
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
-        human.configure_distracted_follow_hazard(0.3, 4.0, 2.0)
-        self.assertAlmostEqual(human.following_distracted_lambda_max_per_sec, 0.3)
-        self.assertAlmostEqual(human.following_distracted_ramp_start_seconds, 4.0)
-        self.assertAlmostEqual(human.following_distracted_rise_seconds, 2.0)
-
         human.configure_distracted_listening_hazard(0.2, 5.0, 3.0)
         self.assertAlmostEqual(human.listening_distracted_lambda_max_per_sec, 0.2)
         self.assertAlmostEqual(human.listening_distracted_ramp_start_seconds, 5.0)
         self.assertAlmostEqual(human.listening_distracted_rise_seconds, 3.0)
 
-        human.configure_impatient_follow_hazard(0.4, 6.0, 2.5, 0.35)
-        self.assertAlmostEqual(human.following_impatient_lambda_max_per_sec, 0.4)
-        self.assertAlmostEqual(human.following_impatient_ramp_start_seconds, 6.0)
-        self.assertAlmostEqual(human.following_impatient_rise_seconds, 2.5)
-        self.assertAlmostEqual(human.following_impatient_robot_speed_threshold, 0.35)
-
-        with self.assertRaises(ValueError):
-            human.configure_distracted_follow_hazard(-0.1, 1.0, 1.0)
         with self.assertRaises(ValueError):
             human.configure_distracted_listening_hazard(0.1, -1.0, 1.0)
-        with self.assertRaises(ValueError):
-            human.configure_impatient_follow_hazard(0.1, 1.0, 0.0, 0.2)
-        with self.assertRaises(ValueError):
-            human.configure_impatient_follow_hazard(0.1, 1.0, 1.0, 0.0)
 
     def test_inactive_humans_are_parked_outside_scene_and_excluded_from_info(self):
         env = self._make_env(
             n_humans=10,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -969,7 +944,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         for n_humans in (5, 10, 15):
             env = self._make_env(
                 n_humans=n_humans,
-                impatient_prob=0.0,
                 overwhelmed_wait_trigger_prob=0.0,
                 attack_wait_trigger_prob=0.0,
             )
@@ -984,7 +958,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_distracted_duration_defaults_to_ten_seconds_for_all_humans(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -998,7 +971,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_distracted_duration_stays_fixed_across_resets(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1016,7 +988,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_distracted_samples_one_local_target_and_stops_after_reaching_it(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1072,7 +1043,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_distracted_timeout_recovers_exactly_at_configured_max_steps(self):
         env = self._make_env(
             max_distracted_duration_seconds=0.006,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1107,7 +1077,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_stopped_distracted_human_remains_callback_eligible(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1133,7 +1102,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_response_defaults_are_profile_specific(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1157,7 +1125,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_response_can_be_overridden_via_constructor(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
             callback_rejoin_prob_normal=0.10,
@@ -1180,7 +1147,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_request_not_triggered_when_distance_is_at_or_below_threshold(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1199,7 +1165,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_request_triggers_when_distance_exceeds_threshold_even_at_timer_zero(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1221,7 +1186,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_request_targets_farthest_distracted_under_distance_gate(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1246,7 +1210,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_request_distance_threshold_can_be_overridden_and_is_strict(self):
         env = self._make_env(
             callback_trigger_distance_meters=1.5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1274,14 +1237,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._make_env(
                 callback_trigger_distance_meters=0.0,
-                impatient_prob=0.0,
                 overwhelmed_wait_trigger_prob=0.0,
                 attack_wait_trigger_prob=0.0,
             )
 
     def test_callback_request_is_blocked_when_robot_not_in_move_stage(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1301,7 +1262,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_trigger_distance_exposed_in_info_status(self):
         env = self._make_env(
             callback_trigger_distance_meters=1.75,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1316,7 +1276,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_active_branch_reuses_analysis_for_pre_and_post_step_snapshots(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1339,7 +1298,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_wait_branch_reuses_single_post_step_analysis(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1371,7 +1329,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_robot_base_color_writes_only_on_emotion_transitions(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1402,7 +1359,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_robot_speaking_halo_writes_only_when_speaker_state_toggles(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1425,7 +1381,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_robot_text_label_priority_is_preserved_under_dirty_sync(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1459,7 +1414,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_analyze_human_state_handles_empty_pose_array(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1479,7 +1433,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_analyze_human_state_selects_nearest_attack_and_farthest_eligible_callback_target(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1517,7 +1470,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_analyze_human_state_threshold_and_rearm_flags_control_callback_selection(self):
         env = self._make_env(
             callback_trigger_distance_meters=1.5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1543,7 +1495,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_social_repulsion_matches_dense_reference_for_isolated_and_far_humans(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1569,7 +1520,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_social_repulsion_matches_dense_reference_for_close_pair_and_boundary_neighbors(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1596,7 +1546,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_social_repulsion_matches_dense_reference_for_mixed_local_cluster(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1625,7 +1574,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_nearest_human_distance_helper_matches_dense_reference(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1649,7 +1597,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_nearest_human_distance_helper_handles_empty_and_singleton_inputs(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1665,7 +1612,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_local_crowding_count_1m_helper_matches_dense_reference(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1689,7 +1635,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_local_crowding_count_1m_helper_handles_empty_and_singleton_inputs(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1710,7 +1655,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_local_crowding_count_1m_helper_uses_strict_radius_boundary(self):
         env = self._make_env(
             n_humans=3,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1737,7 +1681,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_hh_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
         env = self._make_env(
             n_humans=2,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1759,7 +1702,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_human_robot_distance_helper_matches_dense_reference(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1784,7 +1726,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_human_robot_distance_helper_handles_empty_input(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1801,7 +1742,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_hr_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
         env = self._make_env(
             n_humans=2,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1824,7 +1764,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1851,7 +1790,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1881,7 +1819,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1902,7 +1839,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1930,7 +1866,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_human_robot_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1954,7 +1889,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_human_robot_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1985,7 +1919,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_robot_does_not_perceive_near_distracted_for_label_or_sad(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2010,7 +1943,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_robot_perceives_far_distracted_but_visuals_stay_off_when_callback_not_active(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2035,7 +1967,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_turn_phase_does_not_show_follow_me_or_distracted_sad(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2067,7 +1998,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_visual_phase_shows_follow_me_and_sets_sad(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2099,7 +2029,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_end_hides_follow_me_and_reverts_distracted_sad_even_if_person_still_far(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2129,7 +2058,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_overwhelmed_still_triggers_sad_without_distance_gate(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2153,7 +2081,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_callback_request_ignores_near_distracted_even_with_larger_timer(self):
         env = self._make_env(
             callback_trigger_distance_meters=2.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2180,7 +2107,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_perceived_distance_threshold_override_does_not_force_follow_me_or_sad_without_callback_visual(self):
         env = self._make_env(
             callback_trigger_distance_meters=1.5,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2211,7 +2137,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_response_sampling_uses_target_human_profile_at_two_seconds(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2235,7 +2160,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_rejoin_applies_immediately_without_stay_steps(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2260,7 +2184,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_response_sampling_happens_only_once(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2285,7 +2208,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_ignore_response_keeps_standard_distracted_motion(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2318,7 +2240,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_first_failed_attempt_starts_second_attempt(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2348,7 +2269,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_callback_success_at_cue_end_triggers_happy_once(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2381,7 +2301,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_second_callback_completion_always_ends_callback(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2407,127 +2326,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_distracted_lambda_zero_never_triggers_after_threshold(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=2)
-            dt = float(env.timestep)
-            for human in env.humans:
-                human.set_following_distracted_window_active(True)
-                human.following_steps = int(np.ceil((human.following_distracted_ramp_start_seconds + 120.0) / dt))
-                for _ in range(100):
-                    self.assertIsNone(human._maybe_trigger_following_variant(dt=dt))
-        finally:
-            env.close()
-
-    def test_distracted_threshold_is_strict_for_nd_and_normal(self):
-        env = self._make_env(
-            distracted_lambda_max_nd_per_sec=0.15,
-            distracted_lambda_max_normal_per_sec=0.08,
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=3)
-            dt = float(env.timestep)
-            for human in (env.humans[0], env.humans[1]):
-                human.set_following_distracted_window_active(True)
-                human.following_steps = human._get_distracted_follow_threshold_steps(dt=dt)
-                self.assertEqual(human._compute_distracted_follow_step_probability(dt=dt), 0.0)
-                with patch("numpy.random.rand", return_value=0.0):
-                    self.assertIsNone(human._maybe_trigger_following_variant(dt=dt))
-        finally:
-            env.close()
-
-    def test_distracted_probability_ramps_up_after_threshold(self):
-        env = self._make_env(
-            distracted_lambda_max_nd_per_sec=0.15,
-            distracted_lambda_max_normal_per_sec=0.08,
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=4)
-            dt = float(env.timestep)
-            human = env.humans[1]
-            self.assertEqual(human.profile, HumanProfile.NORMAL)
-            human.set_following_distracted_window_active(True)
-            early_seconds = human.following_distracted_ramp_start_seconds + 0.2 * human.following_distracted_rise_seconds
-            late_seconds = human.following_distracted_ramp_start_seconds + 0.8 * human.following_distracted_rise_seconds
-            human.following_steps = int(np.ceil(early_seconds / dt))
-            p_early = human._compute_distracted_follow_step_probability(dt=dt)
-            human.following_steps = int(np.ceil(late_seconds / dt))
-            p_late = human._compute_distracted_follow_step_probability(dt=dt)
-            self.assertGreater(p_late, p_early)
-            self.assertGreater(p_early, 0.0)
-            probe = 0.5 * (p_early + p_late)
-            with patch("numpy.random.rand", return_value=probe):
-                human.following_steps = int(np.ceil(early_seconds / dt))
-                self.assertIsNone(human._maybe_trigger_following_variant(dt=dt))
-                human.following_steps = int(np.ceil(late_seconds / dt))
-                self.assertEqual(human._maybe_trigger_following_variant(dt=dt), HumanMode.DISTRACTED)
-        finally:
-            env.close()
-
-    def test_distracted_step_probability_matches_lambda_max_asymptote(self):
-        env = self._make_env(
-            distracted_lambda_max_nd_per_sec=0.15,
-            distracted_lambda_max_normal_per_sec=0.08,
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=44)
-            dt = float(env.timestep)
-            human = env.humans[0]
-            human.set_following_distracted_window_active(True)
-            long_follow_seconds = human.following_distracted_ramp_start_seconds + 10.0 * human.following_distracted_rise_seconds
-            human.following_steps = int(np.ceil(long_follow_seconds / dt))
-            p_step = human._compute_distracted_follow_step_probability(dt=dt)
-            expected = float(1.0 - np.exp(-human.following_distracted_lambda_max_per_sec * dt))
-            self.assertAlmostEqual(p_step, expected, places=12)
-        finally:
-            env.close()
-
-    def test_impatient_prob_zero_never_triggers(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=5)
-            dt = float(env.timestep)
-            for human in env.humans:
-                for _ in range(100):
-                    self.assertIsNone(human._maybe_trigger_following_variant(dt=dt))
-        finally:
-            env.close()
-
-    def test_impatient_prob_one_always_triggers(self):
-        env = self._make_env(
-            impatient_prob=1.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=6)
-            dt = float(env.timestep)
-            for human in env.humans:
-                self.assertEqual(human._maybe_trigger_following_variant(dt=dt), HumanMode.IMPATIENT)
-        finally:
-            env.close()
-
     def test_listening_front_sector_helper_matches_expected_angles(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2556,7 +2356,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_turn_to_display_uses_fixed_180_degree_target(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2576,7 +2375,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_entering_listen_starts_intro_delay_and_defers_speaker(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2609,7 +2407,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_intro_delay_keeps_listening_humans_moving_and_then_starts_wait(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2648,78 +2445,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_distracted_window_inactive_blocks_trigger_before_first_listen_complete(self):
-
-        env = self._make_env(
-            distracted_lambda_max_nd_per_sec=100.0,
-            distracted_lambda_max_normal_per_sec=100.0,
-            distracted_ramp_start_nd_seconds=0.0,
-            distracted_ramp_start_normal_seconds=0.0,
-            distracted_rise_nd_seconds=1.0,
-            distracted_rise_normal_seconds=1.0,
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=7)
-            dt = float(env.timestep)
-            human = env.humans[0]
-            human.following_steps = int(np.ceil(5.0 / dt))
-            human.set_following_distracted_window_active(env._is_distracted_follow_window_active())
-            self.assertFalse(env._is_distracted_follow_window_active())
-            with patch("numpy.random.rand", return_value=0.0):
-                self.assertIsNone(human._maybe_trigger_following_variant(dt=dt))
-        finally:
-            env.close()
-
-    def test_distracted_window_active_during_travel_between_explanations(self):
-        env = self._make_env(
-            distracted_lambda_max_nd_per_sec=100.0,
-            distracted_lambda_max_normal_per_sec=100.0,
-            distracted_ramp_start_nd_seconds=0.0,
-            distracted_ramp_start_normal_seconds=0.0,
-            distracted_rise_nd_seconds=1.0,
-            distracted_rise_normal_seconds=1.0,
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=8)
-            env.robot.listen_done = True
-            env.robot.listen_mode = False
-            env.listen_wait_active = False
-            dt = float(env.timestep)
-            human = env.humans[0]
-            human.following_steps = int(np.ceil(5.0 / dt))
-            human.set_following_distracted_window_active(env._is_distracted_follow_window_active())
-            self.assertTrue(env._is_distracted_follow_window_active())
-            with patch("numpy.random.rand", return_value=0.0):
-                self.assertEqual(human._maybe_trigger_following_variant(dt=dt), HumanMode.DISTRACTED)
-        finally:
-            env.close()
-
-    def test_distracted_window_closes_once_final_listening_starts_or_waits(self):
-        env = self._make_env(
-            impatient_prob=0.0,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=9)
-            env.robot.listen_done = True
-            env.robot.listen_mode = True
-            self.assertFalse(env._is_distracted_follow_window_active())
-            env.robot.listen_mode = False
-            env.listen_wait_active = True
-            self.assertFalse(env._is_distracted_follow_window_active())
-        finally:
-            env.close()
-
     def test_following_duration_resets_on_env_reset(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2733,7 +2460,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_following_duration_resets_when_human_leaves_following(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2749,7 +2475,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_wait_window_keeps_minimal_listening_mode_without_wait_hazards(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=1.0,
             attack_wait_trigger_prob=1.0,
         )
@@ -2779,7 +2504,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_nonfinal_listen_wait_completes_without_all_humans_reached(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2814,7 +2538,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_post_explanation_hold_wait_role_does_not_reuse_stale_waypoint(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2853,7 +2576,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_anchor_listening_helper_keeps_hold_target_without_live_robot_pressure(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2890,7 +2612,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_anchor_listening_helper_uses_live_robot_repulsion_when_robot_approaches(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2929,7 +2650,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_post_explanation_hold_close_human_gets_walkable_yield_target(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2963,7 +2683,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_post_explanation_hold_restores_following_after_robot_restart_threshold(self):
         env = self._make_env(
             n_humans=1,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -2986,7 +2705,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_final_listen_wait_terminates_without_all_humans_reached(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3015,7 +2733,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_reset_step_signature_stable(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3029,7 +2746,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_random_waypoints_stay_inside_walkable_area(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3044,7 +2760,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_velocity_projection_keeps_predicted_position_walkable(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3068,7 +2783,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_segment_walkable_rejects_crossing_room_a_bottom_wall(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3089,7 +2803,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_segment_walkable_accepts_corridor_doorway_passage(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3110,7 +2823,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_distracted_target_sampling_clamps_single_sample_to_farthest_walkable_point(self):
         env = self._make_env(
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -3145,13 +2857,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_high_trigger_run_keeps_all_humans_in_walkable_area(self):
         env = self._make_env(
-            distracted_lambda_max_nd_per_sec=0.8,
-            distracted_lambda_max_normal_per_sec=0.8,
-            distracted_ramp_start_nd_seconds=0.0,
-            distracted_ramp_start_normal_seconds=0.0,
-            distracted_rise_nd_seconds=1.0,
-            distracted_rise_normal_seconds=1.0,
-            impatient_prob=0.0,
             overwhelmed_wait_trigger_prob=1.0,
             attack_wait_trigger_prob=1.0,
         )

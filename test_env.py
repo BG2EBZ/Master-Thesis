@@ -107,67 +107,53 @@ def _print_rtf(tag, steps_done, sim_dt, wall_start, extra=""):
 
 
 def _build_distracted_progress_extra(base_env, info, sim_dt):
+    del base_env, sim_dt
     if info is None:
         return ""
-    if base_env is None or not hasattr(base_env, "humans"):
-        return ""
 
-    humans_info = info.get("humans", {})
     status_info = info.get("status", {})
-    listen_status = status_info.get("listen_wait", {})
-    listening_active = bool(status_info.get("listen_mode", False) or listen_status.get("active", False))
-    following_steps = humans_info.get("following_steps", None)
-    impatient_steps = humans_info.get("following_low_robot_speed_steps", None)
-    listening_steps = humans_info.get("listening_steps", None)
+    follow_phase = status_info.get("follow_phase", None)
+    humans_info = info.get("humans", {})
+    fuzzy_states = humans_info.get("fuzzy_dominant_state", None)
+    fuzzy_inputs = humans_info.get("fuzzy_inputs", None)
+    phase_prefix = f"follow_phase={follow_phase}" if follow_phase is not None else "follow_phase=none"
+    if fuzzy_states is None:
+        return phase_prefix
 
-    if not listening_active:
-        if following_steps is None or impatient_steps is None:
-            return ""
-        try:
-            follow_step_list = [int(v) for v in following_steps]
-            impatient_step_list = [int(v) for v in impatient_steps]
-        except TypeError:
-            return ""
-        follow_window_active = bool(status_info.get("distracted_follow_window_active", False))
-        follow_chunks = []
-        impatient_chunks = []
-        for i, human in enumerate(base_env.humans):
-            steps_i = follow_step_list[i] if i < len(follow_step_list) else 0
-            follow_sec = float(steps_i) * float(sim_dt)
-            ramp_start_sec = float(getattr(human, "following_distracted_ramp_start_seconds", 0.0))
-            follow_chunks.append(f"h{i+1}:{follow_sec:.1f}/{ramp_start_sec:.1f}s")
-            impatient_steps_i = impatient_step_list[i] if i < len(impatient_step_list) else 0
-            impatient_sec = float(impatient_steps_i) * float(sim_dt)
-            impatient_ramp_start_sec = float(
-                getattr(human, "following_impatient_ramp_start_seconds", 0.0)
-            )
-            impatient_chunks.append(
-                f"h{i+1}:{impatient_sec:.1f}/{impatient_ramp_start_sec:.1f}s"
-            )
-        return (
-            f"distr_win={int(follow_window_active)}, "
-            f"follow_eff/start=[{', '.join(follow_chunks)}], "
-            f"impatient_eff/start=[{', '.join(impatient_chunks)}]"
-        )
-
-    if listening_steps is None:
-        return ""
     try:
-        listening_step_list = [int(v) for v in listening_steps]
+        fuzzy_state_list = list(fuzzy_states)
     except TypeError:
-        return ""
-    listening_window_active = status_info.get("listening_distracted_window_active", [])
-    listening_chunks = []
-    for i, human in enumerate(base_env.humans):
-        steps_i = listening_step_list[i] if i < len(listening_step_list) else 0
-        listen_sec = float(steps_i) * float(sim_dt)
-        ramp_start_sec = float(getattr(human, "listening_distracted_ramp_start_seconds", 0.0))
-        window_i = int(bool(listening_window_active[i])) if i < len(listening_window_active) else 0
-        listening_chunks.append(
-            f"h{i+1}:{listen_sec:.1f}/{ramp_start_sec:.1f}s(w={window_i})"
-        )
+        return phase_prefix
+    if not fuzzy_state_list:
+        return phase_prefix
 
-    return f"listen_eff/start=[{', '.join(listening_chunks)}]"
+    if follow_phase != "transit_follow":
+        return phase_prefix
+
+    non_engaged_chunks = []
+    if isinstance(fuzzy_inputs, (list, tuple)):
+        fuzzy_input_list = list(fuzzy_inputs)
+    else:
+        fuzzy_input_list = []
+
+    for idx, state in enumerate(fuzzy_state_list, start=1):
+        state_str = "none" if state is None else str(state)
+        if state_str in ("none", "engaged"):
+            continue
+        suffix = ""
+        if idx - 1 < len(fuzzy_input_list) and isinstance(fuzzy_input_list[idx - 1], dict):
+            inputs_i = fuzzy_input_list[idx - 1]
+            suffix = (
+                f"(ft={float(inputs_i.get('following_time', 0.0)):.1f},"
+                f"hhd={float(inputs_i.get('hhd', 0.0)):.2f},"
+                f"hrd={float(inputs_i.get('hrd', 0.0)):.2f},"
+                f"den={float(inputs_i.get('density', 0.0)):.1f})"
+            )
+        non_engaged_chunks.append(f"h{idx}:{state_str}{suffix}")
+
+    if non_engaged_chunks:
+        return f"{phase_prefix}, follow_fuzzy=[{', '.join(non_engaged_chunks)}]"
+    return f"{phase_prefix}, follow_fuzzy=all_engaged"
 
 
 def _build_hh_distance_mean_1s_extra(info):
@@ -243,6 +229,63 @@ def _build_local_crowding_count_1m_extra(info):
 def _combine_periodic_extras(*extras):
     parts = [str(extra) for extra in extras if str(extra)]
     return ", ".join(parts)
+
+
+def _display_mode_for_phase(mode, follow_phase):
+    mode_str = str(mode)
+    if mode_str == "following" and str(follow_phase) == "pre_listen_engage":
+        return "engaging"
+    return mode_str
+
+
+def _capture_human_modes_from_env(base_env):
+    if base_env is None or not hasattr(base_env, "humans"):
+        return []
+    follow_phase = getattr(base_env, "follow_phase", None)
+    return [
+        _display_mode_for_phase(getattr(human, "mode", None), follow_phase)
+        for human in base_env.humans
+    ]
+
+
+def _print_human_state_triggers(step, info, prev_human_modes):
+    if info is None:
+        return list(prev_human_modes) if prev_human_modes is not None else []
+
+    humans_info = info.get("humans", {})
+    current_modes = humans_info.get("mode", None)
+    if current_modes is None:
+        return list(prev_human_modes) if prev_human_modes is not None else []
+
+    try:
+        raw_mode_list = list(current_modes)
+    except TypeError:
+        return list(prev_human_modes) if prev_human_modes is not None else []
+    follow_phase = info.get("status", {}).get("follow_phase", None)
+    current_mode_list = [_display_mode_for_phase(mode, follow_phase) for mode in raw_mode_list]
+
+    fuzzy_dominant_states = humans_info.get("fuzzy_dominant_state", [])
+    target_modes = {"distracted", "overwhelmed", "impatient"}
+
+    if prev_human_modes is None:
+        return current_mode_list
+
+    for idx, current_mode in enumerate(current_mode_list):
+        prev_mode = prev_human_modes[idx] if idx < len(prev_human_modes) else None
+        if prev_mode == current_mode or current_mode not in target_modes:
+            continue
+
+        extra = ""
+        if idx < len(fuzzy_dominant_states):
+            dominant_state = fuzzy_dominant_states[idx]
+            if dominant_state is not None:
+                extra = f", fuzzy={dominant_state}"
+        print(
+            f"[step {step}] h{idx + 1} entered {current_mode} "
+            f"(from {prev_mode}){extra}"
+        )
+
+    return current_mode_list
 
 
 def _configure_base_env(base_env, args):
@@ -364,6 +407,7 @@ def _run_demo_stable(
     wall_start = time.perf_counter()
     steps_done = 0
     paused = False
+    prev_human_modes = _capture_human_modes_from_env(base_env)
 
     while steps_done < args.max_steps:
         current_sleep_scale = _update_sleep_scale_from_events(
@@ -373,7 +417,8 @@ def _run_demo_stable(
         )
         paused = _handle_pause_toggle_if_any(pause_toggle_event, paused)
         if paused:
-            _handle_requested_reset_if_any(env, reset_event)
+            if _handle_requested_reset_if_any(env, reset_event):
+                prev_human_modes = _capture_human_modes_from_env(base_env)
             env.render()
             time.sleep(0.01)
             continue
@@ -389,10 +434,12 @@ def _run_demo_stable(
                 break
             if _handle_requested_reset_if_any(env, reset_event):
                 reset_happened = True
+                prev_human_modes = _capture_human_modes_from_env(base_env)
                 break
 
             obs, reward, terminated, truncated, info = env.step(None)
             steps_done += 1
+            prev_human_modes = _print_human_state_triggers(steps_done - 1, info, prev_human_modes)
 
             if steps_done % args.rtf_print_every == 0:
                 _print_rtf(
@@ -465,6 +512,7 @@ def _run_demo_strict(
     steps_done = 0
     paused = False
     pause_started_wall = None
+    prev_human_modes = _capture_human_modes_from_env(base_env)
 
     while steps_done < args.max_steps:
         was_paused = paused
@@ -487,7 +535,8 @@ def _run_demo_strict(
                 pause_started_wall = time.perf_counter()
 
         if paused:
-            _handle_requested_reset_if_any(env, reset_event)
+            if _handle_requested_reset_if_any(env, reset_event):
+                prev_human_modes = _capture_human_modes_from_env(base_env)
             env.render()
             time.sleep(0.01)
             continue
@@ -496,11 +545,13 @@ def _run_demo_strict(
             wall_start = time.perf_counter()
             lag_steps = 0
             pause_started_wall = None
+            prev_human_modes = _capture_human_modes_from_env(base_env)
             env.render()
             continue
 
         obs, reward, terminated, truncated, info = env.step(None)
         steps_done += 1
+        prev_human_modes = _print_human_state_triggers(steps_done - 1, info, prev_human_modes)
 
         target_tick = wall_start + (steps_done * sim_dt) / current_sleep_scale
         sleep_sec = target_tick - time.perf_counter()
@@ -547,10 +598,12 @@ def _run_fast_loop(env, args, sim_dt, tag):
     base_env = env.unwrapped
     obs, _ = env.reset()
     _print_initial_obs_and_goal(env, obs)
+    prev_human_modes = _capture_human_modes_from_env(base_env)
 
     wall_start = time.perf_counter()
     for step in range(args.max_steps):
         obs, reward, terminated, truncated, info = env.step(None)
+        prev_human_modes = _print_human_state_triggers(step, info, prev_human_modes)
 
         if (step + 1) % args.rtf_print_every == 0:
             _print_rtf(
