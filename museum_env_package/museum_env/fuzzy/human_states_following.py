@@ -28,7 +28,7 @@ from skfuzzy import control as ctrl
 # Universe of discourse
 # ------------------------------------------------------------------
 _RES = 1000
-_DEFAULT = 0.2
+_DEFAULT = 0.5
 _TIE_TOLERANCE = 0.01
 
 following_time = ctrl.Antecedent(np.linspace(0, 60, _RES), "following_time")
@@ -50,26 +50,26 @@ following_time["short"] = fuzz.trapmf(following_time.universe, [0, 0, 10, 20])
 following_time["medium"] = fuzz.trapmf(following_time.universe, [10, 20, 40, 50])
 following_time["long"] = fuzz.trapmf(following_time.universe, [40, 50, 60, 60])
 
-hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.6])
-hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.6, 0.9, 1.0])
+hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.4, 0.5])
+hhd["medium"] = fuzz.trapmf(hhd.universe, [0.4, 0.5, 0.9, 1.0])
 hhd["far"] = fuzz.trapmf(hhd.universe, [0.9, 1.0, 4.0, 4.0])
 
-hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 1.0, 1.2])
-hrd["medium"] = fuzz.trapmf(hrd.universe, [1.0, 1.2, 2.0, 2.2])
+hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.6, 0.8])
+hrd["medium"] = fuzz.trapmf(hrd.universe, [0.6, 0.8, 2.0, 2.2])
 hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
 
-density["low"] = fuzz.trapmf(density.universe, [0, 0, 1, 1])
-density["medium"] = fuzz.trapmf(density.universe, [2, 2, 4, 4])
-density["crowded"] = fuzz.trapmf(density.universe, [5, 5, 10, 10])
+density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
+density["medium"] = fuzz.trapmf(density.universe, [3, 3, 7, 7])
+density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
 
 # ------------------------------------------------------------------
 # Output membership functions
 # ------------------------------------------------------------------
 for _var in [engaged, overwhelmed, distracted, impatient]:
-    _var["low"] = fuzz.trapmf(_var.universe, [0, 0, 0.2, 0.4])
-    _var["medium"] = fuzz.trimf(_var.universe, [0.3, 0.5, 0.7])
-    _var["high"] = fuzz.trapmf(_var.universe, [0.6, 0.8, 1.0, 1.0])
+    _var["low"] = fuzz.trapmf(_var.universe, [0, 0, 0.2, 0.5])
+    _var["medium"] = fuzz.trimf(_var.universe, [0.2, 0.5, 0.8])
+    _var["high"] = fuzz.trapmf(_var.universe, [0.5, 0.8, 1.0, 1.0])
 
 
 # ------------------------------------------------------------------
@@ -125,20 +125,22 @@ def _make_rules(ft_i, hhd_i, hrd_i, den_i, eng_i, ovw_i, dis_i, imp_i):
 
 
 _RULE_TABLE = [
-    (0, 1, 1, 3, 0, 3, 0, 0),  # close + close + crowded -> overwhelmed high
-    (3, 3, 3, 1, 0, 0, 3, 0),  # long + far + far + low -> distracted high
-    (3, 2, 3, 1, 0, 0, 3, 0),  # long + medium + far + low -> distracted high
-    (3, 1, 1, 1, 0, 0, 0, 3),  # long + close + close + low -> impatient high
-    (3, 1, 1, 2, 0, 0, 0, 3),  # long + close + close + medium -> impatient high
+    (0, 1, 1, 3, 0, 3, 0, 0),  # hhd close + hrd close + crowded -> overwhelmed high
+    (3, 3, 3, 1, 0, 0, 3, 0),  # long + hhd far + hrd far + low -> distracted high
+    (3, 2, 3, 1, 0, 0, 3, 0),  # long + hhd medium + hrd far + low -> distracted high
+    (3, 1, 1, 1, 0, 0, 0, 3),  # long + hhd close + hrd close + low -> impatient high
+    (3, 1, 1, 2, 0, 0, 0, 3),  # long + hhd close + hrd close + medium -> impatient high
     (0, 0, 0, 1, 3, 0, 0, 0),  # density low -> engaged high
     (0, 0, 0, 2, 3, 0, 0, 0),  # density medium -> engaged high
     (0, 2, 0, 3, 2, 0, 0, 0),  # hhd medium + crowded -> engaged medium
     (0, 3, 0, 3, 2, 0, 0, 0),  # hhd far + crowded -> engaged medium
     (0, 1, 2, 3, 2, 0, 0, 0),  # hhd close + hrd medium + crowded -> engaged medium
     (0, 1, 3, 3, 2, 0, 0, 0),  # hhd close + hrd far + crowded -> engaged medium
-    (3, 1, 1, 0, 1, 0, 0, 0),  # long + close + close -> engaged low
+    (3, 1, 1, 0, 1, 0, 0, 0),  # long + hhd close + hrd close -> engaged low
     (1, 0, 0, 0, 3, 0, 0, 0),  # short -> engaged high
     (3, 0, 3, 1, 1, 0, 0, 0),  # long + hrd far + low -> engaged low
+    (0, 2, 0, 0, 3, 0, 0, 0),  # hhd medium -> engaged high
+    (0, 0, 2, 0, 3, 0, 0, 0),  # hrd medium -> engaged high
 ]
 
 rules = [rule for row in _RULE_TABLE for rule in _make_rules(*row)]

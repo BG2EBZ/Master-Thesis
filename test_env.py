@@ -280,9 +280,23 @@ def _print_human_state_triggers(step, info, prev_human_modes):
             dominant_state = fuzzy_dominant_states[idx]
             if dominant_state is not None:
                 extra = f", fuzzy={dominant_state}"
+
+        fuzzy_inputs_list = humans_info.get("fuzzy_inputs", [])
+        inputs_extra = ""
+        if current_mode == "overwhelmed" and isinstance(fuzzy_inputs_list, (list, tuple)):
+            if idx < len(fuzzy_inputs_list) and isinstance(fuzzy_inputs_list[idx], dict):
+                inp = fuzzy_inputs_list[idx]
+                inputs_extra = (
+                    f"\n    >>> fuzzy_inputs: "
+                    f"following_time={float(inp.get('following_time', 0.0)):.1f}, "
+                    f"hhd={float(inp.get('hhd', 0.0)):.2f}, "
+                    f"hrd={float(inp.get('hrd', 0.0)):.2f}, "
+                    f"density={float(inp.get('density', 0.0)):.1f}"
+                )
+
         print(
             f"[step {step}] h{idx + 1} entered {current_mode} "
-            f"(from {prev_mode}){extra}"
+            f"(from {prev_mode}){extra}{inputs_extra}"
         )
 
     return current_mode_list

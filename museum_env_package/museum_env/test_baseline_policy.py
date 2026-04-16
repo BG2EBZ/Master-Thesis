@@ -857,7 +857,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_listening_distracted_sampling_clamps_move_direction_to_front_sector(self):
+    def test_listening_distracted_sampling_turns_away_from_robot_by_45_to_90_deg(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -874,12 +874,11 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                     robot_yaw=0.0,
                     sector_half_angle=env.listen_front_sector_half_angle,
                 )
-            move_dir = -np.array(
-                [np.cos(human.distracted_target_yaw), np.sin(human.distracted_target_yaw)],
-                dtype=np.float32,
-            )
-            move_angle = float(np.arctan2(move_dir[1], move_dir[0]))
-            self.assertLessEqual(abs(move_angle), float(env.listen_front_sector_half_angle) + 1e-6)
+            robot_facing_yaw = float(np.arctan2(0.0 - current_xy[1], 0.0 - current_xy[0]))
+            yaw_delta = abs(float((human.distracted_target_yaw - robot_facing_yaw + np.pi) % (2 * np.pi) - np.pi))
+            self.assertGreaterEqual(yaw_delta, np.deg2rad(40.0))
+            self.assertLessEqual(yaw_delta, np.deg2rad(90.0) + 1e-6)
+            np.testing.assert_allclose(human.distracted_target_xy, current_xy, atol=1e-6)
         finally:
             env.close()
 
@@ -1879,6 +1878,10 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertAlmostEqual(status_info["following_fuzzy_eval_period_seconds"], 0.1)
             self.assertEqual(status_info["following_fuzzy_eval_period_steps"], 50)
             self.assertFalse(status_info["following_fuzzy_evaluated_this_step"])
+            self.assertAlmostEqual(status_info["listening_fuzzy_eval_period_seconds"], 0.1)
+            self.assertEqual(status_info["listening_fuzzy_eval_period_steps"], 50)
+            self.assertFalse(status_info["listening_fuzzy_evaluated_this_step"])
+            self.assertFalse(status_info["listening_interrupted_for_callback"])
         finally:
             env.close()
 
@@ -2139,19 +2142,232 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 "engaged": 0.8,
             }
             env.last_following_fuzzy_dominant_state[0] = "engaged"
+            env.last_human_fuzzy_context[0] = "following"
             env.listen_wait_active = True
             env.listen_wait_counter = 0
             env.listen_wait_is_final = False
             env.robot.listen_mode = True
             env.robot.mode = "stop"
+            env._paused_listening_callback_state = {
+                "listen_mode": True,
+                "listen_intro_delay_active": False,
+                "listen_intro_delay_counter": 0,
+                "listen_intro_delay_is_final": False,
+                "listen_wait_active": True,
+                "listen_wait_counter": 0,
+                "listen_wait_is_final": False,
+            }
 
             _, _, _, _, info = env.step(None)
 
             self.assertEqual(info["humans"]["fuzzy_dominant_state"][0], "engaged")
             self.assertEqual(info["humans"]["fuzzy_inputs"][0]["density"], 2.0)
+            self.assertEqual(info["humans"]["fuzzy_context"][0], "following")
             self.assertFalse(info["status"]["following_fuzzy_evaluated_this_step"])
+            self.assertFalse(info["status"]["listening_fuzzy_evaluated_this_step"])
+            self.assertTrue(info["status"]["listening_interrupted_for_callback"])
             self.assertAlmostEqual(info["status"]["following_fuzzy_eval_period_seconds"], 0.1)
             self.assertEqual(info["status"]["following_fuzzy_eval_period_steps"], 50)
+        finally:
+            env.close()
+
+    def test_listening_fuzzy_uses_listening_steps_and_cached_environment_observations(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=174)
+            env.robot.listen_mode = True
+            human = env.humans[0]
+            human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            human.listening_steps = 25
+            env._cached_nearest_human_distance = np.array([0.75], dtype=np.float32)
+            env._cached_local_crowding_count_1m = np.array([2], dtype=np.int32)
+            env._cached_human_robot_distance = np.array([1.25], dtype=np.float32)
+            env._cached_nearest_human_distance_mean_1s = np.array([0.8], dtype=np.float32)
+            env._cached_human_robot_distance_mean_1s = np.array([1.3], dtype=np.float32)
+            repulsion_vectors = np.zeros((1, 2), dtype=np.float32)
+            captured = {}
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+
+            def capture_compute(**kwargs):
+                captured.update(kwargs)
+                return engaged_result
+
+            with patch.object(env.following_fuzzy_engine, "compute", side_effect=capture_compute):
+                env._update_listening_humans_and_apply_ctrl(
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertAlmostEqual(captured["following_time"], 25 * float(env.timestep))
+            self.assertAlmostEqual(captured["hhd"], 0.8)
+            self.assertAlmostEqual(captured["hrd"], 1.3)
+            self.assertEqual(captured["density"], 2.0)
+            self.assertEqual(env.last_human_fuzzy_context[0], "listening")
+        finally:
+            env.close()
+
+    def test_listening_fuzzy_evaluates_once_per_observation_refresh_cycle(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=175)
+            env.robot.listen_mode = True
+            env.humans[0].transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            repulsion_vectors = np.zeros((1, 2), dtype=np.float32)
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result) as mock_compute:
+                env._update_listening_humans_and_apply_ctrl(
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, 1)
+                self.assertTrue(env._listening_fuzzy_evaluated_this_step)
+
+                env._listening_fuzzy_evaluated_this_step = False
+                env._update_listening_humans_and_apply_ctrl(
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, 1)
+                self.assertFalse(env._listening_fuzzy_evaluated_this_step)
+
+                human_xy = env._get_human_poses()[:, :2]
+                robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+                env._observation_sample_age_steps = env.observation_update_period_steps
+                env._refresh_environment_observations(human_xy=human_xy, robot_xy=robot_xy)
+                env._listening_fuzzy_evaluated_this_step = False
+                env._update_listening_humans_and_apply_ctrl(
+                    robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, 2)
+                self.assertTrue(env._listening_fuzzy_evaluated_this_step)
+        finally:
+            env.close()
+
+    def test_listening_controller_keeps_transient_modes_and_listening_impatient_recovers_to_listening(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=176)
+            env.robot.listen_mode = True
+            human = env.humans[0]
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+            human.impatient_duration = 1
+            repulsion_vectors = np.zeros((1, 2), dtype=np.float32)
+
+            env._update_listening_humans_and_apply_ctrl(
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                ryaw=0.0,
+                repulsion_vectors=repulsion_vectors,
+            )
+
+            self.assertEqual(human.mode, HumanMode.LISTENING)
+            self.assertGreater(abs(float(env.data.ctrl[5])), 0.0)
+        finally:
+            env.close()
+
+    def test_listening_callback_request_ignores_move_stage_distance_gate_for_listening_source_distracted(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=177)
+            env.robot.listen_mode = True
+            human = env.humans[0]
+            human.transition_to(HumanMode.DISTRACTED, reason="test_force_listening_distracted")
+            human.distracted_source = "listening"
+            human.distracted_recovery_mode = HumanMode.LISTENING
+            human_xy = np.array([[0.6, 0.0]], dtype=np.float32)
+
+            request = env._build_callback_request(
+                human_xy=human_xy,
+                robot_pose=(0.0, 0.0, 0.0),
+            )
+
+            self.assertIsNotNone(request)
+            self.assertEqual(request["target_idx"], 0)
+            self.assertEqual(request["success_mode"], HumanMode.LISTENING)
+            self.assertTrue(request["interrupts_listening"])
+        finally:
+            env.close()
+
+    def test_callback_rejoin_restores_listening_for_listening_source_distracted(self):
+        human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
+        human.transition_to(HumanMode.DISTRACTED, reason="test_force_listening_distracted")
+        human.distracted_source = "listening"
+        human.distracted_recovery_mode = HumanMode.LISTENING
+
+        recovered = human.apply_callback_response("rejoin")
+
+        self.assertTrue(recovered)
+        self.assertEqual(human.mode, HumanMode.LISTENING)
+
+    def test_callback_completion_resumes_paused_listen_wait_and_uses_listening_success_mode(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=178)
+            env.robot.listen_mode = True
+            env.listen_wait_active = True
+            env.listen_wait_counter = 7
+            env.listen_wait_is_final = False
+            env._pause_listening_for_callback()
+            env._callback_success_mode = HumanMode.LISTENING
+            env.callback_active_target_idx = 0
+            env.humans[0].transition_to(HumanMode.LISTENING, reason="test_callback_success_listening")
+            self._set_callback_state(
+                env,
+                target_idx=0,
+                phase=RobotCallbackPhase.CUE,
+                attempt_index=1,
+                cue_elapsed_steps=env._get_callback_cue_steps(),
+                cue_completed_this_step=True,
+            )
+            events = env._default_events()
+
+            env._resolve_completed_callback_cue(events)
+
+            self.assertTrue(events["callback_completed"])
+            self.assertTrue(events["callback_success"])
+            self.assertTrue(env.robot.listen_mode)
+            self.assertTrue(env.listen_wait_active)
+            self.assertEqual(env.listen_wait_counter, 7)
+            self.assertFalse(env._is_listening_interrupted_for_callback())
         finally:
             env.close()
 

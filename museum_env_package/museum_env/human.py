@@ -40,6 +40,10 @@ LISTENING_DISTRACTED_YAW_DEVIATION_MIN_DEG = 10.0
 LISTENING_DISTRACTED_YAW_DEVIATION_MAX_DEG = 40.0
 LISTENING_DISTRACTED_SPEED_METERS_PER_SEC = 0.3
 LISTENING_DISTRACTED_MOVE_SECONDS = 2.0
+LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
+LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
+LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC = 0.08
+LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
 OVERWHELMED_FALLBACK_X_OFFSET = 1.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
@@ -164,6 +168,7 @@ class Human:
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
+        self.distracted_recovery_mode = HumanMode.FOLLOWING
 
         self.can_be_impatient = False
         self.impatient_duration = 800
@@ -171,6 +176,9 @@ class Human:
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.impatient_original_max_speed = None
+        self.impatient_recovery_mode = HumanMode.FOLLOWING
+        self.listening_impatient_yaw_deviation = 0.0
+        self.listening_impatient_turn_sign = 1.0
         self.profile = HumanProfile.NORMAL
         self.following_steps = 0
         self.listening_steps = 0
@@ -196,6 +204,7 @@ class Human:
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
         self.overwhelmed_robot_ref_xy = None
         self.overwhelmed_backoff_start_xy = None
+        self.overwhelmed_recovery_mode = HumanMode.FOLLOWING
 
         self.can_attack = False
         self.attack_speed = ATTACK_DEFAULT_SPEED
@@ -232,6 +241,7 @@ class Human:
             self.distracted_timer = 0
             self._clear_distracted_navigation_state()
             self.distracted_source = None
+            self.distracted_recovery_mode = HumanMode.FOLLOWING
         if prev_mode == HumanMode.FOLLOWING and next_mode != HumanMode.FOLLOWING:
             self.reset_following_duration()
         if prev_mode == HumanMode.OVERWHELMED and next_mode != HumanMode.OVERWHELMED:
@@ -271,6 +281,7 @@ class Human:
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
         self.overwhelmed_robot_ref_xy = None
         self.overwhelmed_backoff_start_xy = None
+        self.overwhelmed_recovery_mode = HumanMode.FOLLOWING
 
     def reset_episode_state(self):
         """Reset per-episode dynamic state while keeping static config."""
@@ -284,6 +295,9 @@ class Human:
 
         self.impatient_timer = 0
         self.impatient_original_max_speed = None
+        self.impatient_recovery_mode = HumanMode.FOLLOWING
+        self.listening_impatient_yaw_deviation = 0.0
+        self.listening_impatient_turn_sign = 1.0
 
         self.last_v_follow = np.zeros(2, dtype=np.float32)
         self.last_v_repulsion = np.zeros(2, dtype=np.float32)
@@ -435,7 +449,7 @@ class Human:
             dtype=np.float32,
         )
 
-    def start_overwhelmed(self, robot_xy, current_xy=None):
+    def start_overwhelmed(self, robot_xy, current_xy=None, recovery_mode: str = HumanMode.FOLLOWING):
         """Enter OVERWHELMED and initialize two-stage retreat state."""
         if not self.can_be_overwhelmed:
             return
@@ -454,6 +468,7 @@ class Human:
             leave_dir = diff / dist
 
         self.transition_to(HumanMode.OVERWHELMED, reason="trigger_overwhelmed")
+        self.overwhelmed_recovery_mode = recovery_mode
         self.overwhelmed_stage = "backoff"
         self.overwhelmed_leave_timer = 0
         self.overwhelmed_leave_dir = leave_dir.astype(np.float32)
@@ -461,7 +476,13 @@ class Human:
         self.overwhelmed_backoff_start_xy = current_xy
         self._log_event(f">>> {self.name} became OVERWHELMED!")
 
-    def start_impatient(self, robot_pose=None, index=None, n_humans=None):
+    def start_impatient(
+        self,
+        robot_pose=None,
+        index=None,
+        n_humans=None,
+        recovery_mode: str = HumanMode.FOLLOWING,
+    ):
         """Enter IMPATIENT and temporarily increase max speed."""
         if not self.can_be_impatient:
             return False
@@ -480,6 +501,20 @@ class Human:
         self.impatient_original_max_speed = float(self.max_speed)
         self.max_speed = float(self.impatient_original_max_speed * self.impatient_speed_multiplier)
         self.impatient_timer = 0
+        self.impatient_recovery_mode = recovery_mode
+        if recovery_mode == HumanMode.LISTENING:
+            self.listening_impatient_yaw_deviation = np.deg2rad(
+                float(
+                    np.random.uniform(
+                        LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG,
+                        LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG,
+                    )
+                )
+            )
+            self.listening_impatient_turn_sign = 1.0 if np.random.rand() >= 0.5 else -1.0
+        else:
+            self.listening_impatient_yaw_deviation = 0.0
+            self.listening_impatient_turn_sign = 1.0
         self.transition_to(HumanMode.IMPATIENT, reason="trigger_impatient")
         self._log_event(f">>> {self.name} became IMPATIENT!")
         return True
@@ -492,6 +527,9 @@ class Human:
             self.max_speed = float(self.base_max_speed)
         self.impatient_original_max_speed = None
         self.impatient_timer = 0
+        self.impatient_recovery_mode = HumanMode.FOLLOWING
+        self.listening_impatient_yaw_deviation = 0.0
+        self.listening_impatient_turn_sign = 1.0
 
     def _clear_distracted_navigation_state(self):
         """Clear one-shot distracted target state for the current episode/mode."""
@@ -571,11 +609,9 @@ class Human:
         """Apply callback response strategy while currently distracted."""
         if self.mode != HumanMode.DISTRACTED:
             return False
-        if self.distracted_source != DISTRACTED_SOURCE_FOLLOWING:
-            return False
 
         if response == "rejoin":
-            self.transition_to(HumanMode.FOLLOWING, reason="callback_rejoin")
+            self.transition_to(self.distracted_recovery_mode, reason="callback_rejoin")
             return True
 
         if response == "ignore":
@@ -897,8 +933,8 @@ class Human:
 
         # Recover after duration
         if self.distracted_timer >= self.distracted_duration:
-            self.transition_to(HumanMode.FOLLOWING, reason="distracted_timeout_recover")
-            self._log_event(f">>> {self.name} recovered -> FOLLOWING")
+            self.transition_to(self.distracted_recovery_mode, reason="distracted_timeout_recover")
+            self._log_event(f">>> {self.name} recovered -> {self.mode.upper()}")
 
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
@@ -910,41 +946,33 @@ class Human:
         robot_yaw: float,
         sector_half_angle: float,
     ):
-        """Sample one slight yaw offset, then clamp the move direction back into the front sector."""
+        """Sample one gaze-away yaw target while staying in place."""
         current_xy = np.array(current_xy, dtype=np.float32)
+        del current_yaw
+        del robot_yaw
+        del sector_half_angle
+        robot_xy = np.asarray(robot_xy, dtype=np.float32)
         deviation_deg = float(
             np.random.uniform(
-                LISTENING_DISTRACTED_YAW_DEVIATION_MIN_DEG,
-                LISTENING_DISTRACTED_YAW_DEVIATION_MAX_DEG,
+                45.0,
+                90.0,
             )
         )
         deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
-        sampled_target_yaw = self._wrap_to_pi(float(current_yaw) + deviation_sign * np.deg2rad(deviation_deg))
-        move_absolute_angle = self._wrap_to_pi(float(sampled_target_yaw) + np.pi)
-        clamped_move_angle = self._clamp_absolute_angle_to_listening_sector(
-            absolute_angle=move_absolute_angle,
-            robot_yaw=robot_yaw,
-            sector_half_angle=sector_half_angle,
+        robot_facing_yaw = float(
+            np.arctan2(robot_xy[1] - current_xy[1], robot_xy[0] - current_xy[0])
         )
-        target_yaw = self._wrap_to_pi(clamped_move_angle + np.pi)
-        target_distance = float(LISTENING_DISTRACTED_SPEED_METERS_PER_SEC * LISTENING_DISTRACTED_MOVE_SECONDS)
-        sampled_target_xy = np.array(robot_xy, dtype=np.float32) + target_distance * np.array(
-            [np.cos(clamped_move_angle), np.sin(clamped_move_angle)],
-            dtype=np.float32,
-        )
-        target_xy = self._find_farthest_walkable_point_on_segment(
-            start_xy=current_xy,
-            end_xy=sampled_target_xy,
-            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
+        target_yaw = self._wrap_to_pi(
+            robot_facing_yaw + deviation_sign * np.deg2rad(deviation_deg)
         )
         self._set_distracted_target_state(
             target_yaw=target_yaw,
-            target_xy=target_xy,
+            target_xy=current_xy,
             reset_listening_move_elapsed_steps=True,
         )
 
     def _step_listening_distracted(self, data, ctx, pose):
-        """DISTRACTED-from-listening: move away for 1 second, then freeze until session end."""
+        """DISTRACTED-from-listening: turn gaze away from robot and then hold still."""
         x, y, yaw = pose
         self.distracted_timer += 1
         current_xy = np.array([x, y], dtype=np.float32)
@@ -982,19 +1010,8 @@ class Human:
                 current_xy=current_xy,
             )
 
-        if self.listening_distracted_move_elapsed_steps >= self.listening_distracted_move_steps:
-            self.last_v_follow = np.zeros(2, dtype=np.float32)
-            return np.zeros(3, dtype=np.float32)
-
-        move_dir = -np.array(
-            [np.cos(self.distracted_target_yaw), np.sin(self.distracted_target_yaw)],
-            dtype=np.float32,
-        )
-        v_goal = float(LISTENING_DISTRACTED_SPEED_METERS_PER_SEC) * move_dir
-        self.last_v_follow = np.array(v_goal, dtype=np.float32)
-        self.listening_distracted_move_elapsed_steps += 1
-        action = np.array([v_goal[0], v_goal[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
-        return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
+        self.last_v_follow = np.zeros(2, dtype=np.float32)
+        return np.zeros(3, dtype=np.float32)
 
     def _step_overwhelmed(self, data, ctx, pose):
         """OVERWHELMED: first back off, then keep leaving for fixed duration."""
@@ -1005,7 +1022,7 @@ class Human:
         self.last_v_hr = np.zeros(2, dtype=np.float32)
 
         if self.overwhelmed_stage is None:
-            self.transition_to(HumanMode.FOLLOWING, reason="overwhelmed_invalid_stage_recover")
+            self.transition_to(self.overwhelmed_recovery_mode, reason="overwhelmed_invalid_stage_recover")
             return np.zeros(3, dtype=np.float32)
 
         leave_dir = np.array(self.overwhelmed_leave_dir, dtype=np.float32)
@@ -1059,8 +1076,10 @@ class Human:
         self.overwhelmed_leave_timer += 1
 
         if self.overwhelmed_leave_timer >= self.overwhelmed_leave_duration:
-            self.transition_to(HumanMode.FOLLOWING, reason="overwhelmed_timeout_recover")
-            self._log_event(f">>> {self.name} recovered from OVERWHELMED -> FOLLOWING")
+            self.transition_to(self.overwhelmed_recovery_mode, reason="overwhelmed_timeout_recover")
+            self._log_event(
+                f">>> {self.name} recovered from OVERWHELMED -> {self.mode.upper()}"
+            )
 
         action = np.array([v_xy[0], v_xy[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=pos_xy)
@@ -1068,13 +1087,56 @@ class Human:
     def _step_impatient(self, data, ctx, pose):
         """IMPATIENT: fast following toward front slot, with timeout recovery."""
         self.impatient_timer += 1
-        x, y, _ = pose
-        self._assign_target_from_context(current_xy=np.array([x, y], dtype=np.float32))
-        action = self._step_following(data, ctx, pose)
+        x, y, yaw = pose
+        current_xy = np.array([x, y], dtype=np.float32)
+        if self.impatient_recovery_mode == HumanMode.LISTENING:
+            robot_xy = np.asarray(ctx.get("robot_xy", current_xy), dtype=np.float32)
+            to_robot = robot_xy - current_xy
+            base_yaw = (
+                float(np.arctan2(to_robot[1], to_robot[0]))
+                if float(np.linalg.norm(to_robot)) > NORM_EPS
+                else float(yaw)
+            )
+            deviation = float(self.listening_impatient_yaw_deviation)
+            if deviation <= 0.0:
+                deviation = np.deg2rad(
+                    0.5
+                    * (
+                        LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG
+                        + LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG
+                    )
+                )
+                self.listening_impatient_yaw_deviation = deviation
+            desired_yaw = self._wrap_to_pi(base_yaw + self.listening_impatient_turn_sign * deviation)
+            yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+            if abs(yaw_err) <= np.deg2rad(LISTENING_IMPATIENT_TARGET_REACHED_DEG):
+                self.listening_impatient_turn_sign *= -1.0
+                desired_yaw = self._wrap_to_pi(base_yaw + self.listening_impatient_turn_sign * deviation)
+                yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+
+            perp = np.array([-np.sin(base_yaw), np.cos(base_yaw)], dtype=np.float32)
+            v_goal = (
+                float(self.listening_impatient_turn_sign)
+                * float(LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC)
+                * perp
+            )
+            v_repulsion = np.array(ctx.get("repulsion", np.zeros(2, dtype=np.float32)), dtype=np.float32)
+            v_total = v_goal + v_repulsion
+            speed = float(np.linalg.norm(v_total))
+            if speed > self.max_speed and speed > NORM_EPS:
+                v_total = v_total / speed * self.max_speed
+            self.last_v_follow = np.array(v_goal, dtype=np.float32)
+            self.last_v_repulsion = np.array(v_repulsion, dtype=np.float32)
+            self.last_v_hr = np.zeros(2, dtype=np.float32)
+            action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
+            action = self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
+        else:
+            self._assign_target_from_context(current_xy=current_xy)
+            action = self._step_following(data, ctx, pose)
 
         if self.impatient_timer >= self.impatient_duration:
-            self.set_mode(HumanMode.FOLLOWING)
-            self._log_event(f">>> {self.name} recovered from IMPATIENT -> FOLLOWING")
+            self.set_mode(self.impatient_recovery_mode)
+            self._log_event(f">>> {self.name} recovered from IMPATIENT -> {self.mode.upper()}")
 
         return action
 
