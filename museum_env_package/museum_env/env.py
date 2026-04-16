@@ -145,6 +145,7 @@ class MuseumEnv(gym.Env):
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
+        observation_update_period_seconds: float = 0.1,
         n_humans: int = 15, # number of active humans
     ):
         """Initialize MuJoCo scene, agents, behavior parameters and runtime state."""
@@ -184,6 +185,20 @@ class MuseumEnv(gym.Env):
 
         self.timestep = self.model.opt.timestep
         self.timestep_float = float(self.timestep)
+        self.observation_update_period_seconds = float(observation_update_period_seconds)
+        if (not np.isfinite(self.observation_update_period_seconds)) or (
+            self.observation_update_period_seconds <= 0.0
+        ):
+            raise ValueError(
+                "observation_update_period_seconds must be a finite positive value, "
+                f"got {observation_update_period_seconds}"
+            )
+        self.observation_update_period_steps = max(
+            1,
+            int(round(self.observation_update_period_seconds / self.timestep_float)),
+        )
+        self.following_fuzzy_eval_period_seconds = float(self.observation_update_period_seconds)
+        self.following_fuzzy_eval_period_steps = int(self.observation_update_period_steps)
         self.max_steps = MAX_STEPS_DEFAULT
         self.step_count = 0
         self._callback_cue_steps = max(1, int(round(CALLBACK_CUE_SECONDS / self.timestep_float)))
@@ -293,6 +308,14 @@ class MuseumEnv(gym.Env):
         self.callback_active_target_idx = None
         self.callback_last_response = None
         self.callback_last_response_target_idx = None
+        self._cached_nearest_human_distance = None
+        self._cached_local_crowding_count_1m = None
+        self._cached_human_robot_distance = None
+        self._cached_nearest_human_distance_mean_1s = None
+        self._cached_human_robot_distance_mean_1s = None
+        self._observation_sample_age_steps = 0
+        self._observation_refresh_counter = 0
+        self._following_fuzzy_evaluated_this_step = False
         self.move_back_active = False
         self.move_back_attacker_idx = None
         self.fear_active = False
@@ -370,6 +393,8 @@ class MuseumEnv(gym.Env):
             for _ in range(n_humans)
         ]
         self.last_following_fuzzy_dominant_state = [None] * n_humans
+        self._following_fuzzy_last_eval_refresh_counter = [-1] * n_humans
+        self._following_fuzzy_evaluated_this_step = False
         self.last_following_fuzzy_inputs = [
             {
                 "following_time": 0.0,
@@ -379,6 +404,72 @@ class MuseumEnv(gym.Env):
             }
             for _ in range(n_humans)
         ]
+
+    def _reset_environment_observation_cache_state(self):
+        self._cached_nearest_human_distance = None
+        self._cached_local_crowding_count_1m = None
+        self._cached_human_robot_distance = None
+        self._cached_nearest_human_distance_mean_1s = None
+        self._cached_human_robot_distance_mean_1s = None
+        self._observation_sample_age_steps = 0
+        self._observation_refresh_counter = 0
+
+    def _has_cached_environment_observations(self) -> bool:
+        return all(
+            cached is not None
+            for cached in (
+                self._cached_nearest_human_distance,
+                self._cached_local_crowding_count_1m,
+                self._cached_human_robot_distance,
+                self._cached_nearest_human_distance_mean_1s,
+                self._cached_human_robot_distance_mean_1s,
+            )
+        )
+
+    def _get_cached_environment_observations(self):
+        if not self._has_cached_environment_observations():
+            raise RuntimeError("Environment observation cache is not initialized.")
+        return {
+            "nearest_human_distance": self._cached_nearest_human_distance,
+            "local_crowding_count_1m": self._cached_local_crowding_count_1m,
+            "human_robot_distance": self._cached_human_robot_distance,
+            "nearest_human_distance_mean_1s": self._cached_nearest_human_distance_mean_1s,
+            "human_robot_distance_mean_1s": self._cached_human_robot_distance_mean_1s,
+        }
+
+    def _tick_observation_sample_age(self):
+        self._observation_sample_age_steps += 1
+
+    def _refresh_environment_observations(self, human_xy, robot_xy, force: bool = False):
+        should_refresh = bool(force) or (not self._has_cached_environment_observations())
+        if (not should_refresh) and (
+            self._observation_sample_age_steps >= self.observation_update_period_steps
+        ):
+            should_refresh = True
+        if not should_refresh:
+            return self._get_cached_environment_observations()
+
+        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
+        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
+        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
+        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
+        nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
+        human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
+
+        self._cached_nearest_human_distance = np.array(nearest_human_distance, dtype=np.float32)
+        self._cached_local_crowding_count_1m = np.array(local_crowding_count_1m, dtype=np.int32)
+        self._cached_human_robot_distance = np.array(human_robot_distance, dtype=np.float32)
+        self._cached_nearest_human_distance_mean_1s = np.array(
+            nearest_human_distance_mean_1s,
+            dtype=np.float32,
+        )
+        self._cached_human_robot_distance_mean_1s = np.array(
+            human_robot_distance_mean_1s,
+            dtype=np.float32,
+        )
+        self._observation_refresh_counter += 1
+        self._observation_sample_age_steps = 0
+        return self._get_cached_environment_observations()
 
     def _set_active_humans(self, n_humans: int):
         """Select the active prefix of humans and assign per-profile defaults."""
@@ -393,6 +484,7 @@ class MuseumEnv(gym.Env):
         if hasattr(self, "timestep_float"):
             self._reset_hh_distance_metrics_state()
             self._reset_hr_distance_metrics_state()
+        self._reset_environment_observation_cache_state()
 
     def _sample_active_human_spawn_states(self, robot_xy):
         """Sample collision-free initial poses for the active humans."""
@@ -513,6 +605,21 @@ class MuseumEnv(gym.Env):
     def _is_following_fuzzy_active(self) -> bool:
         """Return whether following fuzzy transitions are enabled this step."""
         return bool(self.follow_phase == FOLLOW_PHASE_TRANSIT)
+
+    def _should_evaluate_following_fuzzy(self, idx: int) -> bool:
+        """Evaluate following fuzzy once per refreshed observation sample."""
+        if (not self._is_following_fuzzy_active()) or self.following_fuzzy_engine is None:
+            return False
+        if not (0 <= idx < len(self.humans)):
+            return False
+        if idx >= len(self._following_fuzzy_last_eval_refresh_counter):
+            return True
+        if self.last_following_fuzzy_dominant_state[idx] is None:
+            return True
+        return bool(
+            self._observation_refresh_counter
+            > self._following_fuzzy_last_eval_refresh_counter[idx]
+        )
 
     def _maybe_activate_follow_phase_from_robot_progress(self, robot_xy):
         """Start pre-listen engage or transit follow once robot moved far enough."""
@@ -1222,7 +1329,12 @@ class MuseumEnv(gym.Env):
         if window_steps is None:
             window_steps = max(
                 1,
-                int(round(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS / self.timestep_float)),
+                int(
+                    round(
+                        HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS
+                        / self.observation_update_period_seconds
+                    )
+                ),
             )
         self.hh_distance_window_seconds = float(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS)
         self.hh_distance_window_steps = int(max(1, window_steps))
@@ -1245,7 +1357,12 @@ class MuseumEnv(gym.Env):
         if window_steps is None:
             window_steps = max(
                 1,
-                int(round(HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS / self.timestep_float)),
+                int(
+                    round(
+                        HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS
+                        / self.observation_update_period_seconds
+                    )
+                ),
             )
         self.hr_distance_window_steps = int(max(1, window_steps))
         self.hr_distance_history = np.zeros((self.hr_distance_window_steps, n_humans), dtype=np.float32)
@@ -1508,6 +1625,7 @@ class MuseumEnv(gym.Env):
         self.perceived_distracted_indices = []
         self._reset_hh_distance_metrics_state()
         self._reset_hr_distance_metrics_state()
+        self._reset_environment_observation_cache_state()
         self._reset_following_fuzzy_debug_state()
 
         # Reset humans
@@ -1519,6 +1637,10 @@ class MuseumEnv(gym.Env):
         self._reset_human_listening_session_states()
         self._configure_human_distracted_duration()
         self._configure_human_following_variants()
+        human_xyz = self._get_human_poses()
+        human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
+        robot_xy = np.array(self._get_robot_pose()[:2], dtype=np.float32)
+        self._refresh_environment_observations(human_xy=human_xy, robot_xy=robot_xy, force=True)
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
 
@@ -1532,6 +1654,7 @@ class MuseumEnv(gym.Env):
         """
         external_action_received = self._validate_external_action(action)
         self.step_count += 1
+        self._following_fuzzy_evaluated_this_step = False
 
         if self.listen_wait_active:
             return self._step_waiting_branch(external_action_received=external_action_received)
@@ -1541,7 +1664,6 @@ class MuseumEnv(gym.Env):
     def _step_waiting_branch(self, external_action_received=False):
         """Step branch used during listening wait window (explanation phase)."""
         events = self._default_events()
-        self._reset_following_fuzzy_debug_state()
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
         self.move_back_active = False
@@ -1571,12 +1693,16 @@ class MuseumEnv(gym.Env):
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
         robot_xy = np.array([rx, ry], dtype=np.float32)
-        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
-        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
-        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
-        nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
-        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
-        human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
+        self._tick_observation_sample_age()
+        observation_snapshot = self._refresh_environment_observations(
+            human_xy=human_xy,
+            robot_xy=robot_xy,
+        )
+        nearest_human_distance = observation_snapshot["nearest_human_distance"]
+        local_crowding_count_1m = observation_snapshot["local_crowding_count_1m"]
+        nearest_human_distance_mean_1s = observation_snapshot["nearest_human_distance_mean_1s"]
+        human_robot_distance = observation_snapshot["human_robot_distance"]
+        human_robot_distance_mean_1s = observation_snapshot["human_robot_distance_mean_1s"]
 
         wx, wy = self.robot.get_current_waypoint()
         dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
@@ -1672,7 +1798,6 @@ class MuseumEnv(gym.Env):
         """Main simulation branch outside wait window."""
         # Main runtime branch: robot decision, human updates, MuJoCo step, and info assembly.
         events = self._default_events()
-        self._reset_following_fuzzy_debug_state()
         self.last_overwhelmed_trigger_indices = []
         self.last_attack_trigger_indices = []
 
@@ -1775,12 +1900,16 @@ class MuseumEnv(gym.Env):
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
         human_actual_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
-        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
-        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
-        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
-        nearest_human_distance_mean_1s = self._update_hh_distance_metrics(nearest_human_distance)
-        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
-        human_robot_distance_mean_1s = self._update_hr_distance_metrics(human_robot_distance)
+        self._tick_observation_sample_age()
+        observation_snapshot = self._refresh_environment_observations(
+            human_xy=human_xy,
+            robot_xy=robot_xy,
+        )
+        nearest_human_distance = observation_snapshot["nearest_human_distance"]
+        local_crowding_count_1m = observation_snapshot["local_crowding_count_1m"]
+        nearest_human_distance_mean_1s = observation_snapshot["nearest_human_distance_mean_1s"]
+        human_robot_distance = observation_snapshot["human_robot_distance"]
+        human_robot_distance_mean_1s = observation_snapshot["human_robot_distance_mean_1s"]
 
         human_goals = self._build_human_goals(
             human_xy=human_xy,
@@ -2037,12 +2166,19 @@ class MuseumEnv(gym.Env):
         n_humans = len(self.humans)
         follow_radius = FOLLOW_RADIUS_DEFAULT
         robot_speed = float(np.hypot(self.data.ctrl[0], self.data.ctrl[1]))
-        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
-        nearest_human_distance = self._compute_nearest_human_distances_from_pairwise(pairwise_dist)
-        local_crowding_count_1m = self._compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
-        nearest_human_distance_mean_1s = self._get_current_hh_distance_mean_1s()
-        human_robot_distance = self._compute_human_robot_distances(human_xy, robot_xy)
-        human_robot_distance_mean_1s = self._get_current_hr_distance_mean_1s()
+        if self._has_cached_environment_observations():
+            observation_snapshot = self._get_cached_environment_observations()
+        else:
+            observation_snapshot = self._refresh_environment_observations(
+                human_xy=human_xy,
+                robot_xy=robot_xy,
+                force=True,
+            )
+        nearest_human_distance = observation_snapshot["nearest_human_distance"]
+        local_crowding_count_1m = observation_snapshot["local_crowding_count_1m"]
+        nearest_human_distance_mean_1s = observation_snapshot["nearest_human_distance_mean_1s"]
+        human_robot_distance = observation_snapshot["human_robot_distance"]
+        human_robot_distance_mean_1s = observation_snapshot["human_robot_distance_mean_1s"]
         robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(ryaw))
         ctx = {
             "robot_xy": robot_xy,
@@ -2077,7 +2213,7 @@ class MuseumEnv(gym.Env):
             human.update_following_duration(
                 eligible_following=bool(self.follow_humans and human.mode == HumanMode.FOLLOWING)
             )
-            if human.mode == HumanMode.FOLLOWING and self._is_following_fuzzy_active():
+            if human.mode == HumanMode.FOLLOWING and self._should_evaluate_following_fuzzy(i):
                 fuzzy_debug = self._compute_following_fuzzy_diagnostics(
                     human=human,
                     idx=i,
@@ -2096,6 +2232,10 @@ class MuseumEnv(gym.Env):
                     self.last_following_fuzzy_dominant_state[i] = str(
                         fuzzy_debug["result"]["dominant_state"]
                     )
+                    self._following_fuzzy_last_eval_refresh_counter[i] = int(
+                        self._observation_refresh_counter
+                    )
+                    self._following_fuzzy_evaluated_this_step = True
                     self._apply_following_fuzzy_transition(
                         human=human,
                         idx=i,
@@ -2363,6 +2503,9 @@ class MuseumEnv(gym.Env):
                 "step_count": int(self.step_count),
                 "follow_phase": self.follow_phase,
                 "listen_mode": bool(self.robot.listen_mode),
+                "following_fuzzy_eval_period_seconds": float(self.following_fuzzy_eval_period_seconds),
+                "following_fuzzy_eval_period_steps": int(self.following_fuzzy_eval_period_steps),
+                "following_fuzzy_evaluated_this_step": bool(self._following_fuzzy_evaluated_this_step),
                 "listen_intro_delay": {
                     "active": bool(self.listen_intro_delay_active),
                     "counter": int(self.listen_intro_delay_counter),
@@ -2460,6 +2603,12 @@ class MuseumEnv(gym.Env):
                     "human_robot_distance_mean_1s": snapshot["human_robot_distance_mean_1s"],
                     "window_seconds": float(self.hh_distance_window_seconds),
                     "window_steps": int(self.hh_distance_window_steps),
+                    "observation_update_period_seconds": float(self.observation_update_period_seconds),
+                    "observation_update_period_steps": int(self.observation_update_period_steps),
+                    "observation_sample_age_steps": int(self._observation_sample_age_steps),
+                    "observation_sample_age_seconds": float(
+                        self._observation_sample_age_steps * self.timestep_float
+                    ),
                 },
             },
             "robot": {

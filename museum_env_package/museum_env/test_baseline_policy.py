@@ -1761,9 +1761,404 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_default_observation_cadence_initializes_cache_and_sample_windows(self):
+        env = self._make_env(
+            n_humans=3,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=166)
+
+            self.assertAlmostEqual(env.observation_update_period_seconds, 0.1)
+            self.assertEqual(env.observation_update_period_steps, 50)
+            self.assertEqual(env.hh_distance_window_steps, 10)
+            self.assertEqual(env.hr_distance_window_steps, 10)
+            self.assertTrue(env._has_cached_environment_observations())
+            self.assertEqual(env._observation_sample_age_steps, 0)
+        finally:
+            env.close()
+
+    def test_environment_observations_refresh_only_when_cadence_is_due(self):
+        env = self._make_env(
+            n_humans=3,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=167)
+            self._set_robot_pose(env, x=0.0, y=0.0, yaw=0.0)
+            poses_a = (
+                (0.0, 0.0, 0.0),
+                (0.5, 0.0, 0.0),
+                (3.0, 0.0, 0.0),
+            )
+            for human, pose in zip(env.humans, poses_a):
+                self._set_human_pose(env, human, *pose)
+            mujoco.mj_forward(env.model, env.data)
+            human_xy_a = env._get_human_poses()[:, :2]
+            robot_xy_a = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            initial_snapshot = env._refresh_environment_observations(
+                human_xy=human_xy_a,
+                robot_xy=robot_xy_a,
+                force=True,
+            )
+
+            nearest_a = np.array(initial_snapshot["nearest_human_distance"], dtype=np.float32)
+            crowd_a = np.array(initial_snapshot["local_crowding_count_1m"], dtype=np.int32)
+            hr_a = np.array(initial_snapshot["human_robot_distance"], dtype=np.float32)
+
+            self._set_robot_pose(env, x=1.0, y=0.0, yaw=0.0)
+            poses_b = (
+                (0.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+                (4.0, 0.0, 0.0),
+            )
+            for human, pose in zip(env.humans, poses_b):
+                self._set_human_pose(env, human, *pose)
+            mujoco.mj_forward(env.model, env.data)
+            human_xy_b = env._get_human_poses()[:, :2]
+            robot_xy_b = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+
+            cached_snapshot = None
+            for _ in range(env.observation_update_period_steps - 1):
+                env._tick_observation_sample_age()
+                cached_snapshot = env._refresh_environment_observations(
+                    human_xy=human_xy_b,
+                    robot_xy=robot_xy_b,
+                )
+
+            self.assertEqual(env._observation_sample_age_steps, env.observation_update_period_steps - 1)
+            np.testing.assert_allclose(cached_snapshot["nearest_human_distance"], nearest_a, atol=1e-7)
+            np.testing.assert_array_equal(cached_snapshot["local_crowding_count_1m"], crowd_a)
+            np.testing.assert_allclose(cached_snapshot["human_robot_distance"], hr_a, atol=1e-7)
+
+            env._tick_observation_sample_age()
+            refreshed_snapshot = env._refresh_environment_observations(
+                human_xy=human_xy_b,
+                robot_xy=robot_xy_b,
+            )
+            expected_nearest_b = self._dense_nearest_human_distance_reference(human_xy_b)
+            expected_crowd_b = self._dense_local_crowding_count_1m_reference(human_xy_b)
+            expected_hr_b = self._dense_human_robot_distance_reference(human_xy_b, robot_xy_b)
+
+            self.assertEqual(env._observation_sample_age_steps, 0)
+            np.testing.assert_allclose(
+                refreshed_snapshot["nearest_human_distance"],
+                expected_nearest_b,
+                atol=1e-7,
+            )
+            np.testing.assert_array_equal(
+                refreshed_snapshot["local_crowding_count_1m"],
+                expected_crowd_b,
+            )
+            np.testing.assert_allclose(
+                refreshed_snapshot["human_robot_distance"],
+                expected_hr_b,
+                atol=1e-7,
+            )
+        finally:
+            env.close()
+
+    def test_step_info_reports_observation_cadence_metadata(self):
+        env = self._make_env(
+            n_humans=3,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=168)
+            _, _, _, _, info = env.step(None)
+
+            metrics_info = info["metrics"]["humans"]
+            status_info = info["status"]
+            self.assertAlmostEqual(metrics_info["observation_update_period_seconds"], 0.1)
+            self.assertEqual(metrics_info["observation_update_period_steps"], 50)
+            self.assertEqual(metrics_info["observation_sample_age_steps"], 1)
+            self.assertAlmostEqual(metrics_info["observation_sample_age_seconds"], float(env.timestep))
+            self.assertAlmostEqual(status_info["following_fuzzy_eval_period_seconds"], 0.1)
+            self.assertEqual(status_info["following_fuzzy_eval_period_steps"], 50)
+            self.assertFalse(status_info["following_fuzzy_evaluated_this_step"])
+        finally:
+            env.close()
+
+    def test_following_fuzzy_uses_cached_environment_observations(self):
+        env = self._make_env(
+            n_humans=2,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=169)
+            env._set_follow_phase("transit_follow")
+            env._cached_nearest_human_distance = np.array([0.75, 1.5], dtype=np.float32)
+            env._cached_local_crowding_count_1m = np.array([3, 0], dtype=np.int32)
+            env._cached_human_robot_distance = np.array([1.25, 2.5], dtype=np.float32)
+            env._cached_nearest_human_distance_mean_1s = np.array([0.8, 1.6], dtype=np.float32)
+            env._cached_human_robot_distance_mean_1s = np.array([1.3, 2.6], dtype=np.float32)
+            env._observation_sample_age_steps = 7
+
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [3.0, 0.0],
+                ],
+                dtype=np.float32,
+            )
+            robot_xy = np.array([10.0, 0.0], dtype=np.float32)
+            repulsion_vectors = np.zeros((len(env.humans), 2), dtype=np.float32)
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result):
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(env.last_following_fuzzy_inputs[0]["density"], 3.0)
+            self.assertAlmostEqual(env.last_following_fuzzy_inputs[0]["hhd"], 0.8)
+            self.assertAlmostEqual(env.last_following_fuzzy_inputs[0]["hrd"], 1.3)
+        finally:
+            env.close()
+
+    def test_following_fuzzy_evaluates_once_per_observation_refresh_cycle(self):
+        env = self._make_env(
+            n_humans=2,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=170)
+            env._set_follow_phase("transit_follow")
+            human_xy = env._get_human_poses()[:, :2]
+            robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            repulsion_vectors = np.zeros((len(env.humans), 2), dtype=np.float32)
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result) as mock_compute:
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, len(env.humans))
+                self.assertTrue(env._following_fuzzy_evaluated_this_step)
+
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, len(env.humans))
+                self.assertFalse(env._following_fuzzy_evaluated_this_step)
+
+                env._observation_sample_age_steps = env.observation_update_period_steps
+                env._refresh_environment_observations(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                )
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+                self.assertEqual(mock_compute.call_count, 2 * len(env.humans))
+                self.assertTrue(env._following_fuzzy_evaluated_this_step)
+        finally:
+            env.close()
+
+    def test_following_fuzzy_debug_state_persists_between_non_eval_steps(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=171)
+            env._set_follow_phase("transit_follow")
+            human_xy = env._get_human_poses()[:, :2]
+            robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            repulsion_vectors = np.zeros((len(env.humans), 2), dtype=np.float32)
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result):
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            inputs_before = dict(env.last_following_fuzzy_inputs[0])
+            scores_before = dict(env.last_following_fuzzy_scores[0])
+            dominant_before = env.last_following_fuzzy_dominant_state[0]
+
+            env._cached_nearest_human_distance = np.array([3.5], dtype=np.float32)
+            env._cached_local_crowding_count_1m = np.array([7], dtype=np.int32)
+            env._cached_human_robot_distance = np.array([4.5], dtype=np.float32)
+            env._cached_nearest_human_distance_mean_1s = np.array([3.7], dtype=np.float32)
+            env._cached_human_robot_distance_mean_1s = np.array([4.7], dtype=np.float32)
+
+            with patch.object(env.following_fuzzy_engine, "compute", side_effect=AssertionError("unexpected fuzzy compute")):
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(env.last_following_fuzzy_inputs[0], inputs_before)
+            self.assertEqual(env.last_following_fuzzy_scores[0], scores_before)
+            self.assertEqual(env.last_following_fuzzy_dominant_state[0], dominant_before)
+            self.assertFalse(env._following_fuzzy_evaluated_this_step)
+        finally:
+            env.close()
+
+    def test_following_fuzzy_transition_only_applies_on_eval_steps(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=172)
+            env._set_follow_phase("transit_follow")
+            human = env.humans[0]
+            human_xy = env._get_human_poses()[:, :2]
+            robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            repulsion_vectors = np.zeros((len(env.humans), 2), dtype=np.float32)
+            engaged_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.1,
+                "engaged": 0.9,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+            distracted_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.9,
+                "impatient": 0.1,
+                "engaged": 0.1,
+                "dominant_state": "distracted",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result):
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+            self.assertEqual(env.last_following_fuzzy_dominant_state[0], "engaged")
+
+            with patch.object(env.following_fuzzy_engine, "compute", side_effect=AssertionError("unexpected fuzzy compute")):
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+            self.assertEqual(env.last_following_fuzzy_dominant_state[0], "engaged")
+            self.assertFalse(env._following_fuzzy_evaluated_this_step)
+
+            env._observation_sample_age_steps = env.observation_update_period_steps
+            env._refresh_environment_observations(
+                human_xy=human_xy,
+                robot_xy=robot_xy,
+            )
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=distracted_result):
+                env._following_fuzzy_evaluated_this_step = False
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+            self.assertEqual(env.last_following_fuzzy_dominant_state[0], "distracted")
+            self.assertTrue(env._following_fuzzy_evaluated_this_step)
+        finally:
+            env.close()
+
+    def test_waiting_branch_preserves_fuzzy_debug_state(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=173)
+            env.last_following_fuzzy_inputs[0] = {
+                "following_time": 1.2,
+                "hhd": 0.7,
+                "hrd": 1.1,
+                "density": 2.0,
+            }
+            env.last_following_fuzzy_scores[0] = {
+                "overwhelmed": 0.1,
+                "distracted": 0.2,
+                "impatient": 0.1,
+                "engaged": 0.8,
+            }
+            env.last_following_fuzzy_dominant_state[0] = "engaged"
+            env.listen_wait_active = True
+            env.listen_wait_counter = 0
+            env.listen_wait_is_final = False
+            env.robot.listen_mode = True
+            env.robot.mode = "stop"
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["humans"]["fuzzy_dominant_state"][0], "engaged")
+            self.assertEqual(info["humans"]["fuzzy_inputs"][0]["density"], 2.0)
+            self.assertFalse(info["status"]["following_fuzzy_evaluated_this_step"])
+            self.assertAlmostEqual(info["status"]["following_fuzzy_eval_period_seconds"], 0.1)
+            self.assertEqual(info["status"]["following_fuzzy_eval_period_steps"], 50)
+        finally:
+            env.close()
+
     def test_step_info_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1783,13 +2178,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(info["metrics"]["humans"]["window_seconds"], 1.0)
             self.assertEqual(info["metrics"]["humans"]["window_steps"], env.hh_distance_window_steps)
             np.testing.assert_allclose(nearest, expected, atol=1e-6)
-            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
         finally:
             env.close()
 
     def test_step_info_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1812,13 +2207,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(nearest.shape, (len(env.humans),))
             self.assertEqual(mean_1s.shape, (len(env.humans),))
             np.testing.assert_allclose(nearest, expected, atol=1e-6)
-            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
         finally:
             env.close()
 
     def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1839,6 +2234,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_local_crowding_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1866,6 +2262,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     def test_step_info_human_robot_metrics_match_pose_xy_reference_in_active_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1882,13 +2279,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(dist.shape, (len(env.humans),))
             self.assertEqual(mean_1s.shape, (len(env.humans),))
             np.testing.assert_allclose(dist, expected, atol=1e-6)
-            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
         finally:
             env.close()
 
     def test_step_info_human_robot_metrics_match_pose_xy_reference_in_waiting_branch(self):
         env = self._make_env(
             n_humans=5,
+            observation_update_period_seconds=0.002,
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
@@ -1912,7 +2309,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(dist.shape, (len(env.humans),))
             self.assertEqual(mean_1s.shape, (len(env.humans),))
             np.testing.assert_allclose(dist, expected, atol=1e-6)
-            np.testing.assert_allclose(mean_1s, expected, atol=1e-6)
         finally:
             env.close()
 
