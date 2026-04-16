@@ -1,4 +1,4 @@
-fis = readfis('human_states_following_v6.fis');
+fis = readfis('human_states_following_v8.fis');
 
 % Representative values for each Membership Function (MF) - using center of plateaus
 % following_time: short[0-10], medium[20-40], long[50-60]
@@ -15,11 +15,13 @@ ft_labels      = {'short','medium','long'};
 hhd_labels     = {'close','medium','far'};
 hrd_labels     = {'close','medium','far'};
 density_labels = {'low','medium','crowded'};
-state_labels   = {'overwhelmed','distracted','impatient','engaged'};
+state_labels   = {'engaged','overwhelmed','distracted','impatient'};
 
 % Construct 81 sets of inputs
 n = 0;
+tol = 1e-2;
 results = struct();
+
 
 for i = 1:3
     for j = 1:3
@@ -32,14 +34,19 @@ for i = 1:3
                 % Identify dominant state (highest output value)
                 [max_val, max_idx] = max(output);
 
+                if max(output) - min(output) < tol
+                    max_idx = 1;   % engaged
+                    max_val = output(1);
+                end
+
                 results(n).following_time = ft_labels{i};
                 results(n).hhd            = hhd_labels{j};
                 results(n).hrd            = hrd_labels{k};
                 results(n).density        = density_labels{l};
-                results(n).overwhelmed    = output(1);
-                results(n).distracted     = output(2);
-                results(n).impatient      = output(3);
-                results(n).engaged         = output(4);
+                results(n).engaged        = output(1);
+                results(n).overwhelmed    = output(2);
+                results(n).distracted     = output(3);
+                results(n).impatient      = output(4);
                 results(n).dominant_state = state_labels{max_idx};
                 results(n).dominant_value = max_val;
             end

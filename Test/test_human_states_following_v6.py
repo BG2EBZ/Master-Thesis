@@ -5,18 +5,18 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent
-FIS_PATH = REPO_ROOT / "Matlab fuzzy" / "human_states_following_v6.fis"
-FUZZY_RULES_PATH = REPO_ROOT / "museum_env_package" / "Fuzzy_rules" / "human_states_following.py"
-ENV_FUZZY_PATH = (
-    REPO_ROOT / "museum_env_package" / "museum_env" / "fuzzy" / "human_states_following.py"
-)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FIS_PATH = REPO_ROOT / "Matlab fuzzy" / "human_states_following_v8.fis"
+ENV_FUZZY_PATH = REPO_ROOT / "museum_env_package" / "museum_env" / "fuzzy" / "human_states_following.py"
 
 EXPECTED_INPUT_MFS = {
-    ("hhd", "medium"): ("trapmf", (0.5, 0.6, 1.2, 1.5)),
-    ("hhd", "far"): ("trapmf", (1.2, 1.5, 4.0, 4.0)),
-    ("hrd", "medium"): ("trapmf", (1.0, 1.2, 2.6, 3.0)),
-    ("hrd", "far"): ("trapmf", (2.6, 3.0, 5.0, 5.0)),
+    ("hhd", "medium"): ("trapmf", (0.5, 0.6, 0.9, 1.0)),
+    ("hhd", "far"): ("trapmf", (0.9, 1.0, 4.0, 4.0)),
+    ("hrd", "medium"): ("trapmf", (1.0, 1.2, 2.0, 2.2)),
+    ("hrd", "far"): ("trapmf", (2.0, 2.2, 5.0, 5.0)),
+    ("density", "low"): ("trapmf", (0.0, 0.0, 1.0, 1.0)),
+    ("density", "medium"): ("trapmf", (2.0, 2.0, 4.0, 4.0)),
+    ("density", "crowded"): ("trapmf", (5.0, 5.0, 10.0, 10.0)),
 }
 
 
@@ -49,7 +49,7 @@ def _load_input_mfs_from_source(path: Path):
         if not isinstance(target, ast.Subscript) or not isinstance(target.value, ast.Name):
             continue
         variable_name = target.value.id
-        if variable_name not in {"hhd", "hrd"}:
+        if variable_name not in {"following_time", "hhd", "hrd", "density"}:
             continue
         label = target.slice.value if isinstance(target.slice, ast.Constant) else None
         if not isinstance(label, str):
@@ -96,7 +96,7 @@ def _parse_fis_input_mfs(path: Path):
         if line.startswith("Name='") and current_input is None:
             current_input = line.split("'")[1]
             continue
-        if current_input not in {"hhd", "hrd"} or not line.startswith("MF"):
+        if current_input not in {"following_time", "hhd", "hrd", "density"} or not line.startswith("MF"):
             continue
         match = re.match(r"MF\d+='([^']+)':'([^']+)',\[(.+)\]", line)
         if match is None:
@@ -107,62 +107,58 @@ def _parse_fis_input_mfs(path: Path):
     return inputs
 
 
-class TestHumanStatesFollowingV6(unittest.TestCase):
+class TestHumanStatesFollowingV8(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fuzzy_rules_module = _load_module("fuzzy_rules_hsf_v6", FUZZY_RULES_PATH)
-        cls.env_fuzzy_module = _load_module("env_fuzzy_hsf_v6", ENV_FUZZY_PATH)
+        cls.env_fuzzy_module = _load_module("env_fuzzy_hsf_v8", ENV_FUZZY_PATH)
 
-    def test_rule_tables_match_v6_fis_exactly(self):
+    def test_rule_table_matches_v8_fis_exactly(self):
         fis_rules = _parse_fis_rules(FIS_PATH)
-        fuzzy_rules_table = _load_rule_table_from_source(FUZZY_RULES_PATH, "_RULE_TABLE")
-        env_rules_table = _load_rule_table_from_source(ENV_FUZZY_PATH, "RULE_TABLE")
-
-        self.assertEqual(fuzzy_rules_table, fis_rules)
+        env_rules_table = _load_rule_table_from_source(ENV_FUZZY_PATH, "_RULE_TABLE")
         self.assertEqual(env_rules_table, fis_rules)
 
-    def test_updated_input_membership_functions_match_v6_fis(self):
+    def test_updated_input_membership_functions_match_v8_fis(self):
         fis_input_mfs = _parse_fis_input_mfs(FIS_PATH)
-        fuzzy_rules_input_mfs = _load_input_mfs_from_source(FUZZY_RULES_PATH)
         env_fuzzy_input_mfs = _load_input_mfs_from_source(ENV_FUZZY_PATH)
 
         for key, expected in EXPECTED_INPUT_MFS.items():
             self.assertEqual(fis_input_mfs[key], expected)
-            self.assertEqual(fuzzy_rules_input_mfs[key], expected)
             self.assertEqual(env_fuzzy_input_mfs[key], expected)
 
-    def test_distracted_outputs_follow_corrected_v6_patterns(self):
+    def test_representative_v8_behavior_cases(self):
         module = self.env_fuzzy_module
-        distracted_cases = [
-            ((5.0, 2.0, 3.5, 0.5), 0.0, 0.4),
-            ((30.0, 2.0, 2.0, 7.0), 0.3, 0.7),
-            ((50.0, 2.0, 3.5, 7.0), 0.3, 0.72),
-            ((50.0, 2.5, 3.5, 7.0), 0.6, 1.0),
+        cases = [
+            ((30.0, 0.25, 0.5, 7.0), "overwhelmed", "overwhelmed", 0.55),
+            ((55.0, 2.0, 3.5, 0.5), "distracted", "distracted", 0.55),
+            ((55.0, 0.25, 0.5, 3.0), "impatient", "impatient", 0.55),
+            ((5.0, 2.0, 3.5, 0.5), "engaged", "engaged", 0.55),
+            ((30.0, 0.75, 0.5, 7.0), "engaged", "engaged", 0.35),
+            ((55.0, 0.25, 0.5, 0.5), "engaged", "engaged", 0.45),
         ]
 
-        for inputs, lower, upper in distracted_cases:
+        for inputs, dominant_state, key, lower_bound in cases:
             with self.subTest(inputs=inputs):
                 result = module.compute(*inputs)
-                self.assertGreaterEqual(result["distracted"], lower)
-                self.assertLessEqual(result["distracted"], upper)
+                self.assertEqual(result["dominant_state"], dominant_state)
+                self.assertGreaterEqual(result[key], lower_bound)
 
-    def test_both_python_implementations_produce_matching_outputs(self):
-        sample_inputs = [
-            (5.0, 2.0, 3.5, 0.5),
-            (30.0, 1.0, 2.0, 7.0),
-            (30.0, 1.2, 2.6, 4.0),
-            (30.0, 1.5, 3.0, 5.0),
-            (50.0, 2.0, 3.5, 7.0),
-            (50.0, 2.5, 3.5, 7.0),
-        ]
+    def test_no_rule_outputs_fall_back_to_point_two(self):
+        result = self.env_fuzzy_module.compute(5.0, 2.0, 3.5, 0.5)
+        self.assertAlmostEqual(result["overwhelmed"], 0.2, places=6)
+        self.assertAlmostEqual(result["distracted"], 0.2, places=6)
+        self.assertAlmostEqual(result["impatient"], 0.2, places=6)
+        self.assertGreater(result["engaged"], 0.6)
 
-        for inputs in sample_inputs:
-            with self.subTest(inputs=inputs):
-                first = self.fuzzy_rules_module.compute(*inputs)
-                second = self.env_fuzzy_module.compute(*inputs)
-                for key in ("overwhelmed", "distracted", "impatient", "engaged", "dominant_value"):
-                    self.assertAlmostEqual(first[key], second[key], places=6)
-                self.assertEqual(first["dominant_state"], second["dominant_state"])
+    def test_tie_within_tolerance_prefers_engaged(self):
+        dominant = self.env_fuzzy_module._select_dominant_state(
+            {
+                "overwhelmed": 0.705,
+                "distracted": 0.1,
+                "impatient": 0.2,
+                "engaged": 0.7,
+            }
+        )
+        self.assertEqual(dominant, "engaged")
 
 
 if __name__ == "__main__":

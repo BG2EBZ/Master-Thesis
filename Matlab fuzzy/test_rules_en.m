@@ -1,4 +1,4 @@
-fis = readfis('human_states_following_v6.fis');
+fis = readfis('human_states_following_v8.fis');
 
 % Key point sampling: covers the boundaries and centers of each MF
 % following_time: short[0-20], medium[10-50], long[40-60]
@@ -18,7 +18,7 @@ outputs = evalfis(fis, inputs);
 
 results = array2table([inputs, outputs], ...
     'VariableNames', {'following_time','hhd','hrd','density', ...
-                      'overwhelmed','distracted','impatient','engaged'});
+                      'engaged','overwhelmed','distracted','impatient'});
 
 % ---- Dead Zone Detection ----
 % All outputs are very low: indicates no rules were activated
@@ -29,7 +29,7 @@ fprintf('Suspected dead zones (No rules activated, outputs default to 0.5): %d s
 
 % ---- Logic Conflict Detection ----
 % engaged and overwhelmed are high simultaneously
-conflict1 = results(outputs(:,1) > 0.6 & outputs(:,4) > 0.6, :);
+conflict1 = results(outputs(:,1) > 0.6 & outputs(:,2) > 0.6, :);
 fprintf('Conflict: engaged and overwhelmed both high: %d sets\n', height(conflict1));
 
 % ---- Export ----
