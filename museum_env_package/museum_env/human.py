@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
+import mujoco
 import numpy as np
 
 from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout
@@ -60,8 +61,9 @@ NORM_EPS = 1e-6
 ATTACK_DEFAULT_SPEED = 1.0
 ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
-SEGMENT_CHECK_SPACING = 0.05
 MIN_SPEED_EPS = 1e-6
+RAYCAST_CLEARANCE_EPS = 1e-3
+RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -136,7 +138,6 @@ class Human:
         self.base_max_speed = float(max_speed)
         self.waypoint_threshold = waypoint_threshold
         self.map_layout = DEFAULT_MUSEUM_LAYOUT if map_layout is None else map_layout
-        self._wall_walkable_rects = self.map_layout.get_walkable_rects(HUMAN_WALL_FOOTPRINT_RADIUS)
         setattr(self, "mode", None)
 
         self.context = HumanContext()
@@ -146,6 +147,8 @@ class Human:
         self.body_id = None
         self.x_dof_idx = None
         self.y_dof_idx = None
+        self._runtime_model = None
+        self._runtime_data = None
         
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
@@ -561,12 +564,7 @@ class Human:
             current_xy=current_xy,
             current_yaw=current_yaw,
         )
-        target_xy = self._find_farthest_walkable_point_on_segment(
-            start_xy=current_xy,
-            end_xy=sampled_target_xy,
-            margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-        )
-        self._set_distracted_target_state(target_yaw=target_yaw, target_xy=target_xy)
+        self._set_distracted_target_state(target_yaw=target_yaw, target_xy=sampled_target_xy)
 
     def _sample_distracted_target_candidate(self, current_xy, current_yaw: float):
         """Sample one distracted target candidate before wall/segment validity checks."""
@@ -640,6 +638,7 @@ class Human:
         """
         Decide where to stand based on social context.
         """
+        del current_xy
         index = self.context.index
         n_humans = self.context.n_humans
         robot_pose = self.context.robot_pose
@@ -674,14 +673,6 @@ class Human:
         if raw_target_xy is None:
             return
 
-        if current_xy is not None:
-            self.current_waypoint = self._find_farthest_walkable_point_on_segment(
-                start_xy=np.array(current_xy, dtype=np.float32),
-                end_xy=raw_target_xy,
-                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-            )
-            return
-
         self.current_waypoint = np.array(raw_target_xy, dtype=np.float32)
     
     def step(self, model, data, ctx):
@@ -701,6 +692,8 @@ class Human:
         if self.x_dof_idx is None:
             self.x_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_x").id]
             self.y_dof_idx = model.jnt_dofadr[model.joint(f"{self.name}_y").id]
+        self._runtime_model = model
+        self._runtime_data = data
 
         pose = self._get_pose(data)
         if self.mode == HumanMode.WANDERING:
@@ -1230,56 +1223,63 @@ class Human:
 
     @classmethod
     def sample_walkable_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
-        """Compatibility wrapper returning a sample from the default map layout."""
-        return DEFAULT_MUSEUM_LAYOUT.sample_walkable_point(margin=margin, rng=rng)
+        """Compatibility wrapper returning a sample from the default spawn region."""
+        return DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(margin=margin, rng=rng)
 
     @classmethod
     def sample_room_a_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
         """Compatibility wrapper returning a spawn sample from the default map layout."""
         return DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(margin=margin, rng=rng)
 
-    def _is_point_in_walkable(self, xy, margin: float) -> bool:
-        """Check if point belongs to the active map layout walkable region."""
-        wall_rects = self._wall_walkable_rects_for_margin(margin)
-        if wall_rects is not None:
-            x = float(xy[0])
-            y = float(xy[1])
-            return self.map_layout._contains_point_in_rects(x, y, wall_rects)
-        return self.map_layout.contains_point(xy, margin=margin)
+    @staticmethod
+    def _iter_raycast_origin_heights(body_z: float) -> tuple[float, ...]:
+        primary_height = float(body_z)
+        secondary_height = min(primary_height, 0.10)
+        if abs(primary_height - secondary_height) <= MIN_SPEED_EPS:
+            return (primary_height,)
+        return (primary_height, secondary_height)
 
-    def _project_point_to_walkable(self, xy, margin: float):
-        """Project point to the nearest valid point inside the active map layout."""
-        wall_rects = self._wall_walkable_rects_for_margin(margin)
-        if wall_rects is not None:
-            return self.map_layout._project_point_to_rects(xy, wall_rects)
-        return self.map_layout.project_point(xy, margin=margin)
+    def _raycast_hit_distance(self, direction_xy):
+        """Return the nearest live collision distance along one XY direction, if any."""
+        direction_xy = np.array(direction_xy, dtype=np.float32)
+        desired_speed = float(np.linalg.norm(direction_xy))
+        if desired_speed <= MIN_SPEED_EPS:
+            return None
+        if self._runtime_model is None or self._runtime_data is None or self.body_id is None:
+            return None
 
-    def _is_segment_walkable(self, start_xy, end_xy, margin: float):
-        """Check whether a straight segment stays inside the active map layout."""
-        wall_rects = self._wall_walkable_rects_for_margin(margin)
-        if wall_rects is not None:
-            return self.map_layout._is_segment_walkable_in_rects(start_xy, end_xy, wall_rects)
-        return self.map_layout.is_segment_walkable(start_xy, end_xy, margin=margin)
-
-    def _find_farthest_walkable_point_on_segment(self, start_xy, end_xy, margin: float):
-        """Return the farthest walkable point on a segment under the active map layout."""
-        wall_rects = self._wall_walkable_rects_for_margin(margin)
-        if wall_rects is not None:
-            return self.map_layout._find_farthest_walkable_point_on_segment_in_rects(
-                start_xy,
-                end_xy,
-                wall_rects,
-            )
-        return self.map_layout.find_farthest_walkable_point_on_segment(
-            start_xy,
-            end_xy,
-            margin=margin,
+        ray_direction = np.array(
+            [
+                float(direction_xy[0]) / desired_speed,
+                float(direction_xy[1]) / desired_speed,
+                0.0,
+            ],
+            dtype=np.float64,
         )
-
-    def _wall_walkable_rects_for_margin(self, margin: float):
-        if float(margin) == float(HUMAN_WALL_FOOTPRINT_RADIUS):
-            return self._wall_walkable_rects
-        return None
+        ray_origin = np.array(self._runtime_data.xpos[self.body_id], dtype=np.float64)
+        geomid = np.array([-1], dtype=np.int32)
+        best_hit_distance = None
+        for ray_height in self._iter_raycast_origin_heights(float(ray_origin[2])):
+            ray_origin_with_height = ray_origin.copy()
+            ray_origin_with_height[2] = ray_height
+            geomid[0] = -1
+            hit_distance = float(
+                mujoco.mj_ray(
+                    self._runtime_model,
+                    self._runtime_data,
+                    ray_origin_with_height,
+                    ray_direction,
+                    None,
+                    1,
+                    int(self.body_id),
+                    geomid,
+                )
+            )
+            if hit_distance < 0.0:
+                continue
+            if best_hit_distance is None or hit_distance < best_hit_distance:
+                best_hit_distance = hit_distance
+        return best_hit_distance
 
     @staticmethod
     def _clip_listening_sector_relative_angle(relative_angle: float, sector_half_angle: float):
@@ -1401,38 +1401,35 @@ class Human:
         x: Optional[float] = None,
         y: Optional[float] = None,
     ):
-        """Adjust velocity so the next-step position stays in walkable area."""
-        # Project next-step position back to walkable area when command exits map bounds.
+        """Adjust XY velocity using live MuJoCo ray-cast clearance only."""
+        del dt, margin
         if current_xy is None:
             if x is None or y is None:
                 raise ValueError("current_xy or both x/y must be provided.")
-            current_xy = np.array([float(x), float(y)], dtype=np.float32)
-        else:
-            current_xy = np.array(current_xy, dtype=np.float32)
         if v_xy is None:
             raise ValueError("v_xy must be provided.")
         v_xy = np.array(v_xy, dtype=np.float32)
         speed = float(np.linalg.norm(v_xy))
         if speed > self.max_speed and speed > MIN_SPEED_EPS:
             v_xy = v_xy / speed * float(self.max_speed)
+            speed = float(np.linalg.norm(v_xy))
 
-        dt = float(dt)
-        if dt <= MIN_SPEED_EPS:
+        if speed <= MIN_SPEED_EPS:
             return v_xy
 
-        next_xy = current_xy + dt * v_xy
-        if self._is_point_in_walkable(next_xy, margin):
+        hit_distance = self._raycast_hit_distance(v_xy)
+        if hit_distance is None or float(hit_distance) >= RAYCAST_SLOWDOWN_DISTANCE_METERS:
             return v_xy
 
-        projected_xy = self._project_point_to_walkable(next_xy, margin)
-        safe_v = (projected_xy - current_xy) / dt
-        safe_speed = float(np.linalg.norm(safe_v))
-        if safe_speed > self.max_speed and safe_speed > MIN_SPEED_EPS:
-            safe_v = safe_v / safe_speed * float(self.max_speed)
-        return np.array(safe_v, dtype=np.float32)
+        clearance = max(0.0, float(hit_distance) - RAYCAST_CLEARANCE_EPS)
+        if clearance <= MIN_SPEED_EPS:
+            return np.zeros(2, dtype=np.float32)
+
+        speed_scale = min(1.0, clearance / float(RAYCAST_SLOWDOWN_DISTANCE_METERS))
+        return np.array(v_xy * speed_scale, dtype=np.float32)
 
     def _apply_wall_constraint_to_action(self, action, ctx, current_xy):
-        """Apply walkable-area constraints to translational action components."""
+        """Apply live ray-cast wall/obstacle constraints to translational action components."""
         constrained_action = np.array(action, dtype=np.float32)
         if constrained_action.shape[0] < 2:
             return constrained_action
@@ -1455,8 +1452,8 @@ class Human:
         return x, y, yaw
 
     def _random_waypoint(self):
-        """Generate random waypoint within walkable museum bounds."""
-        return self.map_layout.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+        """Generate random waypoint inside the configured spawn region."""
+        return self.map_layout.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
     
     def _wrap_to_pi(self, ang):
         """Normalize angle to [-pi, pi)."""

@@ -528,7 +528,7 @@ class MuseumEnv(gym.Env):
         return sampled_states
 
     def _reset_human_positions(self, robot_xy):
-        """Place active humans in walkable space and park inactive humans outside the map."""
+        """Place active humans in spawn space and park inactive humans outside the map."""
         active_spawn_states = self._sample_active_human_spawn_states(robot_xy=robot_xy)
         for human, spawn_state in zip(self.humans, active_spawn_states):
             self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = spawn_state
@@ -736,7 +736,7 @@ class MuseumEnv(gym.Env):
         return float(a_xy[0] * b_xy[1] - a_xy[1] * b_xy[0])
 
     def _build_post_explanation_yield_target(self, human, current_xy, robot_xy, outbound_dir):
-        """Build one small walkable yield target using away-first, side-fallback search."""
+        """Build one small yield target using away-first, side-fallback search."""
         current_xy = np.array(current_xy, dtype=np.float32)
         robot_xy = np.array(robot_xy, dtype=np.float32)
         outbound_dir = np.array(outbound_dir, dtype=np.float32)
@@ -770,11 +770,7 @@ class MuseumEnv(gym.Env):
         best_score = 0.0
         for direction in candidate_dirs:
             cand_xy = current_xy + float(POST_EXPLANATION_YIELD_DISTANCE) * np.array(direction, dtype=np.float32)
-            safe_xy = human._find_farthest_walkable_point_on_segment(
-                start_xy=current_xy,
-                end_xy=cand_xy,
-                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-            )
+            safe_xy = np.array(cand_xy, dtype=np.float32)
             move_vec = safe_xy - current_xy
             move_dist = float(np.linalg.norm(move_vec))
             if move_dist <= 0.02:

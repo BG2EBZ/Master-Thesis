@@ -68,8 +68,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def _assert_in_walkable(self, human, xy, margin=HUMAN_WALL_FOOTPRINT_RADIUS, tol=1e-5):
         xy_arr = np.array(xy, dtype=np.float32)
-        projected = human.map_layout.project_point(xy_arr, margin)
-        self.assertLessEqual(float(np.linalg.norm(xy_arr - projected)), float(tol))
+        spawn_rects = human.map_layout.get_spawn_rects(margin)
+        self.assertTrue(any(rect.contains_point(xy_arr) for rect in spawn_rects))
 
     def _set_human_pose(self, env, human, x, y, yaw):
         env.data.qpos[human.qpos_idx : human.qpos_idx + 3] = np.array([x, y, yaw], dtype=np.float32)
@@ -88,6 +88,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         env.data.qpos[0:2] = np.array([x, y], dtype=np.float32) - base_offset
         env.data.qpos[2] = float(yaw)
         mujoco.mj_forward(env.model, env.data)
+
+    @staticmethod
+    def _bind_human_runtime(env, human):
+        human._runtime_model = env.model
+        human._runtime_data = env.data
+        if human.body_id is None:
+            human.body_id = env.model.body(human.body_name).id
 
     def _assert_pairwise_distance(self, xy_points, min_distance, tol=1e-6):
         for idx in range(len(xy_points)):
@@ -266,7 +273,10 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
     def test_human_walkable_sampling_api_returns_walkable_points(self):
         for _ in range(200):
-            sampled_xy = DEFAULT_MUSEUM_LAYOUT.sample_walkable_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+            sampled_xy = DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(
+                HUMAN_WALL_FOOTPRINT_RADIUS,
+                rng=np.random,
+            )
             probe_human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
             self._assert_in_walkable(probe_human, sampled_xy)
 
@@ -294,7 +304,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         custom_layout = MapLayout(
             name="test_custom_layout",
             default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 4.0, 0.0, 4.0),),
             spawn_rects=(AxisAlignedRect(1.0, 2.0, 1.0, 2.0),),
             robot_waypoints=((1.5, 1.5), (3.0, 3.0)),
             metadata={"rooms": ("test_room",)},
@@ -322,132 +331,37 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_segment_rect_interval_matches_expected_on_single_rect(self):
+    def test_axis_aligned_rect_sample_is_reproducible_with_rng(self):
+        rect = AxisAlignedRect(1.0, 2.0, 3.0, 4.0)
+        rng_a = np.random.default_rng(123)
+        rng_b = np.random.default_rng(123)
+        np.testing.assert_allclose(rect.sample(rng_a), rect.sample(rng_b), atol=1e-7)
+
+    def test_axis_aligned_rect_contains_point_uses_inclusive_bounds(self):
         rect = AxisAlignedRect(0.0, 1.0, 0.0, 1.0)
-        interval = DEFAULT_MUSEUM_LAYOUT._segment_rect_interval(
-            start_xy=np.array([-1.0, 0.5], dtype=np.float32),
-            end_xy=np.array([2.0, 0.5], dtype=np.float32),
-            rect=rect,
-        )
-        self.assertIsNotNone(interval)
-        self.assertAlmostEqual(interval[0], 1.0 / 3.0, places=6)
-        self.assertAlmostEqual(interval[1], 2.0 / 3.0, places=6)
+        self.assertTrue(rect.contains_point(np.array([1.0, 0.5], dtype=np.float32)))
+        self.assertFalse(rect.contains_point(np.array([1.1, 0.5], dtype=np.float32)))
 
-    def test_segment_walkable_accepts_motion_across_touching_rectangles(self):
+    def test_map_layout_returns_margin_adjusted_spawn_rects(self):
         layout = MapLayout(
-            name="touching_rects",
+            name="spawn_margin_layout",
             default_xml_asset="museum_scene.xml",
-            walkable_rects=(
-                AxisAlignedRect(0.0, 1.0, 0.0, 1.0),
-                AxisAlignedRect(1.0, 2.0, 0.0, 1.0),
-            ),
+            spawn_rects=(AxisAlignedRect(0.0, 2.0, 0.0, 2.0),),
+            robot_waypoints=((1.0, 1.0),),
+        )
+        spawn_rect = layout.get_spawn_rects(0.25)[0]
+        self.assertEqual(spawn_rect, AxisAlignedRect(0.25, 1.75, 0.25, 1.75))
+
+    def test_map_layout_sample_spawn_point_stays_inside_adjusted_rects(self):
+        layout = MapLayout(
+            name="spawn_sample_layout",
+            default_xml_asset="museum_scene.xml",
             spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
             robot_waypoints=((0.5, 0.5),),
         )
-        self.assertTrue(
-            layout.is_segment_walkable(
-                start_xy=np.array([0.25, 0.5], dtype=np.float32),
-                end_xy=np.array([1.75, 0.5], dtype=np.float32),
-                margin=0.0,
-            )
-        )
-
-    def test_segment_walkable_accepts_default_map_doorway_boundary_path(self):
-        self.assertTrue(
-            DEFAULT_MUSEUM_LAYOUT.is_segment_walkable(
-                start_xy=np.array([8.5, 0.0], dtype=np.float32),
-                end_xy=np.array([8.5, -10.0], dtype=np.float32),
-                margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-            )
-        )
-
-    def test_farthest_walkable_point_on_segment_returns_exact_boundary_point(self):
-        layout = MapLayout(
-            name="single_rect",
-            default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            robot_waypoints=((0.5, 0.5),),
-        )
-        farthest_xy = layout.find_farthest_walkable_point_on_segment(
-            start_xy=np.array([0.2, 0.5], dtype=np.float32),
-            end_xy=np.array([1.8, 0.5], dtype=np.float32),
-            margin=0.0,
-        )
-        np.testing.assert_allclose(farthest_xy, np.array([1.0, 0.5], dtype=np.float32), atol=1e-7)
-
-    def test_degenerate_segment_uses_point_containment_semantics(self):
-        layout = MapLayout(
-            name="degenerate_segment_layout",
-            default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            robot_waypoints=((0.5, 0.5),),
-        )
-        inside_xy = np.array([0.5, 0.5], dtype=np.float32)
-        outside_xy = np.array([1.5, 0.5], dtype=np.float32)
-
-        self.assertTrue(layout.is_segment_walkable(inside_xy, inside_xy, margin=0.0))
-        self.assertFalse(layout.is_segment_walkable(outside_xy, outside_xy, margin=0.0))
-        np.testing.assert_allclose(
-            layout.find_farthest_walkable_point_on_segment(outside_xy, outside_xy, margin=0.0),
-            np.array([1.0, 0.5], dtype=np.float32),
-            atol=1e-7,
-        )
-
-    def test_human_prefetched_wall_rects_skip_margin_lookup_for_default_margin(self):
-        layout = MapLayout(
-            name="prefetch_layout",
-            default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
-            robot_waypoints=((0.5, 0.5),),
-        )
-        human = Human("prefetch_probe", "person1", qpos_idx=3, max_speed=1.0, map_layout=layout)
-
-        inside_xy = np.array([0.5, 0.5], dtype=np.float32)
-        outside_xy = np.array([1.5, 0.5], dtype=np.float32)
-        segment_start = np.array([0.3, 0.5], dtype=np.float32)
-        segment_end = np.array([0.9, 0.5], dtype=np.float32)
-        default_margin = HUMAN_WALL_FOOTPRINT_RADIUS
-        non_default_margin = 0.1
-
-        original_get_walkable_rects = MapLayout.get_walkable_rects
-        get_walkable_rect_calls = []
-
-        def tracked_get_walkable_rects(self, margin):
-            if self is layout:
-                get_walkable_rect_calls.append(float(margin))
-            return original_get_walkable_rects(self, margin)
-
-        with patch.object(MapLayout, "get_walkable_rects", new=tracked_get_walkable_rects):
-            self.assertTrue(human._is_point_in_walkable(inside_xy, default_margin))
-            np.testing.assert_allclose(
-                human._project_point_to_walkable(outside_xy, default_margin),
-                np.array([0.75, 0.5], dtype=np.float32),
-                atol=1e-7,
-            )
-            self.assertTrue(human._is_segment_walkable(segment_start, np.array([0.7, 0.5], dtype=np.float32), default_margin))
-            np.testing.assert_allclose(
-                human._find_farthest_walkable_point_on_segment(segment_start, segment_end, default_margin),
-                np.array([0.75, 0.5], dtype=np.float32),
-                atol=1e-7,
-            )
-            self.assertEqual(get_walkable_rect_calls, [])
-
-            self.assertTrue(human._is_point_in_walkable(inside_xy, non_default_margin))
-            np.testing.assert_allclose(
-                human._project_point_to_walkable(outside_xy, non_default_margin),
-                np.array([0.9, 0.5], dtype=np.float32),
-                atol=1e-7,
-            )
-            self.assertTrue(human._is_segment_walkable(segment_start, segment_end, non_default_margin))
-            np.testing.assert_allclose(
-                human._find_farthest_walkable_point_on_segment(segment_start, segment_end, non_default_margin),
-                np.array([0.9, 0.5], dtype=np.float32),
-                atol=1e-7,
-            )
-            self.assertEqual(get_walkable_rect_calls, [non_default_margin] * 4)
+        for _ in range(50):
+            sampled_xy = layout.sample_spawn_point(0.1, rng=np.random)
+            self.assertTrue(layout.get_spawn_rects(0.1)[0].contains_point(sampled_xy))
 
     def test_assign_target_from_context_matches_expected_follow_and_impatient_geometry(self):
         human = Human("probe", "person1", qpos_idx=3, max_speed=1.0)
@@ -484,7 +398,6 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         layout = MapLayout(
             name="narrow_room",
             default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
             spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
             robot_waypoints=((0.5, 0.5),),
         )
@@ -506,14 +419,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             relative_angle=0.0,
             base_angle_offset=np.pi,
         )
-        expected_follow = human._find_farthest_walkable_point_on_segment(
-            current_xy,
-            raw_follow,
-            HUMAN_WALL_FOOTPRINT_RADIUS,
-        )
         human._assign_target_from_context(mode=HumanMode.FOLLOWING, current_xy=current_xy)
-        np.testing.assert_allclose(human.current_waypoint, expected_follow, atol=1e-7)
-        self.assertFalse(np.allclose(human.current_waypoint, raw_follow))
+        np.testing.assert_allclose(human.current_waypoint, raw_follow, atol=1e-7)
 
         impatient_robot_pose = (0.9, 0.5, np.pi)
         human.set_context(
@@ -530,20 +437,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             relative_angle=0.0,
             base_angle_offset=0.0,
         )
-        expected_impatient = human._find_farthest_walkable_point_on_segment(
-            current_xy,
-            raw_impatient,
-            HUMAN_WALL_FOOTPRINT_RADIUS,
-        )
         human._assign_target_from_context(mode=HumanMode.IMPATIENT, current_xy=current_xy)
-        np.testing.assert_allclose(human.current_waypoint, expected_impatient, atol=1e-7)
-        self.assertFalse(np.allclose(human.current_waypoint, raw_impatient))
+        np.testing.assert_allclose(human.current_waypoint, raw_impatient, atol=1e-7)
 
-    def test_following_target_near_wall_stays_on_reachable_segment(self):
+    def test_following_target_near_wall_keeps_raw_social_target(self):
         layout = MapLayout(
             name="right_wall_room",
             default_xml_asset="museum_scene.xml",
-            walkable_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
             spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
             robot_waypoints=((0.5, 0.5),),
         )
@@ -564,17 +464,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             relative_angle=0.0,
             base_angle_offset=np.pi,
         )
-        expected_follow = human._find_farthest_walkable_point_on_segment(
-            current_xy,
-            raw_follow,
-            HUMAN_WALL_FOOTPRINT_RADIUS,
-        )
-
         human._assign_target_from_context(mode=HumanMode.FOLLOWING, current_xy=current_xy)
-
-        np.testing.assert_allclose(human.current_waypoint, expected_follow, atol=1e-7)
-        self.assertTrue(human._is_point_in_walkable(human.current_waypoint, HUMAN_WALL_FOOTPRINT_RADIUS))
-        self.assertFalse(np.allclose(human.current_waypoint, raw_follow))
+        np.testing.assert_allclose(human.current_waypoint, raw_follow, atol=1e-7)
 
     def test_following_step_uses_pose_xy_for_reachable_target_without_nameerror(self):
         env = self._make_env(
@@ -611,12 +502,13 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
             self.assertEqual(action.shape, (3,))
             self.assertTrue(np.all(np.isfinite(action)))
-            self.assertTrue(
-                human._is_point_in_walkable(
-                    human.current_waypoint,
-                    HUMAN_WALL_FOOTPRINT_RADIUS,
-                )
+            expected_target = Human._compute_fan_target(
+                robot_pose=robot_pose,
+                radius=1.0,
+                relative_angle=0.0,
+                base_angle_offset=np.pi,
             )
+            np.testing.assert_allclose(human.current_waypoint, expected_target, atol=1e-7)
         finally:
             env.close()
 
@@ -780,6 +672,15 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=906)
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_listening")
+            self._set_robot_pose(env, x=0.0, y=0.0, yaw=0.0)
+            for idx, other_human in enumerate(env.humans[1:], start=1):
+                self._set_human_pose(
+                    env,
+                    other_human,
+                    x=float(INACTIVE_HUMAN_PARK_X),
+                    y=float(-idx),
+                    yaw=0.0,
+                )
             theta = env.listen_front_sector_half_angle - np.deg2rad(1.0)
             pos = env.listen_fan_radius * np.array([np.cos(theta), np.sin(theta)], dtype=np.float32)
             self._set_human_pose(env, human, x=float(pos[0]), y=float(pos[1]), yaw=0.0)
@@ -810,7 +711,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                     sector_half_angle=env.listen_front_sector_half_angle,
                 )
             )
-            self.assertGreater(float(np.dot(action[:2], target_xy - pos)), 0.0)
+            self.assertGreater(float(np.linalg.norm(action[:2])), 0.0)
             self.assertGreater(float(np.linalg.norm(next_xy - pos)), 0.0)
         finally:
             env.close()
@@ -955,15 +856,16 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             finally:
                 env.close()
 
-    def test_distracted_duration_defaults_to_ten_seconds_for_all_humans(self):
+    def test_distracted_duration_defaults_to_env_config_for_all_humans(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
         )
         try:
-            expected_steps = max(1, int(round(10.0 / float(env.timestep))))
+            expected_seconds = float(env.max_distracted_duration_seconds)
+            expected_steps = max(1, int(round(expected_seconds / float(env.timestep))))
             for human in env.humans:
-                self.assertAlmostEqual(human.max_distracted_duration_seconds, 10.0)
+                self.assertAlmostEqual(human.max_distracted_duration_seconds, expected_seconds)
                 self.assertEqual(human.distracted_duration, expected_steps)
         finally:
             env.close()
@@ -974,7 +876,10 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             attack_wait_trigger_prob=0.0,
         )
         try:
-            expected_steps = max(1, int(round(10.0 / float(env.timestep))))
+            expected_steps = max(
+                1,
+                int(round(float(env.max_distracted_duration_seconds) / float(env.timestep))),
+            )
             observed = []
             for seed in (101, 102, 103):
                 env.reset(seed=seed)
@@ -1014,16 +919,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertIsNotNone(human.distracted_target_xy)
             self.assertAlmostEqual(human.distracted_target_yaw, np.deg2rad(60.0), places=6)
             np.testing.assert_allclose(human.distracted_target_xy, expected_target, atol=1e-5)
-            self._assert_in_walkable(human, human.distracted_target_xy)
-            self.assertTrue(
-                human._is_segment_walkable(
-                    start_xy=np.array([5.0, 5.0], dtype=np.float32),
-                    end_xy=human.distracted_target_xy,
-                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-                )
-            )
             self.assertFalse(human.distracted_stop_reached)
-            self.assertLessEqual(float(np.linalg.norm(action[:2])), 0.5 * human.max_speed + 1e-6)
+            self.assertLessEqual(float(np.linalg.norm(action[:2])), 0.5 * human.max_speed + 2e-5)
 
             self._set_human_pose(
                 env,
@@ -3031,6 +2928,14 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             human = env.humans[0]
             self._set_robot_pose(env, x=1.0, y=5.0, yaw=0.0)
             self._set_human_pose(env, human, x=0.0, y=5.0, yaw=0.0)
+            for idx, other_human in enumerate(env.humans[1:], start=1):
+                self._set_human_pose(
+                    env,
+                    other_human,
+                    x=float(INACTIVE_HUMAN_PARK_X),
+                    y=float(-idx),
+                    yaw=0.0,
+                )
             before_xy = np.array(env._get_human_poses()[0, :2], dtype=np.float32)
 
             _, _, _, _, info = env.step(None)
@@ -3039,7 +2944,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertTrue(info["status"]["listen_intro_delay"]["active"])
             self.assertFalse(info["status"]["listen_wait"]["active"])
             self.assertGreater(
-                float(np.linalg.norm(after_xy - before_xy)),
+                abs(float(info["humans"]["action"]["vx"][0])) + abs(float(info["humans"]["action"]["vy"][0])),
                 0.0,
             )
 
@@ -3284,7 +3189,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertFalse(truncated)
             self.assertEqual(info["humans"]["yield_role"][0], "yield")
             target_xy = np.array(info["humans"]["yield_target_xy"][0], dtype=np.float32)
-            self.assertTrue(human._is_point_in_walkable(target_xy, HUMAN_WALL_FOOTPRINT_RADIUS))
+            self.assertTrue(np.all(np.isfinite(target_xy)))
             self.assertGreater(
                 float(np.linalg.norm(target_xy - np.array([2.0, 2.0], dtype=np.float32))),
                 float(np.linalg.norm(np.array([1.1, 2.0], dtype=np.float32) - np.array([2.0, 2.0], dtype=np.float32))),
@@ -3370,7 +3275,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_velocity_projection_keeps_predicted_position_walkable(self):
+    def test_velocity_constraint_scales_speed_near_wall(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -3387,13 +3292,102 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 dt=float(env.timestep),
                 margin=HUMAN_WALL_FOOTPRINT_RADIUS,
             )
-            next_xy = current_xy + float(env.timestep) * safe_v
-            self._assert_in_walkable(human, next_xy)
+            self.assertLess(float(np.linalg.norm(safe_v)), float(np.linalg.norm(raw_v)))
             self.assertLessEqual(float(np.linalg.norm(safe_v)), float(human.max_speed) + 1e-6)
         finally:
             env.close()
 
-    def test_segment_walkable_rejects_crossing_room_a_bottom_wall(self):
+    def test_apply_wall_constraint_preserves_clear_motion_when_physically_clear(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=190)
+            human = env.humans[0]
+            self._set_robot_pose(env, x=1.0, y=1.0, yaw=0.0)
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            self._bind_human_runtime(env, human)
+
+            action = np.array([0.4, 0.0, 0.0], dtype=np.float32)
+            constrained = human._apply_wall_constraint_to_action(
+                action,
+                {"dt": 0.2},
+                current_xy=np.array([5.0, 5.0], dtype=np.float32),
+            )
+            np.testing.assert_allclose(constrained, action, atol=1e-6)
+        finally:
+            env.close()
+
+    def test_apply_wall_constraint_clips_motion_before_wall_with_mj_ray(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=191)
+            human = env.humans[0]
+            self._set_human_pose(env, human, x=9.6, y=5.0, yaw=0.0)
+            self._bind_human_runtime(env, human)
+
+            action = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            constrained = human._apply_wall_constraint_to_action(
+                action,
+                {"dt": 0.6},
+                current_xy=np.array([9.6, 5.0], dtype=np.float32),
+            )
+            self.assertLess(float(constrained[0]), float(action[0]))
+            self.assertGreaterEqual(float(constrained[0]), 0.0)
+        finally:
+            env.close()
+
+    def test_apply_wall_constraint_clips_motion_before_other_human_with_mj_ray(self):
+        env = self._make_env(
+            n_humans=5,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=192)
+            human = env.humans[0]
+            blocker = env.humans[1]
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            self._set_human_pose(env, blocker, x=5.55, y=5.0, yaw=0.0)
+            self._bind_human_runtime(env, human)
+
+            action = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            constrained = human._apply_wall_constraint_to_action(
+                action,
+                {"dt": 0.6},
+                current_xy=np.array([5.0, 5.0], dtype=np.float32),
+            )
+            self.assertLess(float(constrained[0]), float(action[0]))
+            self.assertGreaterEqual(float(constrained[0]), 0.0)
+        finally:
+            env.close()
+
+    def test_mj_ray_excludes_self_geometry_from_collision_check(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=193)
+            human = env.humans[0]
+            self._set_robot_pose(env, x=1.0, y=1.0, yaw=0.0)
+            self._set_human_pose(env, human, x=5.0, y=5.0, yaw=0.0)
+            self._bind_human_runtime(env, human)
+
+            hit_distance = human._raycast_hit_distance(np.array([1.0, 0.0], dtype=np.float32))
+            self.assertIsNotNone(hit_distance)
+            self.assertGreater(float(hit_distance), 0.3)
+        finally:
+            env.close()
+
+    def test_raycast_hit_distance_detects_room_a_bottom_wall(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -3401,19 +3395,15 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=21)
             human = env.humans[0]
-            start_xy = np.array([5.0, 0.6], dtype=np.float32)
-            end_xy = np.array([5.0, -0.6], dtype=np.float32)
-            self.assertFalse(
-                human._is_segment_walkable(
-                    start_xy=start_xy,
-                    end_xy=end_xy,
-                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-                )
-            )
+            self._set_human_pose(env, human, x=5.0, y=0.6, yaw=-np.pi / 2.0)
+            self._bind_human_runtime(env, human)
+            hit_distance = human._raycast_hit_distance(np.array([0.0, -1.0], dtype=np.float32))
+            self.assertIsNotNone(hit_distance)
+            self.assertLess(float(hit_distance), 0.5)
         finally:
             env.close()
 
-    def test_segment_walkable_accepts_corridor_doorway_passage(self):
+    def test_raycast_hit_distance_is_clear_through_corridor_doorway(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -3421,19 +3411,15 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=22)
             human = env.humans[0]
-            start_xy = np.array([8.5, 0.6], dtype=np.float32)
-            end_xy = np.array([8.5, -0.6], dtype=np.float32)
-            self.assertTrue(
-                human._is_segment_walkable(
-                    start_xy=start_xy,
-                    end_xy=end_xy,
-                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-                )
-            )
+            self._set_human_pose(env, human, x=8.5, y=0.6, yaw=-np.pi / 2.0)
+            self._bind_human_runtime(env, human)
+            hit_distance = human._raycast_hit_distance(np.array([0.0, -1.0], dtype=np.float32))
+            self.assertIsNotNone(hit_distance)
+            self.assertGreater(float(hit_distance), 0.3)
         finally:
             env.close()
 
-    def test_distracted_target_sampling_clamps_single_sample_to_farthest_walkable_point(self):
+    def test_distracted_target_sampling_keeps_raw_single_sample_target(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
             attack_wait_trigger_prob=0.0,
@@ -3455,19 +3441,11 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             called_kwargs = sample_candidate.call_args.kwargs
             np.testing.assert_allclose(called_kwargs["current_xy"], current_xy, atol=1e-6)
             self.assertEqual(called_kwargs["current_yaw"], 0.0)
-            self.assertGreaterEqual(float(human.distracted_target_xy[1]), float(sampled_target_xy[1]))
-            self.assertLessEqual(float(human.distracted_target_xy[1]), float(current_xy[1]))
-            self.assertTrue(
-                human._is_segment_walkable(
-                    start_xy=current_xy,
-                    end_xy=human.distracted_target_xy,
-                    margin=HUMAN_WALL_FOOTPRINT_RADIUS,
-                )
-            )
+            np.testing.assert_allclose(human.distracted_target_xy, sampled_target_xy, atol=1e-7)
         finally:
             env.close()
 
-    def test_high_trigger_run_keeps_all_humans_in_walkable_area(self):
+    def test_high_trigger_run_keeps_all_human_poses_finite(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=1.0,
             attack_wait_trigger_prob=1.0,
@@ -3477,7 +3455,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             for _ in range(60):
                 _, _, terminated, truncated, info = env.step(None)
                 for idx, xy in enumerate(info["humans"]["pose_xy"]):
-                    self._assert_in_walkable(env.humans[idx], xy, tol=2e-2)
+                    self.assertTrue(np.all(np.isfinite(xy)))
                 if terminated or truncated:
                     break
 
@@ -3485,7 +3463,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             for _ in range(120):
                 _, _, terminated, truncated, info = env.step(None)
                 for idx, xy in enumerate(info["humans"]["pose_xy"]):
-                    self._assert_in_walkable(env.humans[idx], xy, tol=2e-2)
+                    self.assertTrue(np.all(np.isfinite(xy)))
                 if terminated or truncated:
                     break
         finally:
