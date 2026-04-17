@@ -2018,6 +2018,44 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_following_fuzzy_transition_enters_impatient_without_idx_crash(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=173)
+            env._set_follow_phase("transit_follow")
+            human = env.humans[0]
+            human.can_be_impatient = True
+            human_xy = env._get_human_poses()[:, :2]
+            robot_xy = np.array(env._get_robot_pose()[:2], dtype=np.float32)
+            repulsion_vectors = np.zeros((len(env.humans), 2), dtype=np.float32)
+            impatient_result = {
+                "overwhelmed": 0.1,
+                "distracted": 0.1,
+                "impatient": 0.9,
+                "engaged": 0.1,
+                "dominant_state": "impatient",
+                "dominant_value": 0.9,
+            }
+
+            with patch.object(env.following_fuzzy_engine, "compute", return_value=impatient_result):
+                env._update_humans_and_apply_ctrl(
+                    human_xy=human_xy,
+                    robot_xy=robot_xy,
+                    ryaw=0.0,
+                    repulsion_vectors=repulsion_vectors,
+                )
+
+            self.assertEqual(human.mode, HumanMode.IMPATIENT)
+            self.assertEqual(human.impatient_recovery_mode, HumanMode.FOLLOWING)
+            self.assertEqual(env.last_following_fuzzy_dominant_state[0], "impatient")
+            self.assertTrue(env._following_fuzzy_evaluated_this_step)
+        finally:
+            env.close()
+
     def test_waiting_branch_preserves_fuzzy_debug_state(self):
         env = self._make_env(
             n_humans=1,

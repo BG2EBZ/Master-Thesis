@@ -283,7 +283,7 @@ def _print_human_state_triggers(step, info, prev_human_modes):
 
         fuzzy_inputs_list = humans_info.get("fuzzy_inputs", [])
         inputs_extra = ""
-        if current_mode == "overwhelmed" and isinstance(fuzzy_inputs_list, (list, tuple)):
+        if current_mode in target_modes and isinstance(fuzzy_inputs_list, (list, tuple)):
             if idx < len(fuzzy_inputs_list) and isinstance(fuzzy_inputs_list[idx], dict):
                 inp = fuzzy_inputs_list[idx]
                 inputs_extra = (

@@ -1699,7 +1699,6 @@ class MuseumEnv(gym.Env):
             raise ValueError(f"Unknown fuzzy phase: {phase}")
 
     def _apply_following_fuzzy_transition(self, human, idx: int, fuzzy_result: dict, robot_xy, robot_yaw: float):
-        del idx
         dominant_state = fuzzy_result["dominant_state"]
         if dominant_state == "engaged":
             return
@@ -1715,8 +1714,8 @@ class MuseumEnv(gym.Env):
             robot_pose = (float(robot_xy[0]), float(robot_xy[1]), float(robot_yaw))
             human.start_impatient(
                 robot_pose=robot_pose,
-                index=human.context.index,
-                n_humans=human.context.n_humans,
+                index=idx,
+                n_humans=self.n_humans,
                 recovery_mode=HumanMode.FOLLOWING,
             )
             return
@@ -2285,15 +2284,16 @@ class MuseumEnv(gym.Env):
                 human.set_mode(HumanMode.LISTENING)
             repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
             ctx["repulsion"] = LISTENING_REPULSION_SCALE * repulsion_vec
-            human.set_context(
-                index=i,
-                n_humans=n_humans,
-                robot_pose=(float(robot_xy[0]), float(robot_xy[1]), float(ryaw)),
-                listen_radius=self.listen_fan_radius,
-                listening_sector_half_angle=self.listen_front_sector_half_angle,
-                robot_xy=robot_xy,
-                robot_yaw=ryaw,
-            )
+            context_dict = {
+                "index": i,
+                "n_humans": n_humans,
+                "robot_pose": (float(robot_xy[0]), float(robot_xy[1]), float(ryaw)),
+                "listen_radius": self.listen_fan_radius,
+                "listening_sector_half_angle": self.listen_front_sector_half_angle,
+                "robot_xy": robot_xy,
+                "robot_yaw": ryaw,
+            }
+            human._assign_target_from_context(context_dict)
             if human.mode == HumanMode.LISTENING and self._should_evaluate_human_fuzzy(i, phase="listening"):
                 fuzzy_debug = self._compute_human_fuzzy_diagnostics(
                     human=human,
@@ -2445,16 +2445,17 @@ class MuseumEnv(gym.Env):
                 human.set_mode(HumanMode.FOLLOWING if self.follow_humans else HumanMode.WANDERING)
 
             if self.follow_humans and human.mode in (HumanMode.FOLLOWING, HumanMode.IMPATIENT):
-                human.set_context(
-                    index=i,
-                    n_humans=n_humans,
-                    robot_pose=robot_pose,
-                    follow_radius=follow_radius,
-                    fan_half_angle=self.follow_fan_half_angle,
-                    impatient_front_offset=human.impatient_front_offset,
-                    robot_xy=robot_xy,
-                    robot_yaw=ryaw,
-                )
+                context_dict = {
+                    "index": i,
+                    "n_humans": n_humans,
+                    "robot_pose": robot_pose,
+                    "follow_radius": follow_radius,
+                    "fan_half_angle": self.follow_fan_half_angle,
+                    "impatient_front_offset": human.impatient_front_offset,
+                    "robot_xy": robot_xy,
+                    "robot_yaw": ryaw,
+                }
+                human._assign_target_from_context(context_dict)
 
             human.update_following_duration(
                 eligible_following=bool(self.follow_humans and human.mode == HumanMode.FOLLOWING)

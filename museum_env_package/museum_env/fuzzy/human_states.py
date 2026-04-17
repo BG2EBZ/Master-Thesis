@@ -53,20 +53,20 @@ def _normalize_context(context: str) -> str:
 def _define_input_mfs(context: str, ft, hhd, hrd, density) -> None:
     if context == "following":
         ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 10, 20])
-        ft["medium"] = fuzz.trapmf(ft.universe, [10, 20, 40, 50])
-        ft["long"] = fuzz.trapmf(ft.universe, [40, 50, 60, 60])
+        ft["medium"] = fuzz.trapmf(ft.universe, [10, 20, 30, 40])
+        ft["long"] = fuzz.trapmf(ft.universe, [30, 40, 60, 60])
 
         hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.6])
         hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.6, 0.9, 1.0])
         hhd["far"] = fuzz.trapmf(hhd.universe, [0.9, 1.0, 4.0, 4.0])
 
-        hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 1.0, 1.2])
-        hrd["medium"] = fuzz.trapmf(hrd.universe, [1.0, 1.2, 2.0, 2.2])
+        hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.8, 1.0])
+        hrd["medium"] = fuzz.trapmf(hrd.universe, [0.8, 1.0, 2.0, 2.2])
         hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
 
-        density["low"] = fuzz.trapmf(density.universe, [0, 0, 1, 1])
-        density["medium"] = fuzz.trapmf(density.universe, [2, 2, 4, 4])
-        density["crowded"] = fuzz.trapmf(density.universe, [5, 5, 10, 10])
+        density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
+        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 6, 6])
+        density["crowded"] = fuzz.trapmf(density.universe, [7, 7, 10, 10])
         return
 
     ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 5, 10])
