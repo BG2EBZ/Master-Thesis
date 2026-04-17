@@ -175,7 +175,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
     ):
         if cue_total_steps is None:
             cue_total_steps = env._get_callback_cue_steps()
-        env.callback_active_target_idx = int(target_idx)
+        env.env_callback_state.active_target_idx = int(target_idx)
         env.robot.callback_active = True
         env.robot.callback_target_idx = int(target_idx)
         env.robot.callback_target_xy = np.array([2.4, 0.0], dtype=np.float32)
@@ -1326,7 +1326,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self._set_human_pose(env, env.humans[0], x=0.0, y=5.0, yaw=0.0)
 
             env.step(None)
-            self.assertTrue(env.listen_wait_active)
+            self.assertTrue(env.listen_state.wait_active)
 
             with patch.object(env, "_analyze_human_state", wraps=env._analyze_human_state) as mock_analyze:
                 with patch.object(
@@ -1456,7 +1456,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.humans[1].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
             env.humans[2].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
             env.humans[3].transition_to(HumanMode.FOLLOWING, reason="test_force_following")
-            env.callback_triggered_for_current_distracted[1] = True
+            env.env_callback_state.triggered_for_distracted[1] = True
 
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
             human_xy[0] = np.array([0.5, 0.0], dtype=np.float32)
@@ -1491,7 +1491,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.reset(seed=147)
             env.humans[0].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
             env.humans[1].transition_to(HumanMode.DISTRACTED, reason="test_force_distracted")
-            env.callback_triggered_for_current_distracted[1] = True
+            env.env_callback_state.triggered_for_distracted[1] = True
 
             human_xy = np.zeros((len(env.humans), 2), dtype=np.float32)
             human_xy[0] = np.array([1.5000, 0.0], dtype=np.float32)
@@ -2265,12 +2265,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             }
             env.last_following_fuzzy_dominant_state[0] = "engaged"
             env.last_human_fuzzy_context[0] = "following"
-            env.listen_wait_active = True
-            env.listen_wait_counter = 0
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 0
+            env.listen_state.wait_is_final = False
             env.robot.listen_mode = True
             env.robot.mode = "stop"
-            env._paused_listening_callback_state = {
+            env.env_callback_state.paused_listening_state = {
                 "listen_mode": True,
                 "listen_intro_delay_active": False,
                 "listen_intro_delay_counter": 0,
@@ -2465,12 +2465,12 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=178)
             env.robot.listen_mode = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = 7
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 7
+            env.listen_state.wait_is_final = False
             env._pause_listening_for_callback()
-            env._callback_success_mode = HumanMode.LISTENING
-            env.callback_active_target_idx = 0
+            env.env_callback_state.success_mode = HumanMode.LISTENING
+            env.env_callback_state.active_target_idx = 0
             env.humans[0].transition_to(HumanMode.LISTENING, reason="test_callback_success_listening")
             self._set_callback_state(
                 env,
@@ -2487,8 +2487,8 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertTrue(events["callback_completed"])
             self.assertTrue(events["callback_success"])
             self.assertTrue(env.robot.listen_mode)
-            self.assertTrue(env.listen_wait_active)
-            self.assertEqual(env.listen_wait_counter, 7)
+            self.assertTrue(env.listen_state.wait_active)
+            self.assertEqual(env.listen_state.wait_counter, 7)
             self.assertFalse(env._is_listening_interrupted_for_callback())
         finally:
             env.close()
@@ -2532,9 +2532,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=155)
             env.robot.listen_mode = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = 0
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 0
+            env.listen_state.wait_is_final = False
             env.robot.mode = "stop"
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
 
@@ -2582,9 +2582,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=165)
             env.robot.listen_mode = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = 0
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 0
+            env.listen_state.wait_is_final = False
             env.robot.mode = "stop"
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
 
@@ -2633,9 +2633,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=160)
             env.robot.listen_mode = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = 0
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 0
+            env.listen_state.wait_is_final = False
             env.robot.mode = "stop"
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
 
@@ -3059,7 +3059,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertTrue(events["callback_completed"])
             self.assertFalse(events["callback_attempt_2_started"])
             self.assertFalse(env.robot.callback_active)
-            self.assertIsNone(env.callback_active_target_idx)
+            self.assertIsNone(env.env_callback_state.active_target_idx)
         finally:
             env.close()
 
@@ -3226,9 +3226,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         try:
             env.reset(seed=15)
             env.robot.listen_mode = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = 0
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = 0
+            env.listen_state.wait_is_final = False
             env.robot.mode = "stop"
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
 
@@ -3257,9 +3257,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.robot.current_waypoint_idx = 0
             env.robot.listen_mode = True
             env.robot.listen_done = False
-            env.listen_wait_active = True
-            env.listen_wait_counter = env.listen_wait_steps - 1
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = env.listen_wait_steps - 1
+            env.listen_state.wait_is_final = False
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
@@ -3274,7 +3274,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertFalse(info["status"]["listen_mode"])
             self.assertFalse(info["status"]["listen_wait"]["active"])
             self.assertTrue(info["status"]["post_explanation_hold"]["active"])
-            self.assertTrue(env.post_explanation_hold_active)
+            self.assertTrue(env.post_explanation_state.active)
             self.assertNotEqual(info["humans"]["mode"][0], HumanMode.WANDERING)
             self.assertTrue(env.robot.listen_done)
         finally:
@@ -3291,9 +3291,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.robot.current_waypoint_idx = 0
             env.robot.listen_mode = True
             env.robot.listen_done = False
-            env.listen_wait_active = True
-            env.listen_wait_counter = env.listen_wait_steps - 1
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = env.listen_wait_steps - 1
+            env.listen_state.wait_is_final = False
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
             stale_waypoint = np.array([0.5, 0.5], dtype=np.float32)
@@ -3403,9 +3403,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.robot.current_waypoint_idx = 0
             env.robot.listen_mode = True
             env.robot.listen_done = False
-            env.listen_wait_active = True
-            env.listen_wait_counter = env.listen_wait_steps - 1
-            env.listen_wait_is_final = False
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = env.listen_wait_steps - 1
+            env.listen_state.wait_is_final = False
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_listening_wait")
             self._set_robot_pose(env, x=2.0, y=2.0, yaw=0.0)
@@ -3443,7 +3443,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 robot_speed=POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD + 0.1,
             )
 
-            self.assertFalse(env.post_explanation_hold_active)
+            self.assertFalse(env.post_explanation_state.active)
             self.assertTrue(env.follow_humans)
         finally:
             env.close()
@@ -3458,9 +3458,9 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             env.robot.current_waypoint_idx = len(env.robot.waypoints) - 1
             env.robot.listen_mode = True
             env.robot.listen_done = True
-            env.listen_wait_active = True
-            env.listen_wait_counter = env.listen_wait_steps - 1
-            env.listen_wait_is_final = True
+            env.listen_state.wait_active = True
+            env.listen_state.wait_counter = env.listen_wait_steps - 1
+            env.listen_state.wait_is_final = True
             human = env.humans[0]
             human.transition_to(HumanMode.LISTENING, reason="test_force_final_listening_wait")
             self._set_robot_pose(env, x=11.0, y=-12.5, yaw=0.0)
@@ -3687,7 +3687,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 if terminated or truncated:
                     break
 
-            env.listen_wait_active = True
+            env.listen_state.wait_active = True
             for _ in range(120):
                 _, _, terminated, truncated, info = env.step(None)
                 for idx, xy in enumerate(info["humans"]["pose_xy"]):

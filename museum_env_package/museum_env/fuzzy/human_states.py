@@ -56,9 +56,9 @@ def _define_input_mfs(context: str, ft, hhd, hrd, density) -> None:
         ft["medium"] = fuzz.trapmf(ft.universe, [10, 20, 30, 40])
         ft["long"] = fuzz.trapmf(ft.universe, [30, 40, 60, 60])
 
-        hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.6])
-        hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.6, 0.9, 1.0])
-        hhd["far"] = fuzz.trapmf(hhd.universe, [0.9, 1.0, 4.0, 4.0])
+        hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.7])
+        hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.7, 1.0, 1.2])
+        hhd["far"] = fuzz.trapmf(hhd.universe, [1.0, 1.2, 4.0, 4.0])
 
         hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.8, 1.0])
         hrd["medium"] = fuzz.trapmf(hrd.universe, [0.8, 1.0, 2.0, 2.2])
