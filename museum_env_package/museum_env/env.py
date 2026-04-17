@@ -1660,6 +1660,7 @@ class MuseumEnv(gym.Env):
         self,
         human,
         idx: int,
+        phase: str,
         session_steps: int,
         nearest_human_distance,
         nearest_human_distance_mean_1s,
@@ -1682,7 +1683,7 @@ class MuseumEnv(gym.Env):
             ),
             density=float(local_crowding_count_1m[idx]),
         )
-        result = self.following_fuzzy_engine.compute(**inputs)
+        result = self.following_fuzzy_engine.compute(**inputs, context=phase)
         return {"inputs": inputs, "result": result}
 
     def _record_human_fuzzy_result(self, idx: int, phase: str, fuzzy_debug: dict) -> None:
@@ -2301,6 +2302,7 @@ class MuseumEnv(gym.Env):
                 fuzzy_debug = self._compute_human_fuzzy_diagnostics(
                     human=human,
                     idx=i,
+                    phase="listening",
                     session_steps=int(human.listening_steps),
                     nearest_human_distance=nearest_human_distance,
                     nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
@@ -2465,6 +2467,7 @@ class MuseumEnv(gym.Env):
                 fuzzy_debug = self._compute_human_fuzzy_diagnostics(
                     human=human,
                     idx=i,
+                    phase="following",
                     session_steps=int(human.following_steps),
                     nearest_human_distance=nearest_human_distance,
                     nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
