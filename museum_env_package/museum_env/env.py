@@ -1,5 +1,4 @@
 import logging
-from collections import defaultdict
 from importlib import resources
 from typing import Optional
 
@@ -2185,64 +2184,29 @@ class MuseumEnv(gym.Env):
     def _compute_social_repulsion(self, human_xy):
         """Compute pairwise short-range repulsion vectors for every human."""
         # Pairwise short-range repulsion to prevent humans from collapsing into each other.
-        if not human_xy.size:
-            return np.zeros((len(self.humans), 2), dtype=np.float32)
-
-        if self.social_distance <= 1e-6:
-            return np.zeros((human_xy.shape[0], 2), dtype=np.float32)
-
         human_xy = np.asarray(human_xy, dtype=np.float32)
-        spatial_hash, cell_coords = self._build_social_repulsion_spatial_hash(human_xy)
-        repulsion_vectors = np.zeros((human_xy.shape[0], 2), dtype=np.float32)
-        for i in range(human_xy.shape[0]):
-            pos = human_xy[i]
-            candidate_indices = self._query_social_repulsion_neighbor_indices(
-                spatial_hash=spatial_hash,
-                cell_coord=(int(cell_coords[i, 0]), int(cell_coords[i, 1])),
-                self_idx=i,
-            )
-            if candidate_indices.size == 0:
+        n_humans = int(human_xy.shape[0])
+        if n_humans == 0 or self.social_distance <= 1e-6:
+            return np.zeros((n_humans, 2), dtype=np.float32)
+
+        pairwise_dist = self._compute_human_pairwise_distances(human_xy)
+        mask = (pairwise_dist > 1e-6) & (pairwise_dist < self.social_distance)
+        repulsion_vectors = np.zeros((n_humans, 2), dtype=np.float32)
+        for i in range(n_humans):
+            neighbors = mask[i]
+            if not np.any(neighbors):
                 continue
 
-            diff = pos - human_xy[candidate_indices]
-            neighbor_dist = np.linalg.norm(diff, axis=1)
-            mask = (neighbor_dist > 1e-6) & (neighbor_dist < self.social_distance)
-            if np.any(mask):
-                directions = diff[mask] / neighbor_dist[mask][:, None]
-                strengths = (self.social_distance - neighbor_dist[mask]) / self.social_distance
-                repulsion = (directions * strengths[:, None]).sum(axis=0)
-                repulsion_vectors[i] = self.repulsion_gain * repulsion
+            diff = human_xy[i] - human_xy[neighbors]
+            dist = pairwise_dist[i, neighbors]
+            directions = diff / dist[:, None]
+            strengths = (self.social_distance - dist) / self.social_distance
+            repulsion_vectors[i] = self.repulsion_gain * np.sum(
+                directions * strengths[:, None],
+                axis=0,
+            )
 
         return repulsion_vectors
-
-    def _build_social_repulsion_spatial_hash(self, human_xy):
-        """Bucket human positions into a fixed grid sized by social-distance radius."""
-        cell_size = float(self.social_distance)
-        cell_coords = np.floor(np.asarray(human_xy, dtype=np.float32) / cell_size).astype(np.int32)
-        spatial_hash = defaultdict(list)
-        for idx, coord in enumerate(cell_coords):
-            spatial_hash[(int(coord[0]), int(coord[1]))].append(int(idx))
-        return spatial_hash, cell_coords
-
-    @staticmethod
-    def _neighboring_spatial_hash_cells(cell_coord):
-        """Return the 3x3 neighborhood around one grid cell."""
-        cell_x, cell_y = int(cell_coord[0]), int(cell_coord[1])
-        return [
-            (neighbor_x, neighbor_y)
-            for neighbor_x in range(cell_x - 1, cell_x + 2)
-            for neighbor_y in range(cell_y - 1, cell_y + 2)
-        ]
-
-    def _query_social_repulsion_neighbor_indices(self, spatial_hash, cell_coord, self_idx: int):
-        """Return candidate neighbor indices from the local 3x3 spatial-hash neighborhood."""
-        candidate_indices = []
-        for neighbor_cell in self._neighboring_spatial_hash_cells(cell_coord):
-            candidate_indices.extend(spatial_hash.get(neighbor_cell, ()))
-        if not candidate_indices:
-            return np.empty((0,), dtype=np.int32)
-        candidates = np.asarray(candidate_indices, dtype=np.int32)
-        return candidates[candidates != int(self_idx)]
 
     def _update_listening_humans_and_apply_ctrl(self, robot_xy, ryaw, repulsion_vectors):
         """Apply the minimal listening-force controller to every active human."""

@@ -1468,6 +1468,54 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
+    def test_social_repulsion_returns_shape_correct_zeros_for_empty_input(self):
+        env = self._make_env(
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=151)
+            human_xy = np.zeros((0, 2), dtype=np.float32)
+            repulsion = env._compute_social_repulsion(human_xy)
+            np.testing.assert_array_equal(repulsion, np.zeros((0, 2), dtype=np.float32))
+        finally:
+            env.close()
+
+    def test_social_repulsion_returns_zero_for_single_human(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=152)
+            human_xy = np.array([[0.0, 0.0]], dtype=np.float32)
+            repulsion = env._compute_social_repulsion(human_xy)
+            np.testing.assert_array_equal(repulsion, np.zeros((1, 2), dtype=np.float32))
+        finally:
+            env.close()
+
+    def test_social_repulsion_returns_zero_when_social_distance_is_disabled(self):
+        env = self._make_env(
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=153)
+            env.social_distance = 0.0
+            human_xy = np.array(
+                [
+                    [0.0, 0.0],
+                    [0.2, 0.0],
+                    [0.4, 0.0],
+                ],
+                dtype=np.float32,
+            )
+            repulsion = env._compute_social_repulsion(human_xy)
+            np.testing.assert_array_equal(repulsion, np.zeros((3, 2), dtype=np.float32))
+        finally:
+            env.close()
+
     def test_nearest_human_distance_helper_matches_dense_reference(self):
         env = self._make_env(
             overwhelmed_wait_trigger_prob=0.0,
