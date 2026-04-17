@@ -1,19 +1,12 @@
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 import mujoco
 import numpy as np
 
 from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout
 
-# Human agent state machine and local motion logic.
-# Env owns high-level scheduling; this class turns mode/context into low-level actions.
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(_handler)
-logger.propagate = False
 
 DEFAULT_WAYPOINT_THRESHOLD = 0.2
 DEFAULT_FAN_HALF_ANGLE = np.pi / 6
@@ -119,20 +112,20 @@ class Human:
         # Current target waypoint
         self.current_waypoint = self._random_waypoint()
         self.step_count = 0
-        # Cache for debugging/metrics
-        self.last_v_follow = np.zeros(2, dtype=np.float32)
-        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
-        self.last_v_hr = np.zeros(2, dtype=np.float32)  # human-robot force
         self.last_in_listening_front_sector = False
         self.hr_distance_min = float(HR_DISTANCE_MIN)
         self.hr_distance_max = float(HR_DISTANCE_MAX)
 
         self.distracted_timer = 0
         self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
-        self.distracted_duration = 0
-        self.configure_distracted_duration(
-            max_duration_seconds=self.max_distracted_duration_seconds,
-            dt=DEFAULT_SIM_TIMESTEP_SECONDS,
+        if self.max_distracted_duration_seconds <= 0.0:
+            raise ValueError(
+                "distracted max_duration_seconds must be > 0, "
+                f"got {self.max_distracted_duration_seconds}"
+            )
+        self.distracted_duration = max(
+            1,
+            int(round(self.max_distracted_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)),
         )
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
@@ -148,7 +141,7 @@ class Human:
         self.impatient_recovery_mode = HumanMode.FOLLOWING
         self.listening_impatient_yaw_deviation = 0.0
         self.listening_impatient_turn_sign = 1.0
-        self.profile = HumanProfile.NORMAL
+        self.profile = None
         self.following_steps = 0
         self.listening_steps = 0
         self.listening_started_this_session = False
@@ -172,26 +165,8 @@ class Human:
         self.overwhelmed_backoff_start_xy = None
         self.overwhelmed_recovery_mode = HumanMode.FOLLOWING
 
-        self.transition_to(HumanMode.WANDERING, reason="init", force=True)
-
-    @staticmethod
-    def _validate_mode(mode: str):
-        """Validate that mode belongs to HumanMode."""
-        if mode not in (
-            HumanMode.WANDERING,
-            HumanMode.FOLLOWING,
-            HumanMode.LISTENING,
-            HumanMode.DISTRACTED,
-            HumanMode.OVERWHELMED,
-            HumanMode.IMPATIENT,
-        ):
-            raise ValueError(f"Unknown human mode: {mode}")
-
-    @staticmethod
-    def _validate_profile(profile: str):
-        """Validate that profile belongs to HumanProfile."""
-        if profile not in (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT):
-            raise ValueError(f"Unknown human profile: {profile}")
+        self.set_profile(HumanProfile.NORMAL)
+        self.set_mode(HumanMode.WANDERING, reason="init", force=True)
 
     def _on_exit_mode(self, prev_mode: str, next_mode: str, reason: Optional[str] = None):
         """Run cleanup hooks when leaving a mode."""
@@ -213,22 +188,25 @@ class Human:
             self.distracted_timer = 0
             self._clear_distracted_navigation_state()
 
-    def transition_to(self, next_mode: str, reason: Optional[str] = None, force: bool = False) -> bool:
+    def set_mode(self, mode: str, reason: Optional[str] = "set_mode", force: bool = False) -> bool:
         """Switch mode and execute enter/exit side-effects."""
-        # Centralized mode transition so enter/exit side-effects stay in one place.
-        self._validate_mode(next_mode)
+        if mode not in (
+            HumanMode.WANDERING,
+            HumanMode.FOLLOWING,
+            HumanMode.LISTENING,
+            HumanMode.DISTRACTED,
+            HumanMode.OVERWHELMED,
+            HumanMode.IMPATIENT,
+        ):
+            raise ValueError(f"Unknown human mode: {mode}")
         prev_mode = self.mode
-        if (not force) and prev_mode == next_mode:
+        if (not force) and prev_mode == mode:
             return False
         if prev_mode is not None:
-            self._on_exit_mode(prev_mode=prev_mode, next_mode=next_mode, reason=reason)
-        self.mode = next_mode
-        self._on_enter_mode(prev_mode=prev_mode, next_mode=next_mode, reason=reason)
+            self._on_exit_mode(prev_mode=prev_mode, next_mode=mode, reason=reason)
+        self.mode = mode
+        self._on_enter_mode(prev_mode=prev_mode, next_mode=mode, reason=reason)
         return True
-
-    def set_mode(self, mode: str):
-        """Public wrapper for mode switch."""
-        self.transition_to(mode, reason="set_mode")
 
     def reset_overwhelmed_state(self):
         """Clear internal state used by overwhelmed behavior."""
@@ -242,7 +220,7 @@ class Human:
     def reset_episode_state(self):
         """Reset per-episode dynamic state while keeping static config."""
         self.step_count = 0
-        self.transition_to(HumanMode.WANDERING, reason="episode_reset", force=True)
+        self.set_mode(HumanMode.WANDERING, reason="episode_reset", force=True)
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
@@ -254,9 +232,6 @@ class Human:
         self.listening_impatient_yaw_deviation = 0.0
         self.listening_impatient_turn_sign = 1.0
 
-        self.last_v_follow = np.zeros(2, dtype=np.float32)
-        self.last_v_repulsion = np.zeros(2, dtype=np.float32)
-        self.last_v_hr = np.zeros(2, dtype=np.float32)
         self.last_in_listening_front_sector = False
 
         self.max_speed = float(self.base_max_speed)
@@ -271,22 +246,15 @@ class Human:
 
     def set_profile(self, profile: str):
         """Set behavior profile (normal or neurodivergent)."""
-        self._validate_profile(profile)
+        if profile not in (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT):
+            raise ValueError(f"Unknown human profile: {profile}")
         self.profile = profile
-
-    def configure_hr_distance_band(self, hr_distance_min: float, hr_distance_max: float):
-        """Configure preferred human-robot spacing band for this human."""
-        distance_min = float(hr_distance_min)
-        distance_max = float(hr_distance_max)
-        if distance_min <= 0.0:
-            raise ValueError(f"hr_distance_min must be > 0, got {hr_distance_min}")
-        if distance_max < distance_min:
-            raise ValueError(
-                "hr_distance_max must be >= hr_distance_min, "
-                f"got min={hr_distance_min}, max={hr_distance_max}"
-            )
-        self.hr_distance_min = distance_min
-        self.hr_distance_max = distance_max
+        if profile == HumanProfile.NEURODIVERGENT:
+            self.hr_distance_min = float(HR_DISTANCE_MIN_ND_DEFAULT)
+            self.hr_distance_max = float(HR_DISTANCE_MAX)
+        else:
+            self.hr_distance_min = float(HR_DISTANCE_MIN)
+            self.hr_distance_max = float(HR_DISTANCE_MAX_NORMAL_DEFAULT)
 
     def reset_following_duration(self):
         """Reset timer counting consecutive eligible following steps."""
@@ -299,24 +267,6 @@ class Human:
         self.listening_distracted_window_active = False
         self.listening_distracted_move_elapsed_steps = 0
         self.listening_distracted_hold_until_session_end = False
-
-    def configure_distracted_duration(
-        self,
-        max_duration_seconds: float,
-        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
-    ):
-        """Configure maximum distracted duration and cache the converted step count."""
-        duration_seconds = float(max_duration_seconds)
-        dt_safe = float(dt)
-        if duration_seconds <= 0.0:
-            raise ValueError(
-                f"distracted max_duration_seconds must be > 0, got {max_duration_seconds}"
-            )
-        if dt_safe <= 0.0:
-            raise ValueError(f"distracted dt must be > 0, got {dt}")
-
-        self.max_distracted_duration_seconds = duration_seconds
-        self.distracted_duration = max(1, int(round(duration_seconds / dt_safe)))
 
     def update_following_duration(self, eligible_following: bool):
         """Accumulate following duration only when current step is eligible."""
@@ -331,18 +281,6 @@ class Human:
             return
         self.listening_started_this_session = True
         self.listening_steps += 1
-
-    def configure_listening_distracted_motion(
-        self,
-        dt: float = DEFAULT_SIM_TIMESTEP_SECONDS,
-        move_seconds: float = LISTENING_DISTRACTED_MOVE_SECONDS,
-    ):
-        """Cache fixed listening-distracted move duration in simulation steps."""
-        dt_safe = self._normalize_dt(dt)
-        move_seconds = float(move_seconds)
-        if move_seconds <= 0.0:
-            raise ValueError(f"listening distracted move_seconds must be > 0, got {move_seconds}")
-        self.listening_distracted_move_steps = max(1, int(round(move_seconds / dt_safe)))
 
     def _log_event(self, msg: str):
         """Emit log line only when logging is enabled."""
@@ -384,7 +322,7 @@ class Human:
         else:
             leave_dir = diff / dist
 
-        self.transition_to(HumanMode.OVERWHELMED, reason="trigger_overwhelmed")
+        self.set_mode(HumanMode.OVERWHELMED, reason="trigger_overwhelmed")
         self.overwhelmed_recovery_mode = recovery_mode
         self.overwhelmed_stage = "backoff"
         self.overwhelmed_leave_timer = 0
@@ -423,7 +361,7 @@ class Human:
         else:
             self.listening_impatient_yaw_deviation = 0.0
             self.listening_impatient_turn_sign = 1.0
-        self.transition_to(HumanMode.IMPATIENT, reason="trigger_impatient")
+        self.set_mode(HumanMode.IMPATIENT, reason="trigger_impatient")
         self._log_event(f">>> {self.name} became IMPATIENT!")
         return True
 
@@ -499,41 +437,13 @@ class Human:
             return False
 
         if response == "rejoin":
-            self.transition_to(self.distracted_recovery_mode, reason="callback_rejoin")
+            self.set_mode(self.distracted_recovery_mode, reason="callback_rejoin")
             return True
 
         if response == "ignore":
             return True
 
         raise ValueError(f"Unknown callback response: {response}")
-
-    @staticmethod
-    def _normalize_dt(dt: float) -> float:
-        """Clamp dt to a small positive epsilon to avoid numerical issues."""
-        return max(float(dt), MIN_SPEED_EPS)
-
-    def _reset_motion_debug(self):
-        """Reset cached motion components without reallocating the debug arrays."""
-        self.last_v_follow.fill(0.0)
-        self.last_v_repulsion.fill(0.0)
-        self.last_v_hr.fill(0.0)
-
-    def _set_motion_debug(self, *, v_follow=None, v_repulsion=None, v_hr=None):
-        """Update cached motion components in place for diagnostics/tests."""
-        if v_follow is None:
-            self.last_v_follow.fill(0.0)
-        else:
-            self.last_v_follow[:] = v_follow
-
-        if v_repulsion is None:
-            self.last_v_repulsion.fill(0.0)
-        else:
-            self.last_v_repulsion[:] = v_repulsion
-
-        if v_hr is None:
-            self.last_v_hr.fill(0.0)
-        else:
-            self.last_v_hr[:] = v_hr
 
     @staticmethod
     def _compose_action(v_xy, yaw_rate):
@@ -543,7 +453,7 @@ class Human:
         action[2] = np.float32(yaw_rate)
         return action
 
-    def _assign_target_from_context(self, ctx: dict, mode: Optional[str] = None, current_xy=None):
+    def _assign_target_from_context(self, ctx: dict, mode: Optional[str] = None):
         """
         Determine target waypoint based on social context dict.
         
@@ -551,9 +461,7 @@ class Human:
             ctx: context dict with keys like 'index', 'n_humans', 'robot_pose', 
                  'fan_half_angle', 'follow_radius', 'impatient_front_offset', etc.
             mode: optionally override the target computation mode
-            current_xy: ignored (kept for signature compatibility)
         """
-        del current_xy
         index = ctx.get("index", 0)
         n_humans = ctx.get("n_humans", 1)
         robot_pose = ctx.get("robot_pose")
@@ -615,8 +523,7 @@ class Human:
             return self._step_wandering(data, ctx, pose)
 
         if self.mode == HumanMode.FOLLOWING:
-            current_xy = np.asarray(pose[:2], dtype=np.float32)
-            self._assign_target_from_context(ctx, current_xy=current_xy)
+            self._assign_target_from_context(ctx)
             return self._step_following(data, ctx, pose)
 
         if self.mode == HumanMode.LISTENING:
@@ -635,8 +542,8 @@ class Human:
         
     def _step_wandering(self, data, ctx, pose):
         """WANDERING: move to random waypoint, and resample when reached."""
-        _, _, yaw = pose
         current_xy = np.asarray(pose[:2], dtype=np.float32)
+        yaw = pose[2]
         to_waypoint = self.current_waypoint - current_xy
         dist = np.linalg.norm(to_waypoint)
 
@@ -648,18 +555,16 @@ class Human:
 
     def _step_following(self, data, ctx, pose):
         """FOLLOWING: move toward current follow target."""
-        _, _, yaw = pose
         current_xy = np.asarray(pose[:2], dtype=np.float32)
+        yaw = pose[2]
         to_waypoint = self.current_waypoint - current_xy
         return self._move(to_waypoint, yaw, ctx, current_xy=current_xy)
     
     def _step_listening(self, data, ctx, pose):
         """LISTENING: low-cost motion toward the nearest front-sector point on the listening ring."""
-        del data
-        _, _, yaw = pose
+        yaw = pose[2]
         robot_xy = ctx.get("robot_xy")
         if robot_xy is None:
-            self._reset_motion_debug()
             self.last_in_listening_front_sector = False
             return np.zeros(3, dtype=np.float32)
 
@@ -707,7 +612,6 @@ class Human:
         if speed > self.max_speed and speed > NORM_EPS:
             v_total = v_total / speed * self.max_speed
 
-        self._set_motion_debug(v_follow=v_goal, v_repulsion=v_repulsion, v_hr=v_hr)
         action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
@@ -722,10 +626,8 @@ class Human:
         live_robot_xy,
     ):
         """LISTENING variant using an anchor pose for target geometry and a live pose for HR repulsion."""
-        del data
-        _, _, yaw = pose
+        yaw = pose[2]
         if anchor_robot_xy is None:
-            self._reset_motion_debug()
             self.last_in_listening_front_sector = False
             return np.zeros(3, dtype=np.float32)
 
@@ -781,7 +683,6 @@ class Human:
         if speed > self.max_speed and speed > NORM_EPS:
             v_total = v_total / speed * self.max_speed
 
-        self._set_motion_debug(v_follow=v_goal, v_repulsion=v_repulsion, v_hr=v_hr)
         action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
 
@@ -790,7 +691,7 @@ class Human:
         if self.distracted_source == DISTRACTED_SOURCE_LISTENING:
             return self._step_listening_distracted(data, ctx, pose)
 
-        _, _, yaw = pose
+        yaw = pose[2]
         self.distracted_timer += 1
 
         current_xy = np.asarray(pose[:2], dtype=np.float32)
@@ -805,7 +706,6 @@ class Human:
             self.distracted_stop_reached = True
 
         if self.distracted_stop_reached:
-            self._reset_motion_debug()
             action = np.zeros(3, dtype=np.float32)
         else:
             move_speed_limit = DISTRACTED_SPEED_SCALE * self.max_speed
@@ -831,12 +731,11 @@ class Human:
                 else (self.distracted_target_yaw if self.distracted_target_yaw is not None else yaw)
             )
             yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-            self._set_motion_debug(v_follow=v_goal, v_repulsion=v_repulsion, v_hr=None)
             action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
         # Recover after duration
         if self.distracted_timer >= self.distracted_duration:
-            self.transition_to(self.distracted_recovery_mode, reason="distracted_timeout_recover")
+            self.set_mode(self.distracted_recovery_mode, reason="distracted_timeout_recover")
             self._log_event(f">>> {self.name} recovered -> {self.mode.upper()}")
 
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
@@ -844,16 +743,10 @@ class Human:
     def _initialize_listening_distracted_target(
         self,
         current_xy,
-        current_yaw: float,
         robot_xy,
-        robot_yaw: float,
-        sector_half_angle: float,
     ):
         """Sample one gaze-away yaw target while staying in place."""
         current_xy = np.asarray(current_xy, dtype=np.float32)
-        del current_yaw
-        del robot_yaw
-        del sector_half_angle
         robot_xy = np.asarray(robot_xy, dtype=np.float32)
         deviation_deg = np.random.uniform(45.0, 90.0)
         deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
@@ -867,8 +760,7 @@ class Human:
 
     def _step_listening_distracted(self, data, ctx, pose):
         """DISTRACTED-from-listening: turn gaze away from robot and then hold still."""
-        del data
-        _, _, yaw = pose
+        yaw = pose[2]
         self.distracted_timer += 1
         current_xy = np.asarray(pose[:2], dtype=np.float32)
         robot_xy = np.asarray(ctx.get("robot_xy", current_xy), dtype=np.float32)
@@ -887,37 +779,27 @@ class Human:
         if self.distracted_target_yaw is None:
             self._initialize_listening_distracted_target(
                 current_xy=current_xy,
-                current_yaw=yaw,
                 robot_xy=robot_xy,
-                robot_yaw=robot_yaw,
-                sector_half_angle=sector_half_angle,
             )
-
-        self.last_v_repulsion.fill(0.0)
-        self.last_v_hr.fill(0.0)
         desired_yaw = self.distracted_target_yaw
         yaw_err = self._wrap_to_pi(desired_yaw - yaw)
 
         if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
-            self.last_v_follow.fill(0.0)
             return self._apply_wall_constraint_to_action(
                 self._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err),
                 ctx,
                 current_xy=current_xy,
             )
 
-        self.last_v_follow.fill(0.0)
         return np.zeros(3, dtype=np.float32)
 
     def _step_overwhelmed(self, data, ctx, pose):
         """OVERWHELMED: first back off, then keep leaving for fixed duration."""
-        del data
-        _, _, yaw = pose
+        yaw = pose[2]
         pos_xy = np.asarray(pose[:2], dtype=np.float32)
-        self._reset_motion_debug()
 
         if self.overwhelmed_stage is None:
-            self.transition_to(self.overwhelmed_recovery_mode, reason="overwhelmed_invalid_stage_recover")
+            self.set_mode(self.overwhelmed_recovery_mode, reason="overwhelmed_invalid_stage_recover")
             return np.zeros(3, dtype=np.float32)
 
         leave_dir = np.asarray(self.overwhelmed_leave_dir, dtype=np.float32)
@@ -974,7 +856,7 @@ class Human:
         self.overwhelmed_leave_timer += 1
 
         if self.overwhelmed_leave_timer >= self.overwhelmed_leave_duration:
-            self.transition_to(self.overwhelmed_recovery_mode, reason="overwhelmed_timeout_recover")
+            self.set_mode(self.overwhelmed_recovery_mode, reason="overwhelmed_timeout_recover")
             self._log_event(
                 f">>> {self.name} recovered from OVERWHELMED -> {self.mode.upper()}"
             )
@@ -985,8 +867,8 @@ class Human:
     def _step_impatient(self, data, ctx, pose):
         """IMPATIENT: fast following toward front slot, with timeout recovery."""
         self.impatient_timer += 1
-        _, _, yaw = pose
         current_xy = np.asarray(pose[:2], dtype=np.float32)
+        yaw = pose[2]
         if self.impatient_recovery_mode == HumanMode.LISTENING:
             robot_xy = np.asarray(ctx.get("robot_xy", current_xy), dtype=np.float32)
             to_robot = robot_xy - current_xy
@@ -1023,11 +905,10 @@ class Human:
             speed = np.linalg.norm(v_total)
             if speed > self.max_speed and speed > NORM_EPS:
                 v_total = v_total / speed * self.max_speed
-            self._set_motion_debug(v_follow=v_goal, v_repulsion=v_repulsion, v_hr=None)
             action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
             action = self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
         else:
-            self._assign_target_from_context(ctx, current_xy=current_xy)
+            self._assign_target_from_context(ctx)
             action = self._step_following(data, ctx, pose)
 
         if self.impatient_timer >= self.impatient_duration:
@@ -1062,8 +943,6 @@ class Human:
         else:
             v_follow = np.zeros(2, dtype=np.float32)
 
-        self._set_motion_debug(v_follow=v_follow, v_repulsion=v_repulsion, v_hr=v_hr)
-
         # Final translational command is a blend of:
         # (1) target following, (2) human-human repulsion, (3) human-robot spacing force.
         v_total = v_follow + v_repulsion + v_hr
@@ -1081,16 +960,6 @@ class Human:
     # -------------------------
     # Helpers
     # -------------------------
-
-    @classmethod
-    def sample_walkable_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
-        """Compatibility wrapper returning a sample from the default spawn region."""
-        return DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(margin=margin, rng=rng)
-
-    @classmethod
-    def sample_room_a_point(cls, margin: float = HUMAN_WALL_FOOTPRINT_RADIUS, rng=None):
-        """Compatibility wrapper returning a spawn sample from the default map layout."""
-        return DEFAULT_MUSEUM_LAYOUT.sample_spawn_point(margin=margin, rng=rng)
 
     @staticmethod
     def _iter_raycast_origin_heights(body_z: float) -> tuple[float, ...]:

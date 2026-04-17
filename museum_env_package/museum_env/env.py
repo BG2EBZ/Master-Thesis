@@ -12,6 +12,7 @@ from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     HUMAN_WALL_FOOTPRINT_RADIUS,
+    LISTENING_DISTRACTED_MOVE_SECONDS,
     Human,
     HumanMode,
     HumanProfile,
@@ -60,10 +61,6 @@ POST_EXPLANATION_YIELD_ROLE_YIELD = "yield"
 DIST_EPS = 1e-8
 HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS = 1.0
 LOCAL_CROWDING_RADIUS_METERS = 1.0
-HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
-HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
-HR_DISTANCE_MIN_ND_DEFAULT = 1.0
-HR_DISTANCE_MAX_ND_DEFAULT = 2.0
 MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
 
 MAX_HUMANS_CAPACITY = 15
@@ -497,24 +494,19 @@ class MuseumEnv(gym.Env):
     def _configure_human_following_variants(self):
         """Apply profile-specific spacing parameters and distracted-motion timing to all humans."""
         for human in self.humans:
-            if human.profile == HumanProfile.NEURODIVERGENT:
-                human.configure_hr_distance_band(
-                    hr_distance_min=HR_DISTANCE_MIN_ND_DEFAULT,
-                    hr_distance_max=HR_DISTANCE_MAX_ND_DEFAULT,
-                )
-            else:
-                human.configure_hr_distance_band(
-                    hr_distance_min=HR_DISTANCE_MIN_NORMAL_DEFAULT,
-                    hr_distance_max=HR_DISTANCE_MAX_NORMAL_DEFAULT,
-                )
-            human.configure_listening_distracted_motion(dt=float(self.timestep))
+            human.set_profile(human.profile)
+            human.listening_distracted_move_steps = max(
+                1,
+                int(round(LISTENING_DISTRACTED_MOVE_SECONDS / float(self.timestep))),
+            )
 
     def _configure_human_distracted_duration(self):
         """Apply common distracted duration config to all humans."""
         for human in self.humans:
-            human.configure_distracted_duration(
-                max_duration_seconds=self.max_distracted_duration_seconds,
-                dt=float(self.timestep),
+            human.max_distracted_duration_seconds = float(self.max_distracted_duration_seconds)
+            human.distracted_duration = max(
+                1,
+                int(round(human.max_distracted_duration_seconds / float(self.timestep))),
             )
 
     def _is_human_in_listening_front_sector(self, human, pos_xy, robot_xy, robot_yaw: float) -> bool:
@@ -1501,7 +1493,7 @@ class MuseumEnv(gym.Env):
         if dominant_state == "distracted":
             human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
             human.distracted_recovery_mode = HumanMode.FOLLOWING
-            human.transition_to(HumanMode.DISTRACTED, reason="fuzzy_following_distracted")
+            human.set_mode(HumanMode.DISTRACTED, reason="fuzzy_following_distracted")
             human._log_event(f">>> {human.name} became DISTRACTED!")
             return
 
@@ -1533,7 +1525,7 @@ class MuseumEnv(gym.Env):
         if dominant_state == "distracted":
             human.distracted_source = DISTRACTED_SOURCE_LISTENING
             human.distracted_recovery_mode = HumanMode.LISTENING
-            human.transition_to(HumanMode.DISTRACTED, reason="fuzzy_listening_distracted")
+            human.set_mode(HumanMode.DISTRACTED, reason="fuzzy_listening_distracted")
             human._log_event(f">>> {human.name} became DISTRACTED while listening!")
             current_xy = np.array(self.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
             self._queue_listening_callback_request(idx, current_xy)
@@ -1719,7 +1711,6 @@ class MuseumEnv(gym.Env):
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state()
 
-        human_v_follow, human_v_repulsion, human_v_hr = self._collect_human_velocity_components()
         human_state_snapshot = self._collect_human_state_snapshot()
 
         snapshot = self._collect_step_snapshot(
@@ -1733,9 +1724,6 @@ class MuseumEnv(gym.Env):
             human_actual_yaw=human_actual_yaw,
             human_goals=human_goals,
             human_actions=human_actions,
-            human_v_follow=human_v_follow,
-            human_v_repulsion=human_v_repulsion,
-            human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
             local_crowding_count_1m=local_crowding_count_1m,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
@@ -1887,8 +1875,6 @@ class MuseumEnv(gym.Env):
         )
         self._update_human_listening_session_progress()
 
-        human_v_follow, human_v_repulsion, human_v_hr = self._collect_human_velocity_components()
-
         if self.listen_intro_delay_active:
             self.listen_intro_delay_counter += 1
             if self.listen_intro_delay_counter >= self.listen_intro_delay_steps:
@@ -1926,9 +1912,6 @@ class MuseumEnv(gym.Env):
             human_actual_yaw=human_actual_yaw,
             human_goals=human_goals,
             human_actions=human_actions,
-            human_v_follow=human_v_follow,
-            human_v_repulsion=human_v_repulsion,
-            human_v_hr=human_v_hr,
             nearest_human_distance=nearest_human_distance,
             local_crowding_count_1m=local_crowding_count_1m,
             nearest_human_distance_mean_1s=nearest_human_distance_mean_1s,
@@ -2222,18 +2205,6 @@ class MuseumEnv(gym.Env):
 
         return human_actions
 
-    def _collect_human_velocity_components(self):
-        """Collect per-human velocity components into contiguous arrays."""
-        n_humans = len(self.humans)
-        human_v_follow = np.empty((n_humans, 2), dtype=np.float32)
-        human_v_repulsion = np.empty((n_humans, 2), dtype=np.float32)
-        human_v_hr = np.empty((n_humans, 2), dtype=np.float32)
-        for idx, human in enumerate(self.humans):
-            human_v_follow[idx] = human.last_v_follow
-            human_v_repulsion[idx] = human.last_v_repulsion
-            human_v_hr[idx] = human.last_v_hr
-        return human_v_follow, human_v_repulsion, human_v_hr
-
     def _collect_human_state_snapshot(self):
         """Collect per-human mode/profile/timer diagnostics in one pass."""
         n_humans = len(self.humans)
@@ -2342,9 +2313,6 @@ class MuseumEnv(gym.Env):
         human_actual_yaw,
         human_goals,
         human_actions,
-        human_v_follow,
-        human_v_repulsion,
-        human_v_hr,
         nearest_human_distance,
         local_crowding_count_1m,
         nearest_human_distance_mean_1s,
@@ -2380,10 +2348,6 @@ class MuseumEnv(gym.Env):
             "human_actual_yaw": human_actual_yaw,
             "human_desired_yaw": human_desired_yaw,
             "human_actions": human_actions,
-            "human_v_follow": human_v_follow,
-            "human_v_repulsion": human_v_repulsion,
-            "human_v_hr": human_v_hr,
-            "human_v_total": human_v_follow + human_v_repulsion + human_v_hr,
             "nearest_human_distance": np.array(nearest_human_distance, dtype=np.float32),
             "local_crowding_count_1m": np.array(local_crowding_count_1m, dtype=np.int32),
             "nearest_human_distance_mean_1s": np.array(nearest_human_distance_mean_1s, dtype=np.float32),
@@ -2591,12 +2555,6 @@ class MuseumEnv(gym.Env):
                     "vx": human_actions[:, 0],
                     "vy": human_actions[:, 1],
                     "yaw_rate": human_actions[:, 2],
-                },
-                "velocity_components": {
-                    "follow": snapshot["human_v_follow"],
-                    "repulsion": snapshot["human_v_repulsion"],
-                    "human_robot": snapshot["human_v_hr"],
-                    "total": snapshot["human_v_total"],
                 },
             },
         }
