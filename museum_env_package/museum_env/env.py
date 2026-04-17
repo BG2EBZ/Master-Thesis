@@ -47,8 +47,6 @@ LISTENING_REPULSION_SCALE = 1.0
 LISTEN_REACHED_MIN_DISTANCE = 0.8
 LISTEN_INTRO_DELAY_SECONDS_DEFAULT = 3.0
 LISTEN_WAIT_SECONDS_DEFAULT = 20.0
-ATTACK_SPEED_DEFAULT = 1.0
-ATTACK_HIT_DISTANCE_DEFAULT = 0.33
 HUMAN_MAX_SPEED_DEFAULT = 1.00
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.1
@@ -66,17 +64,7 @@ HR_DISTANCE_MIN_NORMAL_DEFAULT = 0.8
 HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
 HR_DISTANCE_MAX_ND_DEFAULT = 2.0
-LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT = 0.15
-LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT = 0.08
-LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT = 20.0
-LISTENING_DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT = 40.0
-LISTENING_DISTRACTED_RISE_ND_SECONDS_DEFAULT = 10.0
-LISTENING_DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT = 20.0
 MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
-OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT = 0.000
-ATTACK_WAIT_TRIGGER_PROB_DEFAULT = 0.000
-MAX_CONCURRENT_OVERWHELMED_DEFAULT = 5
-MAX_CONCURRENT_ATTACK_DEFAULT = 5
 
 MAX_HUMANS_CAPACITY = 15
 HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
@@ -88,7 +76,6 @@ INACTIVE_HUMAN_PARK_Y_BASE = 50.0
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
-ROBOT_NEED_SPACE_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 CALLBACK_CUE_SECONDS = 3.0
 CALLBACK_RESPONSE_SAMPLE_SECONDS = 2.0
@@ -97,19 +84,12 @@ CALLBACK_REJOIN_PROB_NORMAL_DEFAULT = 0.80
 CALLBACK_IGNORE_PROB_NORMAL_DEFAULT = 0.20
 CALLBACK_REJOIN_PROB_ND_DEFAULT = 0.40
 CALLBACK_IGNORE_PROB_ND_DEFAULT = 0.60
-MOVE_BACK_SAFE_DISTANCE = SOCIAL_DISTANCE_DEFAULT
-MOVE_BACK_SPEED = 0.6
-ROBOT_HAPPY_HOLD_SECONDS = 1.0
-ROBOT_FEAR_DISTANCE_THRESHOLD = 0.8
-FEAR_RESPONSE_MOVE_BACK_PROB = 0.4
-FEAR_RESPONSE_STAY_PROB = 0.3
-FEAR_RESPONSE_CONTINUE_HIT_PROB = 0.3
 FOLLOW_PHASE_PRE_LISTEN_ENGAGE = "pre_listen_engage"
 FOLLOW_PHASE_TRANSIT = "transit_follow"
+ROBOT_HAPPY_HOLD_SECONDS = 3.0
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
 ROBOT_COLOR_SAD = np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32)
 ROBOT_COLOR_HAPPY = np.array([0.95, 0.85, 0.20, 1.0], dtype=np.float32)
-ROBOT_COLOR_FEAR = np.array([0.62, 0.36, 0.88, 1.0], dtype=np.float32)
 SPEAKING_HALO_RGBA_ON = np.array([1.0, 0.9, 0.2, 0.35], dtype=np.float32)
 SPEAKING_HALO_RGBA_OFF = np.array([1.0, 0.9, 0.2, 0.0], dtype=np.float32)
 
@@ -130,15 +110,7 @@ class MuseumEnv(gym.Env):
         render_mode=None,
         enable_event_logs: bool = True,
         strict_action_validation: bool = True,
-        listening_distracted_lambda_max_nd_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_ND_PER_SEC_DEFAULT,
-        listening_distracted_lambda_max_normal_per_sec: float = LISTENING_DISTRACTED_LAMBDA_MAX_NORMAL_PER_SEC_DEFAULT,
-        listening_distracted_ramp_start_nd_seconds: float = LISTENING_DISTRACTED_RAMP_START_ND_SECONDS_DEFAULT,
-        listening_distracted_ramp_start_normal_seconds: float = LISTENING_DISTRACTED_RAMP_START_NORMAL_SECONDS_DEFAULT,
-        listening_distracted_rise_nd_seconds: float = LISTENING_DISTRACTED_RISE_ND_SECONDS_DEFAULT,
-        listening_distracted_rise_normal_seconds: float = LISTENING_DISTRACTED_RISE_NORMAL_SECONDS_DEFAULT,
         max_distracted_duration_seconds: float = MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
-        overwhelmed_wait_trigger_prob: float = OVERWHELMED_WAIT_TRIGGER_PROB_DEFAULT,
-        attack_wait_trigger_prob: float = ATTACK_WAIT_TRIGGER_PROB_DEFAULT,
         callback_rejoin_prob_normal: float = CALLBACK_REJOIN_PROB_NORMAL_DEFAULT,
         callback_ignore_prob_normal: float = CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
@@ -253,20 +225,12 @@ class MuseumEnv(gym.Env):
         self.post_explanation_hold_roles = []
         self.post_explanation_hold_targets = np.zeros((0, 2), dtype=np.float32)
         self.post_explanation_hold_listen_radii = np.zeros((0,), dtype=np.float32)
-        self.listening_distracted_lambda_max_nd_per_sec = float(listening_distracted_lambda_max_nd_per_sec)
-        self.listening_distracted_lambda_max_normal_per_sec = float(listening_distracted_lambda_max_normal_per_sec)
-        self.listening_distracted_ramp_start_nd_seconds = float(listening_distracted_ramp_start_nd_seconds)
-        self.listening_distracted_ramp_start_normal_seconds = float(listening_distracted_ramp_start_normal_seconds)
-        self.listening_distracted_rise_nd_seconds = float(listening_distracted_rise_nd_seconds)
-        self.listening_distracted_rise_normal_seconds = float(listening_distracted_rise_normal_seconds)
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         if self.max_distracted_duration_seconds <= 0.0:
             raise ValueError(
                 "max_distracted_duration_seconds must be > 0, "
                 f"got {max_distracted_duration_seconds}"
             )
-        self.overwhelmed_wait_trigger_prob = float(overwhelmed_wait_trigger_prob)
-        self.attack_wait_trigger_prob = float(attack_wait_trigger_prob)
         self.callback_rejoin_prob_normal = float(callback_rejoin_prob_normal)
         self.callback_ignore_prob_normal = float(callback_ignore_prob_normal)
         self.callback_rejoin_prob_nd = float(callback_rejoin_prob_nd)
@@ -300,11 +264,6 @@ class MuseumEnv(gym.Env):
                 "ignore": self.callback_ignore_prob_nd,
             },
         }
-        self.max_concurrent_overwhelmed = MAX_CONCURRENT_OVERWHELMED_DEFAULT
-        self.max_concurrent_attack = MAX_CONCURRENT_ATTACK_DEFAULT
-        self.last_overwhelmed_trigger_indices = []
-        self.last_attack_trigger_indices = []
-        self.attack_hit_once = False
         self.callback_triggered_for_current_distracted = []
         self.callback_active_target_idx = None
         self.callback_last_response = None
@@ -321,14 +280,6 @@ class MuseumEnv(gym.Env):
         self._pending_listening_callback_request = None
         self._paused_listening_callback_state = None
         self._callback_success_mode = HumanMode.FOLLOWING
-        self.move_back_active = False
-        self.move_back_attacker_idx = None
-        self.fear_active = False
-        self.fear_attacker_idx = None
-        self.fear_current_response_mode = None
-        self.fear_current_response_target_idx = None
-        self.fear_last_response = None
-        self.fear_last_response_target_idx = None
         self.perceived_distracted_indices = []
         self._last_robot_base_visual_emotion = None
         self._last_robot_speaking_halo_active = None
@@ -366,10 +317,7 @@ class MuseumEnv(gym.Env):
         # Set human parameters related to behaviors
         for human in self.humans:
             human.can_be_overwhelmed = True
-            human.can_attack = True
             human.can_be_impatient = True
-            human.attack_speed = ATTACK_SPEED_DEFAULT
-            human.attack_hit_distance = ATTACK_HIT_DISTANCE_DEFAULT
             human.impatient_duration = 2000
             human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0
@@ -547,24 +495,14 @@ class MuseumEnv(gym.Env):
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
 
     def _configure_human_following_variants(self):
-        """Apply profile-specific listening hazard and spacing parameters to all humans."""
+        """Apply profile-specific spacing parameters and distracted-motion timing to all humans."""
         for human in self.humans:
             if human.profile == HumanProfile.NEURODIVERGENT:
-                human.configure_distracted_listening_hazard(
-                    lambda_max_per_sec=self.listening_distracted_lambda_max_nd_per_sec,
-                    ramp_start_seconds=self.listening_distracted_ramp_start_nd_seconds,
-                    rise_seconds=self.listening_distracted_rise_nd_seconds,
-                )
                 human.configure_hr_distance_band(
                     hr_distance_min=HR_DISTANCE_MIN_ND_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_ND_DEFAULT,
                 )
             else:
-                human.configure_distracted_listening_hazard(
-                    lambda_max_per_sec=self.listening_distracted_lambda_max_normal_per_sec,
-                    ramp_start_seconds=self.listening_distracted_ramp_start_normal_seconds,
-                    rise_seconds=self.listening_distracted_rise_normal_seconds,
-                )
                 human.configure_hr_distance_band(
                     hr_distance_min=HR_DISTANCE_MIN_NORMAL_DEFAULT,
                     hr_distance_max=HR_DISTANCE_MAX_NORMAL_DEFAULT,
@@ -872,7 +810,6 @@ class MuseumEnv(gym.Env):
         opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
         opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
         opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
-        opt.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 0
         return opt
 
     def _apply_label_options_to_viewer(self):
@@ -897,8 +834,6 @@ class MuseumEnv(gym.Env):
             "completed_listen_wait": False,
             "final_listen_ready": False,
             "overwhelmed_triggered": False,
-            "attack_triggered": False,
-            "attack_hit": False,
             "callback_triggered": False,
             "callback_completed": False,
             "callback_forced_recovery": False,
@@ -910,13 +845,6 @@ class MuseumEnv(gym.Env):
             "callback_success": False,
             "happy_triggered": False,
             "happy_completed": False,
-            "fear_triggered": False,
-            "fear_completed": False,
-            "fear_response_move_back": False,
-            "fear_response_stay": False,
-            "fear_response_continue_hit": False,
-            "move_back_triggered": False,
-            "move_back_completed": False,
         }
 
     def _validate_external_action(self, action):
@@ -998,14 +926,12 @@ class MuseumEnv(gym.Env):
         """Collect per-step human aggregates used by robot decision and diagnostics."""
         perceived_distracted_indices = []
         callback_target_idx = None
-        nearest_attack_threat = None
         threshold = float(self.callback_trigger_distance_meters)
 
         if human_xy.size == 0:
             return {
                 "perceived_distracted_indices": perceived_distracted_indices,
                 "callback_target_idx": callback_target_idx,
-                "nearest_attack_threat": nearest_attack_threat,
                 "emotion_modes": [],
             }
 
@@ -1014,7 +940,6 @@ class MuseumEnv(gym.Env):
             return {
                 "perceived_distracted_indices": perceived_distracted_indices,
                 "callback_target_idx": callback_target_idx,
-                "nearest_attack_threat": nearest_attack_threat,
                 "emotion_modes": [],
             }
 
@@ -1024,17 +949,6 @@ class MuseumEnv(gym.Env):
         emotion_modes = [mode for mode in human_modes if mode != HumanMode.DISTRACTED]
         mode_array = np.asarray(human_modes, dtype=object)
         dist = np.linalg.norm(human_xy - robot_xy, axis=1)
-
-        attack_mask = mode_array == HumanMode.ATTACK
-        if np.any(attack_mask):
-            attack_indices = np.flatnonzero(attack_mask)
-            nearest_attack_local_idx = int(np.argmin(dist[attack_mask]))
-            nearest_attack_idx = int(attack_indices[nearest_attack_local_idx])
-            nearest_attack_threat = {
-                "idx": nearest_attack_idx,
-                "dist": float(dist[nearest_attack_idx]),
-                "xy": np.array(human_xy[nearest_attack_idx], dtype=np.float32),
-            }
 
         distracted_mask = mode_array == HumanMode.DISTRACTED
         far_distracted_mask = distracted_mask & (dist > threshold)
@@ -1070,7 +984,6 @@ class MuseumEnv(gym.Env):
         return {
             "perceived_distracted_indices": perceived_distracted_indices,
             "callback_target_idx": callback_target_idx,
-            "nearest_attack_threat": nearest_attack_threat,
             "emotion_modes": emotion_modes,
         }
 
@@ -1110,44 +1023,6 @@ class MuseumEnv(gym.Env):
             "success_mode": HumanMode.FOLLOWING,
             "interrupts_listening": False,
         }
-
-    def _get_nearest_attack_threat(self, robot_xy, human_xy):
-        """Return nearest attacking human to robot, or None if no attack threat."""
-        if human_xy.size == 0:
-            return None
-
-        nearest_idx = None
-        nearest_dist = None
-        for idx, human in enumerate(self.humans):
-            if human.mode != HumanMode.ATTACK:
-                continue
-            if idx >= human_xy.shape[0]:
-                continue
-            dist = float(np.linalg.norm(human_xy[idx] - robot_xy))
-            if nearest_idx is None or dist < nearest_dist:
-                nearest_idx = idx
-                nearest_dist = dist
-
-        if nearest_idx is None:
-            return None
-
-        return {
-            "idx": int(nearest_idx),
-            "dist": float(nearest_dist),
-            "xy": np.array(human_xy[nearest_idx], dtype=np.float32),
-        }
-
-    @staticmethod
-    def _compute_move_back_action(robot_xy, threat_xy):
-        """Compute robot velocity command moving away from current threat."""
-        diff = np.array(robot_xy - threat_xy, dtype=np.float32)
-        norm = float(np.linalg.norm(diff))
-        if norm < DIST_EPS:
-            direction = np.array([1.0, 0.0], dtype=np.float32)
-        else:
-            direction = diff / norm
-        v_xy = MOVE_BACK_SPEED * direction
-        return np.array([v_xy[0], v_xy[1], 0.0], dtype=np.float32)
 
     def _sample_callback_response(self, profile: str):
         """Sample callback response from profile-specific probability distribution."""
@@ -1274,74 +1149,8 @@ class MuseumEnv(gym.Env):
         self._callback_success_mode = HumanMode.FOLLOWING
         self._resume_listening_after_callback()
 
-    def _sample_fear_response(self):
-        """Sample response mode when fear is triggered by an attacking human."""
-        u = float(self.np_random.random())
-        move_back_threshold = FEAR_RESPONSE_MOVE_BACK_PROB
-        stay_threshold = move_back_threshold + FEAR_RESPONSE_STAY_PROB
-        continue_hit_threshold = stay_threshold + FEAR_RESPONSE_CONTINUE_HIT_PROB
-        if u < move_back_threshold:
-            return "move_back"
-        if u < stay_threshold:
-            return "stay"
-        if u < continue_hit_threshold:
-            return "continue_hit"
-        return "continue_hit"
-
-    def _apply_fear_response_on_trigger(self, events):
-        """Apply one-shot fear response policy right after fear becomes active."""
-        if not events.get("fear_triggered", False):
-            return
-
-        idx = self.fear_attacker_idx
-        if idx is None or idx < 0 or idx >= len(self.humans):
-            return
-
-        human = self.humans[idx]
-        if human.mode != HumanMode.ATTACK:
-            return
-
-        response = self._sample_fear_response()
-        if response == "move_back":
-            anchor = human.attack_origin_listen_waypoint
-            if anchor is not None:
-                human.current_waypoint = np.array(anchor, dtype=np.float32)
-            human.transition_to(HumanMode.LISTENING, reason="fear_response_move_back")
-        elif response == "stay":
-            # Keep ATTACK mode and freeze movement while fear is active.
-            pass
-        elif response == "continue_hit":
-            # Keep ATTACK behavior unchanged.
-            pass
-        else:
-            raise ValueError(f"Unknown fear response: {response}")
-
-        events[f"fear_response_{response}"] = True
-        self.fear_current_response_mode = str(response)
-        self.fear_current_response_target_idx = int(idx)
-        self.fear_last_response = str(response)
-        self.fear_last_response_target_idx = int(idx)
-        self._log_event(f">>> person{idx + 1} fear response: {response}.")
-
-    def _resolve_fear_response_on_complete(self, events):
-        """Resolve temporary fear response state when fear ends."""
-        if not events.get("fear_completed", False):
-            return
-
-        if self.fear_current_response_mode == "stay":
-            idx = self.fear_current_response_target_idx
-            if idx is not None and 0 <= idx < len(self.humans):
-                human = self.humans[idx]
-                if human.mode == HumanMode.ATTACK:
-                    human.transition_to(HumanMode.LISTENING, reason="fear_stay_resolve_to_listening")
-
-        self.fear_current_response_mode = None
-        self.fear_current_response_target_idx = None
-
     def _robot_base_rgba_for_emotion(self):
         """Return target robot base RGBA for the current emotion."""
-        if self.robot.emotion == RobotEmotion.FEAR:
-            return ROBOT_COLOR_FEAR
         if self.robot.emotion == RobotEmotion.SAD:
             return ROBOT_COLOR_SAD
         if self.robot.emotion == RobotEmotion.HAPPY:
@@ -1372,19 +1181,17 @@ class MuseumEnv(gym.Env):
 
     def _robot_text_label_visibility_state(self):
         """Return desired visibility tuple for robot text labels."""
-        show_need_space = bool(self.fear_active)
-        show_follow_me = (not show_need_space) and self._is_callback_visual_active()
-        show_explanation = (not show_need_space) and (not show_follow_me) and bool(self.robot.speaker_active)
-        return (show_need_space, show_follow_me, show_explanation)
+        show_follow_me = self._is_callback_visual_active()
+        show_explanation = (not show_follow_me) and bool(self.robot.speaker_active)
+        return (show_follow_me, show_explanation)
 
     def _sync_robot_text_label_visibility(self, force: bool = False) -> bool:
-        """Toggle robot text labels with priority: need-space > follow-me > explanation."""
+        """Toggle robot text labels with priority: follow-me > explanation."""
         label_state = self._robot_text_label_visibility_state()
         if (not force) and self._last_robot_label_visibility_state == label_state:
             return False
 
-        show_need_space, show_follow_me, show_explanation = label_state
-        self._label_scene_option.sitegroup[ROBOT_NEED_SPACE_LABEL_GROUP] = 1 if show_need_space else 0
+        show_follow_me, show_explanation = label_state
         self._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 1 if show_follow_me else 0
         self._label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 1 if show_explanation else 0
         self._last_robot_label_visibility_state = label_state
@@ -1410,8 +1217,6 @@ class MuseumEnv(gym.Env):
 
     def _get_robot_text_label(self):
         """Return semantic name of currently active robot text cue."""
-        if self.fear_active:
-            return "I_need_more_space"
         if self._is_callback_visual_active():
             return "Please_follow_me"
         if self.robot.speaker_active:
@@ -1419,18 +1224,9 @@ class MuseumEnv(gym.Env):
         return "none"
 
     def _update_robot_emotion_and_visual(self, events, robot_xy, human_xy, human_analysis=None):
-        """Update fear/happy/sad state from one analyzed human snapshot."""
+        """Update robot emotion and perceived distracted diagnostics from one human snapshot."""
         if human_analysis is None:
             human_analysis = self._analyze_human_state(robot_xy=robot_xy, human_xy=human_xy)
-        fear_before = bool(self.fear_active)
-        threat = human_analysis["nearest_attack_threat"]
-        fear_now = bool(threat is not None and threat["dist"] < ROBOT_FEAR_DISTANCE_THRESHOLD)
-        self.fear_active = fear_now
-        self.fear_attacker_idx = int(threat["idx"]) if fear_now else None
-        if (not fear_before) and fear_now:
-            events["fear_triggered"] = True
-        elif fear_before and (not fear_now):
-            events["fear_completed"] = True
 
         self.perceived_distracted_indices = list(human_analysis["perceived_distracted_indices"])
         callback_visual_active = self._is_callback_visual_active()
@@ -1441,9 +1237,9 @@ class MuseumEnv(gym.Env):
 
         happy_before = int(self.robot.happy_hold_steps_remaining)
         sad_now = any(mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED) for mode in emotion_modes)
-        self.robot.update_emotion(emotion_modes, fear_active=self.fear_active)
+        self.robot.update_emotion(emotion_modes)
         happy_after = int(self.robot.happy_hold_steps_remaining)
-        if happy_before > 0 and happy_after == 0 and (not sad_now) and (not self.fear_active):
+        if happy_before > 0 and happy_after == 0 and (not sad_now):
             events["happy_completed"] = True
 
     def _reset_hh_distance_metrics_state(self, window_steps: Optional[int] = None):
@@ -1781,9 +1577,6 @@ class MuseumEnv(gym.Env):
         self.listen_wait_counter = 0
         self.listen_wait_is_final = False
         self._clear_post_explanation_hold_state()
-        self.attack_hit_once = False
-        self.last_overwhelmed_trigger_indices = []
-        self.last_attack_trigger_indices = []
         self.callback_triggered_for_current_distracted = [False] * len(self.humans)
         self.callback_active_target_idx = None
         self.callback_last_response = None
@@ -1791,14 +1584,6 @@ class MuseumEnv(gym.Env):
         self._pending_listening_callback_request = None
         self._paused_listening_callback_state = None
         self._callback_success_mode = HumanMode.FOLLOWING
-        self.move_back_active = False
-        self.move_back_attacker_idx = None
-        self.fear_active = False
-        self.fear_attacker_idx = None
-        self.fear_current_response_mode = None
-        self.fear_current_response_target_idx = None
-        self.fear_last_response = None
-        self.fear_last_response_target_idx = None
         self.perceived_distracted_indices = []
         self._reset_hh_distance_metrics_state()
         self._reset_hr_distance_metrics_state()
@@ -1843,10 +1628,6 @@ class MuseumEnv(gym.Env):
     def _step_waiting_branch(self, external_action_received=False):
         """Step branch used during listening wait window (explanation phase)."""
         events = self._default_events()
-        self.last_overwhelmed_trigger_indices = []
-        self.last_attack_trigger_indices = []
-        self.move_back_active = False
-        self.move_back_attacker_idx = None
 
         rx, ry, ryaw = self._get_robot_pose()
         human_xyz = self._get_human_poses()
@@ -1980,8 +1761,6 @@ class MuseumEnv(gym.Env):
         """Main simulation branch outside wait window."""
         # Main runtime branch: robot decision, human updates, MuJoCo step, and info assembly.
         events = self._default_events()
-        self.last_overwhelmed_trigger_indices = []
-        self.last_attack_trigger_indices = []
 
         human_xyz = self._get_human_poses()
         human_xy = human_xyz[:, :2] if human_xyz.size else np.zeros((0, 2), dtype=np.float32)
@@ -2044,14 +1823,6 @@ class MuseumEnv(gym.Env):
             self.listen_wait_active = False
             self.listen_wait_counter = 0
             self.listen_wait_is_final = False
-            self.last_overwhelmed_trigger_indices = []
-            self.last_attack_trigger_indices = []
-            self.move_back_active = False
-            self.move_back_attacker_idx = None
-            self.fear_active = False
-            self.fear_attacker_idx = None
-            self.fear_current_response_mode = None
-            self.fear_current_response_target_idx = None
             self._reset_human_listening_session_states()
 
             self._log_event(
@@ -2140,8 +1911,6 @@ class MuseumEnv(gym.Env):
             human_xy=human_xy,
             human_analysis=human_analysis_after,
         )
-        self._apply_fear_response_on_trigger(events)
-        self._resolve_fear_response_on_complete(events)
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state()
         human_state_snapshot = self._collect_human_state_snapshot()
@@ -2243,7 +2012,6 @@ class MuseumEnv(gym.Env):
                 HumanMode.DISTRACTED,
                 HumanMode.OVERWHELMED,
                 HumanMode.IMPATIENT,
-                HumanMode.ATTACK,
             ):
                 human.set_mode(HumanMode.LISTENING)
             repulsion_vec = repulsion_vectors[i] if i < repulsion_vectors.shape[0] else np.zeros(2, dtype=np.float32)
@@ -2318,7 +2086,7 @@ class MuseumEnv(gym.Env):
                 else np.array(self.data.qpos[human.qpos_idx : human.qpos_idx + 2], dtype=np.float32)
             )
 
-            if human.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT, HumanMode.ATTACK):
+            if human.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
                 move_ctx["repulsion"] = repulsion_vec
                 human_action = human.step(self.model, self.data, move_ctx)
             elif role == POST_EXPLANATION_YIELD_ROLE_YIELD:
@@ -2483,7 +2251,6 @@ class MuseumEnv(gym.Env):
         human_overwhelmed_leave_timer = np.empty(n_humans, dtype=np.int32)
         human_impatient_timer = np.empty(n_humans, dtype=np.int32)
         active_overwhelmed_indices = []
-        active_attack_indices = []
 
         for idx, human in enumerate(self.humans):
             mode = human.mode
@@ -2502,8 +2269,6 @@ class MuseumEnv(gym.Env):
             human_impatient_timer[idx] = int(human.impatient_timer)
             if mode == HumanMode.OVERWHELMED:
                 active_overwhelmed_indices.append(int(idx))
-            elif mode == HumanMode.ATTACK:
-                active_attack_indices.append(int(idx))
 
         return {
             "human_mode": human_modes,
@@ -2520,7 +2285,6 @@ class MuseumEnv(gym.Env):
             "human_overwhelmed_leave_timer": human_overwhelmed_leave_timer,
             "human_impatient_timer": human_impatient_timer,
             "active_overwhelmed_indices": active_overwhelmed_indices,
-            "active_attack_indices": active_attack_indices,
         }
 
     def _build_human_goals(self, human_xy, robot_xy):
@@ -2643,7 +2407,6 @@ class MuseumEnv(gym.Env):
             "final_waypoint_reached": bool(final_waypoint_reached),
             "all_humans_reached": bool(all_humans_reached),
             "active_overwhelmed_indices": human_state_snapshot["active_overwhelmed_indices"],
-            "active_attack_indices": human_state_snapshot["active_attack_indices"],
             "post_explanation_hold_active": bool(self.post_explanation_hold_active),
             "human_yield_role": list(self.post_explanation_hold_roles),
             "human_yield_target_xy": np.array(self.post_explanation_hold_targets, dtype=np.float32),
@@ -2684,8 +2447,6 @@ class MuseumEnv(gym.Env):
                 "completed_listen_wait": bool(events["completed_listen_wait"]),
                 "final_listen_ready": bool(events["final_listen_ready"]),
                 "overwhelmed_triggered": bool(events["overwhelmed_triggered"]),
-                "attack_triggered": bool(events["attack_triggered"]),
-                "attack_hit": bool(events["attack_hit"]),
                 "callback_triggered": bool(events["callback_triggered"]),
                 "callback_completed": bool(events["callback_completed"]),
                 "callback_forced_recovery": bool(events["callback_forced_recovery"]),
@@ -2697,13 +2458,6 @@ class MuseumEnv(gym.Env):
                 "callback_success": bool(events["callback_success"]),
                 "happy_triggered": bool(events["happy_triggered"]),
                 "happy_completed": bool(events["happy_completed"]),
-                "fear_triggered": bool(events["fear_triggered"]),
-                "fear_completed": bool(events["fear_completed"]),
-                "fear_response_move_back": bool(events["fear_response_move_back"]),
-                "fear_response_stay": bool(events["fear_response_stay"]),
-                "fear_response_continue_hit": bool(events["fear_response_continue_hit"]),
-                "move_back_triggered": bool(events["move_back_triggered"]),
-                "move_back_completed": bool(events["move_back_completed"]),
             },
             "status": {
                 "step_count": int(self.step_count),
@@ -2762,28 +2516,9 @@ class MuseumEnv(gym.Env):
                     if self.callback_last_response_target_idx is not None
                     else None
                 ),
-                "move_back_active": bool(self.move_back_active),
-                "move_back_attacker_idx": (
-                    int(self.move_back_attacker_idx) if self.move_back_attacker_idx is not None else None
-                ),
-                "move_back_safe_distance": float(MOVE_BACK_SAFE_DISTANCE),
-                "move_back_speed": float(MOVE_BACK_SPEED),
                 "robot_emotion": str(self.robot.emotion),
                 "happy_remaining_steps": int(self.robot.happy_hold_steps_remaining),
                 "happy_hold_seconds": float(ROBOT_HAPPY_HOLD_SECONDS),
-                "fear_active": bool(self.fear_active),
-                "fear_attacker_idx": int(self.fear_attacker_idx) if self.fear_attacker_idx is not None else None,
-                "fear_last_response": (
-                    str(self.fear_last_response)
-                    if self.fear_last_response is not None
-                    else None
-                ),
-                "fear_last_response_target_idx": (
-                    int(self.fear_last_response_target_idx)
-                    if self.fear_last_response_target_idx is not None
-                    else None
-                ),
-                "fear_distance_threshold": float(ROBOT_FEAR_DISTANCE_THRESHOLD),
                 "speaker_active": bool(self.robot.speaker_active),
                 "robot_text_label": self._get_robot_text_label(),
                 "listening_distracted_window_active": [
@@ -2793,13 +2528,6 @@ class MuseumEnv(gym.Env):
                 "callback_trigger_distance_meters": float(self.callback_trigger_distance_meters),
                 "perceived_distracted_indices": [int(idx) for idx in self.perceived_distracted_indices],
                 "active_overwhelmed_indices": snapshot["active_overwhelmed_indices"],
-                "active_attack_indices": snapshot["active_attack_indices"],
-                "last_overwhelmed_trigger_indices": [
-                    int(idx) for idx in self.last_overwhelmed_trigger_indices
-                ],
-                "last_attack_trigger_indices": [
-                    int(idx) for idx in self.last_attack_trigger_indices
-                ],
                 "external_action_received": bool(external_action_received),
                 "external_action_used": bool(external_action_used),
                 "terminated_reason": terminated_reason,

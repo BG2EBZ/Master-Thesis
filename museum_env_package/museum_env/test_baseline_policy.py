@@ -646,6 +646,7 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
                 listen_radius=ctx["listen_radius"],
                 sector_half_angle=ctx["listening_sector_half_angle"],
             )
+            self.assertEqual(target_xy.dtype, np.float32)
             self.assertTrue(
                 human.is_within_listening_front_sector(
                     point_xy=target_xy,
@@ -806,7 +807,97 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             action_a = human.step(env.model, env.data, ctx)
             human.current_waypoint = np.array([1.0, -9.0], dtype=np.float32)
             action_b = human.step(env.model, env.data, ctx)
+            self.assertEqual(action_a.dtype, np.float32)
+            self.assertEqual(action_b.dtype, np.float32)
             np.testing.assert_allclose(action_a, action_b, atol=1e-6)
+        finally:
+            env.close()
+
+    def test_listening_geometry_and_hr_helpers_return_float32_vectors(self):
+        env = self._make_env(
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=9071)
+            human = env.humans[0]
+            target_xy = human._compute_listening_sector_target_point(
+                current_xy=np.array([0.9, 0.2], dtype=np.float32),
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                robot_yaw=0.0,
+                listen_radius=env.listen_fan_radius,
+                sector_half_angle=env.listen_front_sector_half_angle,
+            )
+            hr_force = human._compute_hr_spacing_force(
+                current_xy=np.array([0.2, 0.0], dtype=np.float32),
+                robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                distance_min=human.hr_distance_min,
+                distance_max=None,
+            )
+
+            self.assertEqual(target_xy.dtype, np.float32)
+            self.assertEqual(hr_force.dtype, np.float32)
+            self.assertEqual(target_xy.shape, (2,))
+            self.assertEqual(hr_force.shape, (2,))
+            self.assertGreater(float(np.linalg.norm(hr_force)), 0.0)
+        finally:
+            env.close()
+
+    def test_attack_step_moves_toward_robot_with_float32_action(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=9072)
+            human = env.humans[0]
+            human.transition_to(HumanMode.ATTACK, reason="test_force_attack")
+            self._set_human_pose(env, human, x=1.0, y=0.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([2.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "dt": float(env.timestep),
+            }
+
+            action = human.step(env.model, env.data, ctx)
+
+            self.assertEqual(action.dtype, np.float32)
+            self.assertGreater(float(action[0]), 0.0)
+            self.assertAlmostEqual(float(np.linalg.norm(human.last_v_follow)), float(human.attack_speed), places=5)
+            np.testing.assert_array_equal(human.last_v_repulsion, np.zeros(2, dtype=np.float32))
+            np.testing.assert_array_equal(human.last_v_hr, np.zeros(2, dtype=np.float32))
+            self.assertFalse(human.attack_hit_this_step)
+        finally:
+            env.close()
+
+    def test_attack_step_recovers_to_listening_inside_hit_distance(self):
+        env = self._make_env(
+            n_humans=1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=9073)
+            human = env.humans[0]
+            human.transition_to(HumanMode.ATTACK, reason="test_force_attack")
+            self._set_human_pose(env, human, x=1.95, y=0.0, yaw=0.0)
+            ctx = {
+                "robot_xy": np.array([2.0, 0.0], dtype=np.float32),
+                "robot_yaw": 0.0,
+                "repulsion": np.zeros(2, dtype=np.float32),
+                "dt": float(env.timestep),
+            }
+
+            action = human.step(env.model, env.data, ctx)
+
+            np.testing.assert_allclose(action, np.zeros(3, dtype=np.float32), atol=1e-7)
+            self.assertEqual(human.mode, HumanMode.LISTENING)
+            self.assertFalse(human.attack_hit_this_step)
+            np.testing.assert_array_equal(human.last_v_follow, np.zeros(2, dtype=np.float32))
+            np.testing.assert_array_equal(human.last_v_repulsion, np.zeros(2, dtype=np.float32))
+            np.testing.assert_array_equal(human.last_v_hr, np.zeros(2, dtype=np.float32))
         finally:
             env.close()
 

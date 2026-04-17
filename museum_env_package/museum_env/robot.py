@@ -15,14 +15,12 @@ class RobotMode:
     MOVE = "move"
     STOP = "stop"
     CALLBACK = "callback"
-    MOVE_BACK = "move_back"
 
 
 class RobotEmotion:
     NATURAL = "natural"
     SAD = "sad"
     HAPPY = "happy"
-    FEAR = "fear"
 
 
 class RobotCallbackPhase:
@@ -257,12 +255,9 @@ class Robot:
 
         return action
 
-    def update_emotion(self, human_modes, fear_active=False):
-        """Update robot emotion from fear/sad/happy rules."""
-        # Priority: FEAR > SAD > HAPPY (timed hold) > NATURAL.
-        if fear_active:
-            self.emotion = RobotEmotion.FEAR
-            return self.emotion
+    def update_emotion(self, human_modes):
+        """Update robot emotion from sad/happy rules."""
+        # Priority: SAD > HAPPY (timed hold) > NATURAL.
         for mode in human_modes:
             if mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
                 self.emotion = RobotEmotion.SAD
