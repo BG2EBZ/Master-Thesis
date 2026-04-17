@@ -24,6 +24,7 @@ from museum_env.human import (
     HumanProfile,
 )
 from museum_env.map_layouts import AxisAlignedRect, DEFAULT_MUSEUM_LAYOUT, MapLayout
+from museum_env.metrics import VectorizedRollingWindow
 from museum_env.robot import RobotCallbackPhase, RobotEmotion
 
 
@@ -351,6 +352,32 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         )
         spawn_rect = layout.get_spawn_rects(0.25)[0]
         self.assertEqual(spawn_rect, AxisAlignedRect(0.25, 1.75, 0.25, 1.75))
+
+    def test_map_layout_reuses_cached_margin_adjusted_spawn_rects(self):
+        layout = MapLayout(
+            name="spawn_cache_layout",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 2.0, 0.0, 2.0),),
+            robot_waypoints=((1.0, 1.0),),
+            metadata={"rooms": ("cache_test",)},
+        )
+        rects_a = layout.get_spawn_rects(0.25)
+        rects_b = layout.get_spawn_rects(0.25)
+        rects_c = layout.get_spawn_rects(0.10)
+
+        self.assertEqual(rects_a, rects_b)
+        self.assertIs(rects_a, rects_b)
+        self.assertIsNot(rects_a, rects_c)
+
+    def test_map_layout_is_hashable_with_dict_metadata(self):
+        layout = MapLayout(
+            name="spawn_hash_layout",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 2.0, 0.0, 2.0),),
+            robot_waypoints=((1.0, 1.0),),
+            metadata={"rooms": ("hash_test",)},
+        )
+        self.assertIsInstance(hash(layout), int)
 
     def test_map_layout_sample_spawn_point_stays_inside_adjusted_rects(self):
         layout = MapLayout(
@@ -1713,27 +1740,18 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_hh_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
-        env = self._make_env(
-            n_humans=2,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=153)
-            env._reset_hh_distance_metrics_state(window_steps=3)
+    def test_vectorized_rolling_window_supports_warmup_and_eviction(self):
+        metric = VectorizedRollingWindow(window_steps=3, n_entities=2)
 
-            avg_1 = env._update_hh_distance_metrics(np.array([1.0, 4.0], dtype=np.float32))
-            avg_2 = env._update_hh_distance_metrics(np.array([2.0, 5.0], dtype=np.float32))
-            avg_3 = env._update_hh_distance_metrics(np.array([3.0, 6.0], dtype=np.float32))
-            avg_4 = env._update_hh_distance_metrics(np.array([10.0, 20.0], dtype=np.float32))
+        avg_1 = metric.update(np.array([1.0, 4.0], dtype=np.float32))
+        avg_2 = metric.update(np.array([2.0, 5.0], dtype=np.float32))
+        avg_3 = metric.update(np.array([3.0, 6.0], dtype=np.float32))
+        avg_4 = metric.update(np.array([10.0, 20.0], dtype=np.float32))
 
-            np.testing.assert_allclose(avg_1, np.array([1.0, 4.0], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_2, np.array([1.5, 4.5], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_3, np.array([2.0, 5.0], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_4, np.array([5.0, 31.0 / 3.0], dtype=np.float32), atol=1e-7)
-        finally:
-            env.close()
+        np.testing.assert_allclose(avg_1, np.array([1.0, 4.0], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(avg_2, np.array([1.5, 4.5], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(avg_3, np.array([2.0, 5.0], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(avg_4, np.array([5.0, 31.0 / 3.0], dtype=np.float32), atol=1e-7)
 
     def test_human_robot_distance_helper_matches_dense_reference(self):
         env = self._make_env(
@@ -1774,27 +1792,33 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
         finally:
             env.close()
 
-    def test_hr_distance_metrics_rolling_mean_supports_warmup_and_eviction(self):
-        env = self._make_env(
-            n_humans=2,
-            overwhelmed_wait_trigger_prob=0.0,
-            attack_wait_trigger_prob=0.0,
-        )
-        try:
-            env.reset(seed=158)
-            env._reset_hr_distance_metrics_state(window_steps=3)
+    def test_vectorized_rolling_window_skips_nonfinite_values_and_resets_to_nan(self):
+        metric = VectorizedRollingWindow(window_steps=3, n_entities=2)
 
-            avg_1 = env._update_hr_distance_metrics(np.array([1.0, 4.0], dtype=np.float32))
-            avg_2 = env._update_hr_distance_metrics(np.array([2.0, 5.0], dtype=np.float32))
-            avg_3 = env._update_hr_distance_metrics(np.array([3.0, 6.0], dtype=np.float32))
-            avg_4 = env._update_hr_distance_metrics(np.array([10.0, 20.0], dtype=np.float32))
+        initial = metric.get_mean()
+        avg_1 = metric.update(np.array([1.0, np.nan], dtype=np.float32))
+        avg_2 = metric.update(np.array([3.0, 5.0], dtype=np.float32))
+        avg_3 = metric.update(np.array([np.inf, 7.0], dtype=np.float32))
 
-            np.testing.assert_allclose(avg_1, np.array([1.0, 4.0], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_2, np.array([1.5, 4.5], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_3, np.array([2.0, 5.0], dtype=np.float32), atol=1e-7)
-            np.testing.assert_allclose(avg_4, np.array([5.0, 31.0 / 3.0], dtype=np.float32), atol=1e-7)
-        finally:
-            env.close()
+        self.assertTrue(np.isnan(initial).all())
+        np.testing.assert_allclose(avg_1[:1], np.array([1.0], dtype=np.float32), atol=1e-7)
+        self.assertTrue(np.isnan(avg_1[1]))
+        np.testing.assert_allclose(avg_2, np.array([2.0, 5.0], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(avg_3, np.array([2.0, 6.0], dtype=np.float32), atol=1e-7)
+
+        metric.reset()
+        reset_mean = metric.get_mean()
+        self.assertEqual(reset_mean.shape, (2,))
+        self.assertTrue(np.isnan(reset_mean).all())
+
+    def test_vectorized_rolling_window_supports_zero_entities(self):
+        metric = VectorizedRollingWindow(window_steps=4, n_entities=0)
+
+        initial = metric.get_mean()
+        updated = metric.update(np.zeros((0,), dtype=np.float32))
+
+        self.assertEqual(initial.shape, (0,))
+        self.assertEqual(updated.shape, (0,))
 
     def test_default_observation_cadence_initializes_cache_and_sample_windows(self):
         env = self._make_env(
@@ -1807,10 +1831,34 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
 
             self.assertAlmostEqual(env.observation_update_period_seconds, 0.1)
             self.assertEqual(env.observation_update_period_steps, 50)
-            self.assertEqual(env.hh_distance_window_steps, 10)
-            self.assertEqual(env.hr_distance_window_steps, 10)
+            self.assertEqual(env.hh_distance_metric.window_steps, 10)
+            self.assertEqual(env.hr_distance_metric.window_steps, 10)
             self.assertTrue(env._has_cached_environment_observations())
             self.assertEqual(env._observation_sample_age_steps, 0)
+        finally:
+            env.close()
+
+    def test_set_active_humans_rebuilds_rolling_metrics_for_new_count(self):
+        env = self._make_env(
+            n_humans=5,
+            observation_update_period_seconds=0.1,
+            overwhelmed_wait_trigger_prob=0.0,
+            attack_wait_trigger_prob=0.0,
+        )
+        try:
+            env.reset(seed=168)
+            original_hh_metric = env.hh_distance_metric
+            original_hr_metric = env.hr_distance_metric
+
+            env._set_active_humans(2)
+
+            self.assertEqual(len(env.humans), 2)
+            self.assertEqual(env.hh_distance_metric.n_entities, 2)
+            self.assertEqual(env.hr_distance_metric.n_entities, 2)
+            self.assertEqual(env.hh_distance_metric.window_steps, 10)
+            self.assertEqual(env.hr_distance_metric.window_steps, 10)
+            self.assertIsNot(env.hh_distance_metric, original_hh_metric)
+            self.assertIsNot(env.hr_distance_metric, original_hr_metric)
         finally:
             env.close()
 
@@ -2466,7 +2514,10 @@ class TestSimplifiedTriggerProbabilities(unittest.TestCase):
             self.assertEqual(nearest.shape, (len(env.humans),))
             self.assertEqual(mean_1s.shape, (len(env.humans),))
             self.assertEqual(info["metrics"]["humans"]["window_seconds"], 1.0)
-            self.assertEqual(info["metrics"]["humans"]["window_steps"], env.hh_distance_window_steps)
+            self.assertEqual(
+                info["metrics"]["humans"]["window_steps"],
+                env.hh_distance_metric.window_steps,
+            )
             np.testing.assert_allclose(nearest, expected, atol=1e-6)
         finally:
             env.close()

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Mapping
 
 import numpy as np
@@ -62,11 +63,9 @@ class MapLayout:
     default_xml_asset: str
     spawn_rects: tuple[AxisAlignedRect, ...]
     robot_waypoints: tuple[tuple[float, float], ...]
-    metadata: Mapping[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=dict, compare=False)
 
-    def __post_init__(self):
-        object.__setattr__(self, "_spawn_rect_cache", {})
-
+    @lru_cache(maxsize=None)
     def _margin_spawn_rects(self, margin: float) -> tuple[AxisAlignedRect, ...]:
         # Filters and shrinks all spawn areas by the specified margin.
         valid_rects = []
@@ -78,13 +77,7 @@ class MapLayout:
 
     def get_spawn_rects(self, margin: float) -> tuple[AxisAlignedRect, ...]:
         # Memoized access to margin-adjusted spawn rectangles.
-        margin_key = float(margin)
-        cache = self._spawn_rect_cache
-        cached_rects = cache.get(margin_key)
-        if cached_rects is None:
-            cached_rects = self._margin_spawn_rects(margin_key)
-            cache[margin_key] = cached_rects
-        return cached_rects
+        return self._margin_spawn_rects(float(margin))
 
     def sample_spawn_point(self, margin: float, rng=None) -> np.ndarray:
         # Picks a random spawn point across all valid rectangles.
