@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
 import mujoco
@@ -67,32 +66,6 @@ RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
-@dataclass
-class HumanContext:
-    index: int = 0
-    n_humans: int = 1
-    robot_pose: Optional[Tuple[float, float, float]] = None
-    fan_half_angle: float = DEFAULT_FAN_HALF_ANGLE
-    follow_radius: float = DEFAULT_FOLLOW_RADIUS
-    listen_radius: float = DEFAULT_LISTEN_RADIUS
-    listening_sector_half_angle: float = LISTENING_FRONT_SECTOR_HALF_ANGLE
-    impatient_front_offset: Optional[float] = None
-    robot_xy: Optional[np.ndarray] = None
-    robot_yaw: Optional[float] = None
-
-    @classmethod
-    def from_kwargs(cls, **kwargs):
-        """Create context from kwargs and reject unknown fields early."""
-        allowed = {f.name for f in fields(cls)}
-        unknown = set(kwargs.keys()) - allowed
-        if unknown:
-            unknown_str = ", ".join(sorted(unknown))
-            raise ValueError(f"Unknown context field(s): {unknown_str}")
-        ctx = cls()
-        for key, value in kwargs.items():
-            setattr(ctx, key, value)
-        return ctx
-
 
 class HumanMode:
     WANDERING = "wandering"
@@ -140,7 +113,6 @@ class Human:
         self.map_layout = DEFAULT_MUSEUM_LAYOUT if map_layout is None else map_layout
         setattr(self, "mode", None)
 
-        self.context = HumanContext()
         self.enable_event_logs = True
         
         # Store body_id (will be set when we have access to model)
@@ -290,7 +262,6 @@ class Human:
         """Reset per-episode dynamic state while keeping static config."""
         self.step_count = 0
         self.transition_to(HumanMode.WANDERING, reason="episode_reset", force=True)
-        self.context = HumanContext()
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
@@ -492,15 +463,6 @@ class Human:
         if self.mode == HumanMode.IMPATIENT:
             return True
 
-        if robot_pose is not None:
-            self.context.robot_pose = robot_pose
-        if index is not None:
-            self.context.index = index
-        if n_humans is not None:
-            self.context.n_humans = n_humans
-        if self.context.impatient_front_offset is None:
-            self.context.impatient_front_offset = self.impatient_front_offset
-
         self.impatient_original_max_speed = float(self.max_speed)
         self.max_speed = float(self.impatient_original_max_speed * self.impatient_speed_multiplier)
         self.impatient_timer = 0
@@ -622,36 +584,30 @@ class Human:
         """Clamp dt to a small positive epsilon to avoid numerical issues."""
         return max(float(dt), MIN_SPEED_EPS)
 
-
-    def set_context(self, **kwargs):
+    def _assign_target_from_context(self, ctx: dict, mode: Optional[str] = None, current_xy=None):
         """
-        Store high-level social context provided by env.
-        Example:
-            mode="listening"
-            index=0
-            n_humans=3
-            robot_pose=(rx, ry, ryaw)
-        """
-        self.context = HumanContext.from_kwargs(**kwargs)
-
-    def _assign_target_from_context(self, mode: Optional[str] = None, current_xy=None):
-        """
-        Decide where to stand based on social context.
+        Determine target waypoint based on social context dict.
+        
+        Args:
+            ctx: context dict with keys like 'index', 'n_humans', 'robot_pose', 
+                 'fan_half_angle', 'follow_radius', 'impatient_front_offset', etc.
+            mode: optionally override the target computation mode
+            current_xy: ignored (kept for signature compatibility)
         """
         del current_xy
-        index = self.context.index
-        n_humans = self.context.n_humans
-        robot_pose = self.context.robot_pose
+        index = ctx.get("index", 0)
+        n_humans = ctx.get("n_humans", 1)
+        robot_pose = ctx.get("robot_pose")
 
         if robot_pose is None:
             return
 
-        fan_half_angle = self.context.fan_half_angle
+        fan_half_angle = ctx.get("fan_half_angle", DEFAULT_FAN_HALF_ANGLE)
         relative_angle = self._compute_fan_relative_angle(index, n_humans, fan_half_angle)
         target_mode = self.mode if mode is None else mode
         raw_target_xy = None
         if target_mode == HumanMode.FOLLOWING:
-            radius = self.context.follow_radius
+            radius = ctx.get("follow_radius", DEFAULT_FOLLOW_RADIUS)
             raw_target_xy = self._compute_fan_target(
                 robot_pose=robot_pose,
                 radius=radius,
@@ -660,7 +616,7 @@ class Human:
             )
 
         elif target_mode == HumanMode.IMPATIENT:
-            radius = self.context.impatient_front_offset
+            radius = ctx.get("impatient_front_offset")
             if radius is None:
                 radius = self.impatient_front_offset
             raw_target_xy = self._compute_fan_target(
@@ -701,7 +657,7 @@ class Human:
 
         if self.mode == HumanMode.FOLLOWING:
             current_xy = np.array(pose[:2], dtype=np.float32)
-            self._assign_target_from_context(current_xy=current_xy)
+            self._assign_target_from_context(ctx, current_xy=current_xy)
             return self._step_following(data, ctx, pose)
 
         if self.mode == HumanMode.LISTENING:
@@ -760,9 +716,9 @@ class Human:
         robot_xy = np.asarray(robot_xy, dtype=np.float32)
         to_robot = robot_xy - current_xy
         dist_to_robot = float(np.hypot(float(to_robot[0]), float(to_robot[1])))
-        listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
+        listen_radius = float(ctx.get("listen_radius", DEFAULT_LISTEN_RADIUS))
         sector_half_angle = float(
-            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
+            ctx.get("listening_sector_half_angle", LISTENING_FRONT_SECTOR_HALF_ANGLE)
         )
         desired_yaw = np.arctan2(to_robot[1], to_robot[0]) if dist_to_robot > NORM_EPS else float(
             robot_yaw
@@ -829,9 +785,9 @@ class Human:
             if live_robot_xy is None
             else np.asarray(live_robot_xy, dtype=np.float32)
         )
-        listen_radius = float(ctx.get("listen_radius", self.context.listen_radius))
+        listen_radius = float(ctx.get("listen_radius", DEFAULT_LISTEN_RADIUS))
         sector_half_angle = float(
-            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
+            ctx.get("listening_sector_half_angle", LISTENING_FRONT_SECTOR_HALF_ANGLE)
         )
         to_anchor_robot = anchor_robot_xy - current_xy
         dist_to_anchor_robot = float(np.hypot(float(to_anchor_robot[0]), float(to_anchor_robot[1])))
@@ -972,7 +928,7 @@ class Human:
         robot_xy = np.asarray(ctx.get("robot_xy", current_xy), dtype=np.float32)
         robot_yaw = float(ctx.get("robot_yaw", yaw))
         sector_half_angle = float(
-            ctx.get("listening_sector_half_angle", self.context.listening_sector_half_angle)
+            ctx.get("listening_sector_half_angle", LISTENING_FRONT_SECTOR_HALF_ANGLE)
         )
         self.last_in_listening_front_sector = self.is_within_listening_front_sector(
             point_xy=current_xy,
@@ -1124,7 +1080,7 @@ class Human:
             action = np.array([v_total[0], v_total[1], HUMAN_YAW_RATE_GAIN * yaw_err], dtype=np.float32)
             action = self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
         else:
-            self._assign_target_from_context(current_xy=current_xy)
+            self._assign_target_from_context(ctx, current_xy=current_xy)
             action = self._step_following(data, ctx, pose)
 
         if self.impatient_timer >= self.impatient_duration:
