@@ -453,6 +453,10 @@ class Human:
         action[2] = np.float32(yaw_rate)
         return action
 
+    def assign_target_from_context(self, ctx: dict, mode: Optional[str] = None):
+        """Public wrapper for target assignment from social context."""
+        self._assign_target_from_context(ctx, mode=mode)
+
     def _assign_target_from_context(self, ctx: dict, mode: Optional[str] = None):
         """
         Determine target waypoint based on social context dict.
@@ -523,8 +527,8 @@ class Human:
             return self._step_wandering(data, ctx, pose)
 
         if self.mode == HumanMode.FOLLOWING:
-            self._assign_target_from_context(ctx)
-            return self._step_following(data, ctx, pose)
+            self.assign_target_from_context(ctx)
+            return self.step_following(data, ctx, pose)
 
         if self.mode == HumanMode.LISTENING:
             return self._step_listening(data, ctx, pose)
@@ -559,6 +563,12 @@ class Human:
         yaw = pose[2]
         to_waypoint = self.current_waypoint - current_xy
         return self._move(to_waypoint, yaw, ctx, current_xy=current_xy)
+
+    def step_following(self, data, ctx, pose=None):
+        """Public FOLLOWING controller entry used by the environment orchestrator."""
+        if pose is None:
+            pose = self.get_pose(data)
+        return self._step_following(data, ctx, pose)
     
     def _step_listening(self, data, ctx, pose):
         """LISTENING: low-cost motion toward the nearest front-sector point on the listening ring."""
@@ -685,6 +695,28 @@ class Human:
 
         action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
         return self._apply_wall_constraint_to_action(action, ctx, current_xy=current_xy)
+
+    def step_listening_with_anchor_target_and_live_repulsion(
+        self,
+        data,
+        ctx,
+        pose=None,
+        *,
+        anchor_robot_xy,
+        anchor_robot_yaw: float,
+        live_robot_xy,
+    ):
+        """Public anchored LISTENING controller entry used post explanation."""
+        if pose is None:
+            pose = self.get_pose(data)
+        return self._step_listening_with_anchor_target_and_live_repulsion(
+            data,
+            ctx,
+            pose,
+            anchor_robot_xy=anchor_robot_xy,
+            anchor_robot_yaw=anchor_robot_yaw,
+            live_robot_xy=live_robot_xy,
+        )
 
     def _step_distracted(self, data, ctx, pose):
         """DISTRACTED: make one local deviated move, then stop until recovery/callback."""
@@ -1172,6 +1204,10 @@ class Human:
         y = float(data.qpos[self.qpos_idx + 1])
         yaw = float(data.qpos[self.qpos_idx + 2])
         return x, y, yaw
+
+    def get_pose(self, data):
+        """Public pose accessor used by the environment orchestrator."""
+        return self._get_pose(data)
 
     def _random_waypoint(self):
         """Generate random waypoint inside the configured spawn region."""

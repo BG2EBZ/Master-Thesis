@@ -1,76 +1,71 @@
 # Master Thesis Museum Env
 
-## Info schema update
+## Step info schema
 
-`MuseumEnv.step()` now returns a nested `info` structure with five top-level keys:
+`MuseumEnv.step()` now returns a compact `info` structure with four top-level keys:
 
 - `info["events"]`
-- `info["status"]`
-- `info["metrics"]`
+- `info["state"]`
 - `info["robot"]`
 - `info["humans"]`
 
-`info["robot"]["goal_xy"]` is sourced from `Robot`'s current waypoint (`Robot.get_current_waypoint()`), not from an XML `goal_site`.
+`info["events"]` contains the high-level episode markers:
 
-`info["humans"]` includes impatient debugging fields:
-- `info["humans"]["impatient_timer"]`
-- `info["humans"]["impatient_cooldown_timer"]`
+- `entered_listen`
+- `started_listen_wait`
+- `completed_listen_wait`
+- `final_listen_ready`
+- `callback_triggered`
+- `callback_completed`
+- `callback_success`
+- `happy_triggered`
+- `happy_completed`
 
-`info["metrics"]["humans"]` includes per-human distance metrics:
-- `info["metrics"]["humans"]["nearest_human_distance"]`
-- `info["metrics"]["humans"]["local_crowding_count_1m"]`
-- `info["metrics"]["humans"]["nearest_human_distance_mean_1s"]`
-- `info["metrics"]["humans"]["human_robot_distance"]`
-- `info["metrics"]["humans"]["human_robot_distance_mean_1s"]`
-- `info["metrics"]["humans"]["window_seconds"]`
-- `info["metrics"]["humans"]["window_steps"]`
+`info["state"]` contains the current orchestration state:
 
-`info["metrics"]["humans"]["local_crowding_count_1m"]` is the per-human count of other humans strictly within a `1.0m` radius. This metric exposes the current-step value only; there is no `local_crowding_count_1m_mean_1s`.
+- `step_count`
+- `follow_phase`
+- `listen_phase`
+- `robot_mode`
+- `callback_phase`
+- `robot_emotion`
+- `speaker_active`
+- `terminated_reason`
+
+`info["robot"]` contains pose and control summary:
+
+- `pose_xy`
+- `goal_xy`
+- `dist_to_goal`
+- `yaw`
+- `action`
+
+`info["humans"]` contains the compact crowd snapshot:
+
+- `pose_xy`
+- `goal_xy`
+- `mode`
+- `profile`
+- `reached_goal_indices`
+- `perceived_distracted_indices`
+
+The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback internals are no longer returned by default.
 
 Example:
 
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
-if info["events"]["final_listen_ready"]:
-    print("Final listen completed")
+print(info["state"]["listen_phase"])
+print(info["robot"]["dist_to_goal"])
+print(info["humans"]["mode"])
 
-print(info["robot"]["pose_xy"])
-print(info["humans"]["action"]["vx"])
-print(info["metrics"]["humans"]["local_crowding_count_1m"])
-print(info["metrics"]["humans"]["nearest_human_distance_mean_1s"])
-print(info["metrics"]["humans"]["human_robot_distance_mean_1s"])
-print(info["status"]["listen_wait"]["remaining"])
+if info["events"]["final_listen_ready"]:
+    print("Episode completed")
 ```
 
 ## Run scripts
 
-- Interactive near real-time demo (default): `python3 test_env.py --mode demo`
-- Periodic printing human human distance (nearest): `python3 test_env.py --mode train --rtf-print-every 500 --print-hh-distance-mean-1s`
-- Periodic printing human robot distance: `python3 test_env.py --mode train --rtf-print-every 500 --print-hr-distance-mean-1s`
-- Periodic printing local 1m crowding counts: `python3 test_env.py --mode train --rtf-print-every 500 --print-local-crowding-count-1m`
-- Strict real-time alignment demo: `python3 test_env.py --mode demo --realtime-policy strict`
-- Fast training run (no render, no sleep): `python3 test_env.py --mode train`
-- Video recording with simulation-time playback: `python3 test_env.py --mode record --video-fps 500`
-- Legacy recording entry (thin wrapper): `python3 record_env.py`
-
-When `--print-local-crowding-count-1m` is enabled, the periodic log appends a single-line summary such as `crowd_1m=[h1:4, h2:7, h3:2]`.
-
-### Recommended speed-related flags
-
-- `--render-fps 60`: target visual refresh for demo pacing.
-- `--sleep-scale 1.0`: `>1.0` speeds up perceived playback, `<1.0` slows it down.
-- `--video-fps 500`: for MuJoCo `dt=0.002`, this matches simulation-time playback.
-- `--rtf-print-every 500`: print real-time factor periodically.
-
-### Time semantics
-
-- **Simulation time**: `steps * dt` (from MuJoCo, currently `dt=0.002`).
-- **Wall-clock time**: actual elapsed real time while script runs.
-- **Playback time** (recorded video): controlled by encoded FPS (`--video-fps`).
-
-These three are intentionally decoupled:
-
-- `demo`: tries to keep simulation pace close to real time (stable or strict policy).
-- `train`: runs as fast as possible; simulation time and wall-clock time diverge.
-- `record`: runs without sleep; playback speed is determined by `video_fps`.
+- Demo: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo`
+- Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train`
+- Record video: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder`

@@ -277,6 +277,14 @@ class Robot:
         """Set whether robot speaker visual/text should be active."""
         self.speaker_active = bool(active)
 
+    @staticmethod
+    def _callback_request_value(callback_request, field: str):
+        if callback_request is None:
+            return None
+        if isinstance(callback_request, dict):
+            return callback_request[field]
+        return getattr(callback_request, field)
+
     def step(self, robot_pose, human_xyz, callback_request=None):
         """
         Main robot decision step.
@@ -299,9 +307,9 @@ class Robot:
             and (not self.listen_mode)
         ):
             self.start_callback(
-                target_idx=callback_request["target_idx"],
-                target_xy=callback_request["target_xy"],
-                cue_steps=callback_request["cue_steps"],
+                target_idx=self._callback_request_value(callback_request, "target_idx"),
+                target_xy=self._callback_request_value(callback_request, "target_xy"),
+                cue_steps=self._callback_request_value(callback_request, "cue_steps"),
             )
 
         if self.callback_active:
