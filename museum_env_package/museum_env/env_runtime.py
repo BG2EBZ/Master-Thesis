@@ -59,6 +59,7 @@ def compute_nearest_human_distances_from_pairwise(pairwise_dist) -> np.ndarray:
 
 
 def compute_local_crowding_count_1m_from_pairwise(pairwise_dist) -> np.ndarray:
+    # Get the minimum distance to each human, then count
     pairwise_dist = np.asarray(pairwise_dist, dtype=np.float32)
     if pairwise_dist.shape == (0, 0):
         return np.zeros((0,), dtype=np.int32)
@@ -92,6 +93,7 @@ def compute_social_repulsion(human_xy, social_distance: float, repulsion_gain: f
         diff = human_xy[idx] - human_xy[neighbors]
         dist = pairwise_dist[idx, neighbors]
         directions = diff / dist[:, None]
+        # Distance-based repulsion strength
         strengths = (social_distance - dist) / social_distance
         repulsion_vectors[idx] = repulsion_gain * np.sum(
             directions * strengths[:, None],
@@ -123,6 +125,7 @@ def refresh_observation_snapshot(
     if not should_refresh:
         return cache.observations
 
+    # Compute all derived observations and update the cache if timeout
     pairwise_dist = compute_human_pairwise_distances(human_xy)
     nearest_human_distance = compute_nearest_human_distances_from_pairwise(pairwise_dist)
     local_crowding_count_1m = compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
@@ -172,6 +175,7 @@ def build_world_frame(
     if tick_age_before_refresh:
         tick_observation_age(cache)
 
+    # Refresh observations if needed
     observations = refresh_observation_snapshot(
         cache=cache,
         hh_distance_metric=hh_distance_metric,
