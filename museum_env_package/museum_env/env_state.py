@@ -131,21 +131,11 @@ class PostExplanationState:
 
 
 @dataclass
-class CallbackRequest:
-    target_idx: int
-    target_xy: np.ndarray
-    cue_steps: int
-    success_mode: str = HumanMode.FOLLOWING
-    interrupts_listening: bool = False
-
-
-@dataclass
 class CallbackState:
     triggered_for_distracted: list[bool] = field(default_factory=list)
     active_target_idx: Optional[int] = None
     last_response: Optional[str] = None
     last_response_target_idx: Optional[int] = None
-    pending_request: Optional[CallbackRequest] = None
     success_mode: str = HumanMode.FOLLOWING
 
     def reset(self, n_humans: int) -> None:
@@ -153,7 +143,6 @@ class CallbackState:
         self.active_target_idx = None
         self.last_response = None
         self.last_response_target_idx = None
-        self.pending_request = None
         self.success_mode = HumanMode.FOLLOWING
 
 

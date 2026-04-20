@@ -277,15 +277,7 @@ class Robot:
         """Set whether robot speaker visual/text should be active."""
         self.speaker_active = bool(active)
 
-    @staticmethod
-    def _callback_request_value(callback_request, field: str):
-        if callback_request is None:
-            return None
-        if isinstance(callback_request, dict):
-            return callback_request[field]
-        return getattr(callback_request, field)
-
-    def step(self, robot_pose, human_xyz, callback_request=None):
+    def step(self, robot_pose, human_xyz):
         """
         Main robot decision step.
         Returns a dict so env can stay clean.
@@ -300,18 +292,6 @@ class Robot:
               "enter_listen": bool
             }
         """
-        # Callback has priority over regular waypoint tracking.
-        if (
-            (not self.callback_active)
-            and callback_request is not None
-            and (not self.listen_mode)
-        ):
-            self.start_callback(
-                target_idx=self._callback_request_value(callback_request, "target_idx"),
-                target_xy=self._callback_request_value(callback_request, "target_xy"),
-                cue_steps=self._callback_request_value(callback_request, "cue_steps"),
-            )
-
         if self.callback_active:
             dist, desired_yaw, actual_yaw = self._compute_waypoint_metrics(robot_pose)
             callback_action = self._callback_action(robot_pose)

@@ -29,7 +29,6 @@ from .env_state import (
     LISTEN_PHASE_WAIT,
     POST_EXPLANATION_ROLE_WAIT,
     POST_EXPLANATION_ROLE_YIELD,
-    CallbackRequest,
     CallbackState,
     ListeningState,
     PostExplanationState,
@@ -104,10 +103,6 @@ CALLBACK_REJOIN_PROB_ND_DEFAULT = 0.40
 CALLBACK_IGNORE_PROB_ND_DEFAULT = 0.60
 ROBOT_HAPPY_HOLD_SECONDS = 3.0
 
-HUMAN_PHASE_GENERAL = "general"
-HUMAN_PHASE_LISTENING = "listening"
-HUMAN_PHASE_POST_EXPLANATION = "post_explanation"
-
 
 class MuseumEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
@@ -145,7 +140,6 @@ class MuseumEnv(gym.Env):
         self.render_mode = render_mode
         self.viewer = None
         self.renderer = None
-        self._viewer_key_callback = None
         self.render_width = 1920
         self.render_height = 1080
 
@@ -292,13 +286,6 @@ class MuseumEnv(gym.Env):
             human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0
 
-    def _reset_human_listening_session_states(self) -> None:
-        for human in self.humans:
-            human.reset_listening_session_state()
-
-    def _reset_fuzzy_debug(self) -> None:
-        self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
-
     def _sample_active_human_spawn_states(self, robot_xy) -> list[np.ndarray]:
         sampled_states: list[np.ndarray] = []
         sampled_positions: list[np.ndarray] = []
@@ -342,34 +329,26 @@ class MuseumEnv(gym.Env):
             self.data.qpos[human.qpos_idx : human.qpos_idx + 3] = park_pose
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
 
-    def _set_follow_phase(self, phase) -> None:
-        self.follow_phase = phase
-
-    def _clear_follow_phase(self) -> None:
-        self.follow_phase = None
-
-    def _is_follow_active(self) -> bool:
-        return self.follow_phase is not None
-
-    def _is_following_fuzzy_active(self) -> bool:
-        return self.follow_phase == FOLLOW_PHASE_TRANSIT
-
-    def _is_callback_cue_active(self) -> bool:
-        return (
-            self.robot.callback_active
-            and self.robot.callback_phase == RobotCallbackPhase.CUE
-            and self.robot.callback_cue_elapsed_steps < self.robot.callback_cue_total_steps
-        )
-
     def _sync_robot_speaker_state(self) -> None:
         self.robot.set_speaker_active(
-            bool(self.listening_state.phase == LISTEN_PHASE_WAIT or self._is_callback_cue_active())
+            bool(
+                self.listening_state.phase == LISTEN_PHASE_WAIT
+                or (
+                    self.robot.callback_active
+                    and self.robot.callback_phase == RobotCallbackPhase.CUE
+                    and self.robot.callback_cue_elapsed_steps < self.robot.callback_cue_total_steps
+                )
+            )
         )
 
     def _sync_robot_visual_state(self, force: bool = False) -> None:
         visual_state = resolve_robot_visual_state(
             robot=self.robot,
-            callback_visual_active=self._is_callback_cue_active(),
+            callback_visual_active=(
+                self.robot.callback_active
+                and self.robot.callback_phase == RobotCallbackPhase.CUE
+                and self.robot.callback_cue_elapsed_steps < self.robot.callback_cue_total_steps
+            ),
         )
         if (not force) and visual_state.signature == self._last_robot_visual_signature:
             return
@@ -381,27 +360,6 @@ class MuseumEnv(gym.Env):
             visual_state=visual_state,
         )
         self._last_robot_visual_signature = visual_state.signature
-
-    def _world_frame(self, *, force_observations: bool = False, tick_age_before_refresh: bool = False):
-        return build_world_frame(
-            data=self.data,
-            robot_body_id=self.robot_body_id,
-            humans=self.humans,
-            human_body_ids=self.human_body_ids,
-            cache=self.runtime_cache,
-            hh_distance_metric=self.hh_distance_metric,
-            hr_distance_metric=self.hr_distance_metric,
-            observation_update_period_steps=self.observation_update_period_steps,
-            social_distance=self.social_distance,
-            repulsion_gain=self.repulsion_gain,
-            force_observations=force_observations,
-            tick_age_before_refresh=tick_age_before_refresh,
-        )
-
-    def _refresh_callback_rearm_flags(self) -> None:
-        for idx, human in enumerate(self.humans):
-            if idx < len(self.callback_state.triggered_for_distracted) and human.mode != HumanMode.DISTRACTED:
-                self.callback_state.triggered_for_distracted[idx] = False
 
     def _is_robot_in_move_stage(self, robot_pose) -> bool:
         if self.robot.listen_mode or self.listening_state.phase == LISTEN_PHASE_WAIT or self.robot.callback_active:
@@ -455,70 +413,6 @@ class MuseumEnv(gym.Env):
             "emotion_modes": emotion_modes,
         }
 
-    def _make_callback_request(
-        self,
-        *,
-        target_idx: int,
-        target_xy,
-        success_mode: str,
-        interrupts_listening: bool,
-    ) -> CallbackRequest:
-        return CallbackRequest(
-            target_idx=int(target_idx),
-            target_xy=np.array(target_xy, dtype=np.float32),
-            cue_steps=int(self._callback_cue_steps),
-            success_mode=str(success_mode),
-            interrupts_listening=bool(interrupts_listening),
-        )
-
-    def _candidate_callback_request(self, world_frame, analysis: Optional[dict] = None):
-        analysis = analysis if analysis is not None else self._analyze_humans(world_frame)
-        target_idx = analysis["callback_target_idx"]
-        if target_idx is None or not (0 <= target_idx < len(self.humans)):
-            return analysis, None
-
-        if self.listening_state.controller_active and not self.robot.callback_active:
-            return analysis, self._make_callback_request(
-                target_idx=target_idx,
-                target_xy=world_frame.human_xy[target_idx],
-                success_mode=HumanMode.LISTENING,
-                interrupts_listening=True,
-            )
-
-        if self._is_robot_in_move_stage(world_frame.robot_pose):
-            return analysis, self._make_callback_request(
-                target_idx=target_idx,
-                target_xy=world_frame.human_xy[target_idx],
-                success_mode=HumanMode.FOLLOWING,
-                interrupts_listening=False,
-            )
-
-        return analysis, None
-
-    def _request_callback(self, target_idx: int, target_xy, *, success_mode: str) -> None:
-        if self.callback_state.pending_request is not None:
-            return
-        if self.robot.callback_active or not self.listening_state.controller_active:
-            return
-        self.callback_state.pending_request = self._make_callback_request(
-            target_idx=target_idx,
-            target_xy=target_xy,
-            success_mode=success_mode,
-            interrupts_listening=True,
-        )
-
-    def _pause_listening_for_callback(self) -> None:
-        if self.listening_state.interrupted:
-            return
-        self.listening_state.pause()
-        self.robot.listen_mode = False
-
-    def _resume_listening_after_callback(self) -> None:
-        if not self.listening_state.interrupted:
-            return
-        self.listening_state.resume()
-        self.robot.listen_mode = self.listening_state.active
-
     def _sample_callback_response(self, profile: str):
         u = self.np_random.random()
         profile_probs = self.callback_response_profile_probs.get(
@@ -559,12 +453,6 @@ class MuseumEnv(gym.Env):
             f"(attempt {int(self.robot.callback_attempt_index)})."
         )
 
-    def _finish_callback_cycle(self) -> None:
-        self.robot._finish_callback()
-        self.callback_state.active_target_idx = None
-        self.callback_state.success_mode = HumanMode.FOLLOWING
-        self._resume_listening_after_callback()
-
     def _resolve_completed_callback(self, events: StepEvents) -> None:
         if not self.robot.callback_cue_completed_this_step:
             return
@@ -586,7 +474,12 @@ class MuseumEnv(gym.Env):
                     f">>> Robot CALLBACK succeeded for person{target_idx + 1} "
                     f"on attempt {int(self.robot.callback_attempt_index)}."
                 )
-            self._finish_callback_cycle()
+            self.robot._finish_callback()
+            self.callback_state.active_target_idx = None
+            self.callback_state.success_mode = HumanMode.FOLLOWING
+            if self.listening_state.interrupted:
+                self.listening_state.resume()
+                self.robot.listen_mode = self.listening_state.active
             return
 
         if int(self.robot.callback_attempt_index) < 2 and self.robot.start_next_callback_attempt():
@@ -599,10 +492,15 @@ class MuseumEnv(gym.Env):
             self._log_event(
                 f">>> Robot CALLBACK ended after second attempt for person{target_idx + 1}."
             )
-        self._finish_callback_cycle()
+        self.robot._finish_callback()
+        self.callback_state.active_target_idx = None
+        self.callback_state.success_mode = HumanMode.FOLLOWING
+        if self.listening_state.interrupted:
+            self.listening_state.resume()
+            self.robot.listen_mode = self.listening_state.active
 
     def _should_evaluate_fuzzy(self, idx: int, context: str) -> bool:
-        if context == "following" and not self._is_following_fuzzy_active():
+        if context == "following" and self.follow_phase != FOLLOW_PHASE_TRANSIT:
             return False
         if context == "listening" and not self.listening_state.fuzzy_active:
             return False
@@ -660,7 +558,9 @@ class MuseumEnv(gym.Env):
             human.set_mode(HumanMode.DISTRACTED, reason=distracted_reason)
             if context == "listening":
                 self._log_event(f">>> {human.name} became DISTRACTED while listening!")
-                self._request_callback(idx, human.get_pose(self.data)[:2], success_mode=HumanMode.LISTENING)
+                if not self.listening_state.interrupted:
+                    self.listening_state.pause()
+                    self.robot.listen_mode = False
             else:
                 self._log_event(f">>> {human.name} became DISTRACTED!")
             return
@@ -796,13 +696,13 @@ class MuseumEnv(gym.Env):
             and moved_dist >= float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
         ):
             self.post_explanation_state.reset()
-            self._set_follow_phase(FOLLOW_PHASE_TRANSIT)
+            self.follow_phase = FOLLOW_PHASE_TRANSIT
 
     def _maybe_activate_follow_phase_from_robot_progress(self, robot_xy) -> None:
         if (
             self.post_explanation_state.active
             or self.robot.listen_mode
-            or self._is_follow_active()
+            or self.follow_phase is not None
             or self.robot.callback_active
             or self.listening_state.interrupted
         ):
@@ -819,7 +719,7 @@ class MuseumEnv(gym.Env):
             return
 
         next_phase = FOLLOW_PHASE_TRANSIT if self.robot.listen_done else FOLLOW_PHASE_PRE_LISTEN_ENGAGE
-        self._set_follow_phase(next_phase)
+        self.follow_phase = next_phase
 
     def _update_human_listening_session_progress(self) -> None:
         if not self.listening_state.fuzzy_active:
@@ -830,7 +730,11 @@ class MuseumEnv(gym.Env):
     def _update_robot_emotion(self, events: StepEvents, analysis: dict) -> None:
         self.perceived_distracted_indices = list(analysis["perceived_distracted_indices"])
         emotion_modes = list(analysis["emotion_modes"])
-        if self._is_callback_cue_active():
+        if (
+            self.robot.callback_active
+            and self.robot.callback_phase == RobotCallbackPhase.CUE
+            and self.robot.callback_cue_elapsed_steps < self.robot.callback_cue_total_steps
+        ):
             emotion_modes.append(HumanMode.DISTRACTED)
 
         happy_before = int(self.robot.happy_hold_steps_remaining)
@@ -842,20 +746,13 @@ class MuseumEnv(gym.Env):
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state()
 
-    def _resolve_human_phase(self) -> str:
-        if self.post_explanation_state.active:
-            return HUMAN_PHASE_POST_EXPLANATION
-        if self.listening_state.controller_active:
-            return HUMAN_PHASE_LISTENING
-        return HUMAN_PHASE_GENERAL
-
     def _apply_general_phase_strategy(self, human, idx: int, world_frame, robot_action) -> np.ndarray:
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
-            human.set_mode(HumanMode.FOLLOWING if self._is_follow_active() else HumanMode.WANDERING)
+            human.set_mode(HumanMode.FOLLOWING if self.follow_phase is not None else HumanMode.WANDERING)
 
         human.update_following_duration(
-            eligible_following=self._is_follow_active() and human.mode == HumanMode.FOLLOWING
+            eligible_following=self.follow_phase is not None and human.mode == HumanMode.FOLLOWING
         )
         if human.mode == HumanMode.FOLLOWING and self._should_evaluate_fuzzy(idx, context="following"):
             fuzzy_debug = self._compute_human_fuzzy_debug(
@@ -983,17 +880,16 @@ class MuseumEnv(gym.Env):
         )
 
     def _apply_human_controls(self, world_frame, robot_action) -> np.ndarray:
-        human_phase = self._resolve_human_phase()
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         for idx, human in enumerate(self.humans):
-            if human_phase == HUMAN_PHASE_POST_EXPLANATION:
+            if self.post_explanation_state.active:
                 human_action = self._apply_post_explanation_phase_strategy(
                     human,
                     idx,
                     world_frame,
                     robot_action,
                 )
-            elif human_phase == HUMAN_PHASE_LISTENING:
+            elif self.listening_state.controller_active:
                 human_action = self._apply_listening_phase_strategy(human, idx, world_frame)
             else:
                 human_action = self._apply_general_phase_strategy(human, idx, world_frame, robot_action)
@@ -1028,11 +924,12 @@ class MuseumEnv(gym.Env):
             events.final_listen_ready = True
             self._log_event(">>> Listening wait complete at final display.")
             self.listening_state.enter_idle()
-            self._reset_human_listening_session_states()
+            for human in self.humans:
+                human.reset_listening_session_state()
             return
 
         self.robot.on_listening_complete()
-        self._clear_follow_phase()
+        self.follow_phase = None
         self.robot_start_xy = np.array(world_frame.robot_xy, dtype=np.float32)
         self._start_post_explanation_hold(
             robot_xy=world_frame.robot_xy,
@@ -1040,16 +937,9 @@ class MuseumEnv(gym.Env):
             human_xy=world_frame.human_xy,
         )
         self.listening_state.enter_idle()
-        self._reset_human_listening_session_states()
+        for human in self.humans:
+            human.reset_listening_session_state()
         self._log_event(">>> Listening wait complete. Resume MOVE to Room B.")
-
-    def _obs_from_frame(self, world_frame) -> np.ndarray:
-        gx, gy = self.robot.get_current_waypoint()
-        x, y = world_frame.robot_xy
-        return np.array([x, y, gx - x, gy - y], dtype=np.float32)
-
-    def set_viewer_key_callback(self, callback):
-        self._viewer_key_callback = callback
 
     def reset(self, seed=None, options=None):
         del options
@@ -1060,12 +950,12 @@ class MuseumEnv(gym.Env):
 
         self.step_count = 0
         self.robot.reset()
-        self._clear_follow_phase()
+        self.follow_phase = None
         self.listening_state.reset()
         self.post_explanation_state.reset()
         self.callback_state.reset(len(self.humans))
         self.runtime_cache.reset()
-        self._reset_fuzzy_debug()
+        self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
         self.perceived_distracted_indices = []
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
@@ -1082,65 +972,90 @@ class MuseumEnv(gym.Env):
             [float(self.data.xpos[self.robot_body_id, 0]), float(self.data.xpos[self.robot_body_id, 1])],
             dtype=np.float32,
         )
-        self._reset_human_listening_session_states()
+        for human in self.humans:
+            human.reset_listening_session_state()
 
-        world_frame = self._world_frame(force_observations=True)
+        world_frame = build_world_frame(
+            data=self.data,
+            robot_body_id=self.robot_body_id,
+            humans=self.humans,
+            human_body_ids=self.human_body_ids,
+            cache=self.runtime_cache,
+            hh_distance_metric=self.hh_distance_metric,
+            hr_distance_metric=self.hr_distance_metric,
+            observation_update_period_steps=self.observation_update_period_steps,
+            social_distance=self.social_distance,
+            repulsion_gain=self.repulsion_gain,
+            force_observations=True,
+        )
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
-        return self._obs_from_frame(world_frame), {}
+        gx, gy = self.robot.get_current_waypoint()
+        x, y = world_frame.robot_xy
+        return np.array([x, y, gx - x, gy - y], dtype=np.float32), {}
 
     def step(self, action=None):
         del action
         self.step_count += 1
-        self.callback_state.pending_request = None
         events = StepEvents()
 
-        pre_frame = self._world_frame()
-        self._refresh_callback_rearm_flags()
+        pre_frame = build_world_frame(
+            data=self.data,
+            robot_body_id=self.robot_body_id,
+            humans=self.humans,
+            human_body_ids=self.human_body_ids,
+            cache=self.runtime_cache,
+            hh_distance_metric=self.hh_distance_metric,
+            hr_distance_metric=self.hr_distance_metric,
+            observation_update_period_steps=self.observation_update_period_steps,
+            social_distance=self.social_distance,
+            repulsion_gain=self.repulsion_gain,
+        )
+        for idx, human in enumerate(self.humans):
+            if human.mode != HumanMode.DISTRACTED:
+                self.callback_state.triggered_for_distracted[idx] = False
 
         waiting_listen_hold = self.listening_state.phase == LISTEN_PHASE_WAIT and not self.robot.callback_active
         robot_action = np.zeros(3, dtype=np.float32)
         if waiting_listen_hold:
             self.robot.mode = RobotMode.STOP
         else:
-            _, callback_request = self._candidate_callback_request(pre_frame)
-            if (
-                callback_request is not None
-                and callback_request.interrupts_listening
-                and not self.listening_state.interrupted
-            ):
-                self._pause_listening_for_callback()
+            analysis = self._analyze_humans(pre_frame)
+            target_idx = analysis["callback_target_idx"]
+            if target_idx is not None:
+                if self.listening_state.controller_active and not self.listening_state.interrupted:
+                    self.listening_state.pause()
+                    self.robot.listen_mode = False
+                self.robot.start_callback(
+                    target_idx=target_idx,
+                    target_xy=pre_frame.human_xy[target_idx],
+                    cue_steps=self._callback_cue_steps,
+                )
+                events.callback_triggered = True
+                self.callback_state.success_mode = (
+                    HumanMode.LISTENING if self.listening_state.controller_active else HumanMode.FOLLOWING
+                )
+                self.callback_state.active_target_idx = target_idx
+                self.callback_state.triggered_for_distracted[target_idx] = True
+                self._log_event(f">>> Robot CALLBACK triggered for person{target_idx + 1}.")
 
-            callback_active_before = self.robot.callback_active
             robot_out = self.robot.step(
                 robot_pose=pre_frame.robot_pose,
                 human_xyz=pre_frame.human_xyz,
-                callback_request=callback_request,
             )
             robot_action = np.array(robot_out["action"], dtype=np.float32)
-
-            if (
-                callback_request is not None
-                and not callback_active_before
-                and robot_out["mode"] == RobotMode.CALLBACK
-            ):
-                events.callback_triggered = True
-                self.callback_state.success_mode = str(callback_request.success_mode)
-                self.callback_state.active_target_idx = int(callback_request.target_idx)
-                if 0 <= callback_request.target_idx < len(self.callback_state.triggered_for_distracted):
-                    self.callback_state.triggered_for_distracted[callback_request.target_idx] = True
-                self._log_event(f">>> Robot CALLBACK triggered for person{callback_request.target_idx + 1}.")
 
             self._maybe_sample_active_callback_response(events)
             self._resolve_completed_callback(events)
 
             if robot_out["enter_listen"]:
                 events.entered_listen = True
-                self._clear_follow_phase()
+                self.follow_phase = None
                 self.listening_state.enter_intro(
                     is_final=self.robot.is_final_reached(float(robot_out["dist"]))
                 )
-                self._reset_human_listening_session_states()
+                for human in self.humans:
+                    human.reset_listening_session_state()
                 self.post_explanation_state.reset()
                 rx, ry, ryaw = pre_frame.robot_pose
                 self._log_event(
@@ -1158,11 +1073,21 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
         self._apply_human_controls(pre_frame, robot_action)
-        if self.callback_state.pending_request is not None and not self.listening_state.interrupted:
-            self._pause_listening_for_callback()
 
         mujoco.mj_step(self.model, self.data)
-        post_frame = self._world_frame(tick_age_before_refresh=True)
+        post_frame = build_world_frame(
+            data=self.data,
+            robot_body_id=self.robot_body_id,
+            humans=self.humans,
+            human_body_ids=self.human_body_ids,
+            cache=self.runtime_cache,
+            hh_distance_metric=self.hh_distance_metric,
+            hr_distance_metric=self.hr_distance_metric,
+            observation_update_period_steps=self.observation_update_period_steps,
+            social_distance=self.social_distance,
+            repulsion_gain=self.repulsion_gain,
+            tick_age_before_refresh=True,
+        )
 
         self._update_human_listening_session_progress()
         self._progress_listening_phase(events, post_frame)
@@ -1210,16 +1135,14 @@ class MuseumEnv(gym.Env):
             perceived_distracted_indices=self.perceived_distracted_indices,
         )
         reward = -float(info["robot"]["dist_to_goal"])
-        return self._obs_from_frame(post_frame), reward, terminated, truncated, info
+        gx, gy = self.robot.get_current_waypoint()
+        x, y = post_frame.robot_xy
+        return np.array([x, y, gx - x, gy - y], dtype=np.float32), reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "human":
             if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(
-                    self.model,
-                    self.data,
-                    key_callback=self._viewer_key_callback,
-                )
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             apply_label_scene_option_to_viewer(viewer=self.viewer, label_scene_option=self._label_scene_option)
             self.viewer.sync()
             return None
