@@ -538,7 +538,15 @@ class MuseumEnv(gym.Env):
         debug_state.dominant_state = str(fuzzy_debug["result"]["dominant_state"])
         debug_state.refresh_counter = int(self.runtime_cache.refresh_counter)
 
-    def _apply_fuzzy_transition(self, human, idx: int, context: str, fuzzy_result: dict, world_frame) -> None:
+    def _apply_fuzzy_transition(
+        self,
+        human,
+        idx: int,
+        context: str,
+        fuzzy_result: dict,
+        fuzzy_inputs: dict,
+        world_frame,
+    ) -> None:
         dominant_state = fuzzy_result["dominant_state"]
         if dominant_state == "engaged":
             return
@@ -551,29 +559,50 @@ class MuseumEnv(gym.Env):
             recovery_mode = HumanMode.FOLLOWING
             distracted_source = DISTRACTED_SOURCE_FOLLOWING
             distracted_reason = "fuzzy_following_distracted"
+        fuzzy_inputs_log = (
+            f"\n    >>> fuzzy_inputs: "
+            f"following_time={float(fuzzy_inputs['following_time']):.1f}, "
+            f"hhd={float(fuzzy_inputs['hhd']):.2f}, "
+            f"hrd={float(fuzzy_inputs['hrd']):.2f}, "
+            f"density={float(fuzzy_inputs['density']):.1f}"
+        )
 
         if dominant_state == "distracted":
             human.distracted_source = distracted_source
             human.distracted_recovery_mode = recovery_mode
             human.set_mode(HumanMode.DISTRACTED, reason=distracted_reason)
             if context == "listening":
-                self._log_event(f">>> {human.name} became DISTRACTED while listening!")
+                self._log_event(
+                    f">>> {human.name} became DISTRACTED while listening!"
+                    f"{fuzzy_inputs_log}"
+                )
                 if not self.listening_state.interrupted:
                     self.listening_state.pause()
                     self.robot.listen_mode = False
             else:
-                self._log_event(f">>> {human.name} became DISTRACTED!")
+                self._log_event(
+                    f">>> {human.name} became DISTRACTED!"
+                    f"{fuzzy_inputs_log}"
+                )
             return
 
         if dominant_state == "impatient":
             if recovery_mode == HumanMode.LISTENING:
                 human.start_impatient(recovery_mode=HumanMode.LISTENING)
+                self._log_event(
+                    f">>> {human.name} became IMPATIENT while listening!"
+                    f"{fuzzy_inputs_log}"
+                )
             else:
                 human.start_impatient(
                     robot_pose=world_frame.robot_pose,
                     index=idx,
                     n_humans=self.n_humans,
                     recovery_mode=HumanMode.FOLLOWING,
+                )
+                self._log_event(
+                    f">>> {human.name} became IMPATIENT!"
+                    f"{fuzzy_inputs_log}"
                 )
             return
 
@@ -584,6 +613,16 @@ class MuseumEnv(gym.Env):
                 current_xy=current_xy,
                 recovery_mode=recovery_mode,
             )
+            if context == "listening":
+                self._log_event(
+                    f">>> {human.name} became OVERWHELMED while listening!"
+                    f"{fuzzy_inputs_log}"
+                )
+            else:
+                self._log_event(
+                    f">>> {human.name} became OVERWHELMED!"
+                    f"{fuzzy_inputs_log}"
+                )
 
     @staticmethod
     def _scalar_cross_2d(a_xy, b_xy) -> float:
@@ -767,6 +806,7 @@ class MuseumEnv(gym.Env):
                 idx=idx,
                 context="following",
                 fuzzy_result=fuzzy_debug["result"],
+                fuzzy_inputs=fuzzy_debug["inputs"],
                 world_frame=world_frame,
             )
 
@@ -806,6 +846,7 @@ class MuseumEnv(gym.Env):
                 idx=idx,
                 context="listening",
                 fuzzy_result=fuzzy_debug["result"],
+                fuzzy_inputs=fuzzy_debug["inputs"],
                 world_frame=world_frame,
             )
 

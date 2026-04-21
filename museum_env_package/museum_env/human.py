@@ -329,7 +329,6 @@ class Human:
         self.overwhelmed_leave_dir = leave_dir.astype(np.float32)
         self.overwhelmed_robot_ref_xy = robot_xy
         self.overwhelmed_backoff_start_xy = current_xy
-        self._log_event(f">>> {self.name} became OVERWHELMED!")
 
     def start_impatient(
         self,
@@ -362,7 +361,6 @@ class Human:
             self.listening_impatient_yaw_deviation = 0.0
             self.listening_impatient_turn_sign = 1.0
         self.set_mode(HumanMode.IMPATIENT, reason="trigger_impatient")
-        self._log_event(f">>> {self.name} became IMPATIENT!")
         return True
 
     def _stop_impatient(self):
