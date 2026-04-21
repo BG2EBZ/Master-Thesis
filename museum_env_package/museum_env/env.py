@@ -40,7 +40,6 @@ from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     HUMAN_WALL_FOOTPRINT_RADIUS,
-    LISTENING_DISTRACTED_MOVE_SECONDS,
     Human,
     HumanMode,
     HumanProfile,
@@ -218,7 +217,7 @@ class MuseumEnv(gym.Env):
         ]
         for human in self.all_humans:
             human.set_mode(HumanMode.WANDERING)
-            human.set_event_logging(self.enable_event_logs)
+            human.enable_event_logs = self.enable_event_logs
 
         self.humans = []
         self.n_humans = 0
@@ -276,12 +275,6 @@ class MuseumEnv(gym.Env):
                 1,
                 int(round(human.max_distracted_duration_seconds / self.dt)),
             )
-            human.listening_distracted_move_steps = max(
-                1,
-                int(round(LISTENING_DISTRACTED_MOVE_SECONDS / self.dt)),
-            )
-            human.can_be_overwhelmed = True
-            human.can_be_impatient = True
             human.impatient_duration = 2000
             human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0
@@ -445,7 +438,7 @@ class MuseumEnv(gym.Env):
             return
 
         callback_response = self._sample_callback_response(profile=target_human.profile)
-        target_human.apply_callback_response(response=callback_response, stay_steps=0)
+        target_human.apply_callback_response(response=callback_response)
         self.callback_state.last_response = str(callback_response)
         self.callback_state.last_response_target_idx = int(target_idx)
         self._log_event(
@@ -554,11 +547,9 @@ class MuseumEnv(gym.Env):
         if context == "listening":
             recovery_mode = HumanMode.LISTENING
             distracted_source = DISTRACTED_SOURCE_LISTENING
-            distracted_reason = "fuzzy_listening_distracted"
         else:
             recovery_mode = HumanMode.FOLLOWING
             distracted_source = DISTRACTED_SOURCE_FOLLOWING
-            distracted_reason = "fuzzy_following_distracted"
         fuzzy_inputs_log = (
             f"\n    >>> fuzzy_inputs: "
             f"following_time={float(fuzzy_inputs['following_time']):.1f}, "
@@ -570,7 +561,7 @@ class MuseumEnv(gym.Env):
         if dominant_state == "distracted":
             human.distracted_source = distracted_source
             human.distracted_recovery_mode = recovery_mode
-            human.set_mode(HumanMode.DISTRACTED, reason=distracted_reason)
+            human.set_mode(HumanMode.DISTRACTED)
             if context == "listening":
                 self._log_event(
                     f">>> {human.name} became DISTRACTED while listening!"
@@ -594,12 +585,7 @@ class MuseumEnv(gym.Env):
                     f"{fuzzy_inputs_log}"
                 )
             else:
-                human.start_impatient(
-                    robot_pose=world_frame.robot_pose,
-                    index=idx,
-                    n_humans=self.n_humans,
-                    recovery_mode=HumanMode.FOLLOWING,
-                )
+                human.start_impatient(recovery_mode=HumanMode.FOLLOWING)
                 self._log_event(
                     f">>> {human.name} became IMPATIENT!"
                     f"{fuzzy_inputs_log}"
@@ -785,7 +771,7 @@ class MuseumEnv(gym.Env):
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state()
 
-    def _apply_general_phase_strategy(self, human, idx: int, world_frame, robot_action) -> np.ndarray:
+    def _apply_general_phase_strategy(self, human, idx: int, world_frame) -> np.ndarray:
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             human.set_mode(HumanMode.FOLLOWING if self.follow_phase is not None else HumanMode.WANDERING)
@@ -815,16 +801,10 @@ class MuseumEnv(gym.Env):
             "n_humans": len(self.humans),
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
-            "robot_yaw": world_frame.robot_pose[2],
-            "robot_speed": float(np.hypot(robot_action[0], robot_action[1])),
             "repulsion": repulsion_vec,
             "follow_radius": FOLLOW_RADIUS_DEFAULT,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
-            "listen_radius": self.listen_fan_radius,
-            "stand_threshold": self.listen_stand_threshold,
-            "listening_sector_half_angle": self.listen_front_sector_half_angle,
-            "dt": self.dt,
         }
         return human.step(self.model, self.data, ctx)
 
@@ -851,18 +831,20 @@ class MuseumEnv(gym.Env):
             )
 
         ctx = {
+            "index": idx,
+            "n_humans": len(self.humans),
+            "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],
-            "robot_speed": 0.0,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
+            "fan_half_angle": self.follow_fan_half_angle,
+            "impatient_front_offset": human.impatient_front_offset,
             "listen_radius": self.listen_fan_radius,
-            "stand_threshold": self.listen_stand_threshold,
             "listening_sector_half_angle": self.listen_front_sector_half_angle,
-            "dt": self.dt,
         }
         return human.step(self.model, self.data, ctx)
 
-    def _apply_post_explanation_phase_strategy(self, human, idx: int, world_frame, robot_action) -> np.ndarray:
+    def _apply_post_explanation_phase_strategy(self, human, idx: int, world_frame) -> np.ndarray:
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         role = (
             self.post_explanation_state.roles[idx]
@@ -882,11 +864,13 @@ class MuseumEnv(gym.Env):
         anchor_robot_yaw = float(self.post_explanation_state.anchor_robot_yaw)
 
         move_ctx = {
+            "index": idx,
+            "n_humans": len(self.humans),
+            "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
-            "robot_yaw": world_frame.robot_pose[2],
-            "robot_speed": float(np.hypot(robot_action[0], robot_action[1])),
             "repulsion": repulsion_vec,
-            "dt": self.dt,
+            "fan_half_angle": self.follow_fan_half_angle,
+            "impatient_front_offset": human.impatient_front_offset,
         }
         if human.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             return human.step(self.model, self.data, move_ctx)
@@ -894,25 +878,21 @@ class MuseumEnv(gym.Env):
         if role == POST_EXPLANATION_ROLE_YIELD:
             human.set_mode(HumanMode.FOLLOWING)
             human.current_waypoint = target_xy.copy()
-            return human.step_following(self.data, move_ctx, human.get_pose(self.data))
+            return human.step_following(move_ctx, human.get_pose(self.data))
 
         human.set_mode(HumanMode.LISTENING)
         listen_ctx = {
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],
-            "robot_speed": 0.0,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
             "listen_radius": (
                 self.post_explanation_state.listen_radii[idx]
                 if idx < len(self.post_explanation_state.listen_radii)
                 else self.listen_fan_radius
             ),
-            "stand_threshold": self.listen_stand_threshold,
             "listening_sector_half_angle": self.listen_front_sector_half_angle,
-            "dt": self.dt,
         }
         return human.step_listening_with_anchor_target_and_live_repulsion(
-            self.data,
             listen_ctx,
             human.get_pose(self.data),
             anchor_robot_xy=anchor_robot_xy,
@@ -920,7 +900,7 @@ class MuseumEnv(gym.Env):
             live_robot_xy=world_frame.robot_xy,
         )
 
-    def _apply_human_controls(self, world_frame, robot_action) -> np.ndarray:
+    def _apply_human_controls(self, world_frame) -> np.ndarray:
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
         for idx, human in enumerate(self.humans):
             if self.post_explanation_state.active:
@@ -928,12 +908,11 @@ class MuseumEnv(gym.Env):
                     human,
                     idx,
                     world_frame,
-                    robot_action,
                 )
             elif self.listening_state.controller_active:
                 human_action = self._apply_listening_phase_strategy(human, idx, world_frame)
             else:
-                human_action = self._apply_general_phase_strategy(human, idx, world_frame, robot_action)
+                human_action = self._apply_general_phase_strategy(human, idx, world_frame)
 
             human_actions[idx] = human_action
             ctrl_idx = 3 + idx * 3
@@ -1113,7 +1092,7 @@ class MuseumEnv(gym.Env):
 
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
-        self._apply_human_controls(pre_frame, robot_action)
+        self._apply_human_controls(pre_frame)
 
         mujoco.mj_step(self.model, self.data)
         post_frame = build_world_frame(

@@ -136,7 +136,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.enter_wait(False)
             env.listening_state.pause()
             env.robot.listen_mode = False
-            human.set_mode(HumanMode.DISTRACTED, reason="test_force_distracted")
+            human.set_mode(HumanMode.DISTRACTED)
             human.distracted_source = DISTRACTED_SOURCE_LISTENING
             human.distracted_recovery_mode = HumanMode.LISTENING
 
@@ -153,7 +153,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=15)
             human = env.humans[0]
-            human.set_mode(HumanMode.LISTENING, reason="test_listening_success")
+            human.set_mode(HumanMode.LISTENING)
             env.listening_state.enter_wait(False)
             env.listening_state.counter = 7
             env.listening_state.pause()
@@ -176,7 +176,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=16)
             human = env.humans[0]
-            human.set_mode(HumanMode.DISTRACTED, reason="test_force_distracted")
+            human.set_mode(HumanMode.DISTRACTED)
             human.distracted_recovery_mode = HumanMode.FOLLOWING
             env.callback_state.success_mode = HumanMode.FOLLOWING
             self._arm_callback(env, target_idx=0)
