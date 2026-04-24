@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -36,6 +37,9 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             if terminated or truncated:
                 return step, info
         self.fail(f"condition not met within {max_steps} steps; last_info={last_info}")
+
+    def _make_pose_data(self, pose):
+        return SimpleNamespace(qpos=np.array(pose, dtype=np.float32))
 
     def _arm_callback(
         self,
@@ -234,6 +238,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         human.distracted_target_yaw = float(np.pi / 2.0)
 
         pose = (6.0, 5.0, 0.0)
+        data = self._make_pose_data(pose)
         ctx = {
             "index": 0,
             "n_humans": 1,
@@ -251,7 +256,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "_apply_wall_constraint_to_action",
             side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
         ):
-            action = human.step_distracted(ctx, pose)
+            action = human.step(None, data, ctx)
 
         expected_velocity = np.array(
             [-DISTRACTED_SPEED_SCALE * human.max_speed, 0.0],
@@ -269,6 +274,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
 
         pose = (6.2, 6.0, 0.0)
+        data = self._make_pose_data(pose)
         ctx = {
             "index": 0,
             "n_humans": 1,
@@ -286,7 +292,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "_apply_wall_constraint_to_action",
             side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
         ):
-            action = human.step_distracted(ctx, pose)
+            action = human.step(None, data, ctx)
 
         expected_focus = np.array([9.786, 6.65], dtype=np.float32)
         expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
@@ -309,6 +315,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
 
         pose = (6.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
         ctx = {
             "index": 0,
             "n_humans": 1,
@@ -326,13 +333,67 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "_apply_wall_constraint_to_action",
             side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
         ):
-            action = human.step_distracted(ctx, pose)
+            action = human.step(None, data, ctx)
 
         focus_distance = float(
             np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
         )
         self.assertAlmostEqual(focus_distance, 1.0, places=6)
         self.assertTrue(np.isfinite(action).all())
+
+    def test_post_explanation_yield_uses_behavior_kind_through_step(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.FOLLOWING)
+
+        pose = (2.0, 2.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "behavior_kind": "post_explanation_yield",
+            "target_xy": np.array([4.0, 2.0], dtype=np.float32),
+            "robot_pose": (1.0, 2.0, 0.0),
+            "robot_xy": np.array([1.0, 2.0], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step(None, data, ctx)
+
+        self.assertGreater(float(action[0]), 0.0)
+        self.assertAlmostEqual(float(action[1]), 0.0, places=6)
+        np.testing.assert_allclose(human.current_waypoint, ctx["target_xy"], atol=1e-6)
+
+    def test_post_explanation_listening_anchor_uses_behavior_kind_through_step(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.LISTENING)
+
+        pose = (1.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "behavior_kind": "post_explanation_listening_anchor",
+            "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(70.0),
+            "anchor_robot_xy": np.array([0.0, 1.0], dtype=np.float32),
+            "anchor_robot_yaw": 0.0,
+            "live_robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step(None, data, ctx)
+
+        expected_yaw = float(np.arctan2(1.0, -1.0))
+        expected_yaw_rate = HUMAN_YAW_RATE_GAIN * expected_yaw
+        np.testing.assert_allclose(action[2], expected_yaw_rate, atol=1e-5)
 
     def test_full_flow_reaches_final_listen_ready(self):
         env = self._make_env(n_humans=1)

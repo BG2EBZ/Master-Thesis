@@ -878,11 +878,16 @@ class MuseumEnv(gym.Env):
 
         if role == POST_EXPLANATION_ROLE_YIELD:
             human.set_mode(HumanMode.FOLLOWING)
-            human.current_waypoint = target_xy.copy()
-            return human.step_following(move_ctx, human.get_pose(self.data))
+            yield_ctx = {
+                **move_ctx,
+                "behavior_kind": "post_explanation_yield",
+                "target_xy": target_xy.copy(),
+            }
+            return human.step(self.model, self.data, yield_ctx)
 
         human.set_mode(HumanMode.LISTENING)
         listen_ctx = {
+            "behavior_kind": "post_explanation_listening_anchor",
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
@@ -892,14 +897,11 @@ class MuseumEnv(gym.Env):
                 else self.listen_fan_radius
             ),
             "listening_sector_half_angle": self.listen_front_sector_half_angle,
+            "anchor_robot_xy": anchor_robot_xy,
+            "anchor_robot_yaw": anchor_robot_yaw,
+            "live_robot_xy": world_frame.robot_xy,
         }
-        return human.step_listening_with_anchor_target_and_live_repulsion(
-            listen_ctx,
-            human.get_pose(self.data),
-            anchor_robot_xy=anchor_robot_xy,
-            anchor_robot_yaw=anchor_robot_yaw,
-            live_robot_xy=world_frame.robot_xy,
-        )
+        return human.step(self.model, self.data, listen_ctx)
 
     def _apply_human_controls(self, world_frame) -> np.ndarray:
         human_actions = np.zeros((len(self.humans), 3), dtype=np.float32)
