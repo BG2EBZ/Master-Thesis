@@ -341,6 +341,128 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         self.assertAlmostEqual(focus_distance, 1.0, places=6)
         self.assertTrue(np.isfinite(action).all())
 
+    def test_listening_distracted_prioritizes_nearest_exhibit_over_nearby_person(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_LISTENING
+
+        pose = (6.2, 6.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 6.0, 0.0),
+            "robot_xy": np.array([5.0, 6.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[6.2, 6.0], [6.4, 6.1]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step(None, data, ctx)
+
+        expected_focus = np.array([9.786, 6.65], dtype=np.float32)
+        expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
+
+        np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * expected_yaw, places=5)
+
+    def test_listening_distracted_looks_toward_nearby_person_when_no_exhibit_exists(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_LISTENING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0], [0.0, 2.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step(None, data, ctx)
+
+        expected_focus = np.array([0.0, 2.0], dtype=np.float32)
+        np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
+
+    def test_listening_distracted_falls_back_to_robot_relative_glance_when_no_focus_exists(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_LISTENING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with (
+            patch.object(
+                human,
+                "_apply_wall_constraint_to_action",
+                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+            ),
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=0.0),
+        ):
+            action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(
+            human.distracted_target_xy,
+            np.array(pose[:2], dtype=np.float32),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
+
     def test_post_explanation_yield_uses_behavior_kind_through_step(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.set_mode(HumanMode.FOLLOWING)

@@ -837,6 +837,7 @@ class MuseumEnv(gym.Env):
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],
+            "human_xy": world_frame.human_xy,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,

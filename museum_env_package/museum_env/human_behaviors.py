@@ -155,11 +155,16 @@ def _step_distracted(human, ctx, pose):
     yaw = pose[2]
     human.distracted_timer += 1
     current_xy = np.asarray(pose[:2], dtype=np.float32)
+    # Check the distracted target state and initialize if needed. 
     if human.distracted_target_xy is None:
-        _initialize_following_distracted_target(human, ctx, current_xy=current_xy, current_yaw=yaw)
-
-    # A following-distracted human still aims for the normal follow slot, but
-    # moves more slowly so they naturally fall behind the rest of the group.
+        _initialize_distracted_target(
+            human,
+            ctx,
+            current_xy=current_xy,
+            fallback_reference_yaw=yaw,
+        )
+    
+    # Assign the current waypoint based on the context
     human.assign_target_from_context(ctx, mode=HumanMode.FOLLOWING)
     follow_target_xy = np.asarray(human.current_waypoint, dtype=np.float32)
     to_follow_target = follow_target_xy - current_xy
@@ -183,8 +188,7 @@ def _step_distracted(human, ctx, pose):
     if speed > move_speed_limit and speed > NORM_EPS:
         v_total = v_total / speed * move_speed_limit
 
-    # Translation keeps serving the group-following objective, while yaw keeps
-    # tracking the distraction target as a proxy for both gaze and body turn.
+    # Compute the desired yaw based on the current focus target
     desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
     yaw_err = human._wrap_to_pi(desired_yaw - yaw)
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -201,11 +205,19 @@ def _step_listening_distracted(human, ctx, pose):
     human.distracted_timer += 1
     current_xy = np.asarray(pose[:2], dtype=np.float32)
     desired_yaw = human.distracted_target_yaw
+    # Generate or update the distracted target if needed.
     if desired_yaw is None:
-        _initialize_listening_distracted_target(
+        robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+        robot_facing_yaw = np.arctan2(
+            robot_xy[1] - current_xy[1],
+            robot_xy[0] - current_xy[0],
+        )
+        _initialize_distracted_target(
             human,
+            ctx,
             current_xy=current_xy,
-            robot_xy=np.asarray(ctx["robot_xy"], dtype=np.float32),
+            fallback_reference_yaw=robot_facing_yaw,
+            fallback_target_xy=current_xy,
         )
         desired_yaw = human.distracted_target_yaw
     yaw_err = human._wrap_to_pi(desired_yaw - pose[2])
@@ -342,9 +354,7 @@ def _get_distractor_exhibit_points(human):
     return points.reshape(-1, 2)
 
 
-def _initialize_following_distracted_target(human, ctx, current_xy, current_yaw: float):
-    # The focus target is chosen once per distracted episode so the human keeps
-    # attending to one thing instead of jittering between multiple candidates.
+def _select_distracted_focus_target(human, ctx, current_xy):
     current_xy = np.asarray(current_xy, dtype=np.float32)
 
     exhibit_target_xy = _select_nearest_candidate(
@@ -352,57 +362,53 @@ def _initialize_following_distracted_target(human, ctx, current_xy, current_yaw:
         _get_distractor_exhibit_points(human),
         DISTRACTED_EXHIBIT_LOOK_RADIUS,
     )
-    # If there's a nearby exhibit, look at it.
+    # First priority is looking at a nearby exhibit
     if exhibit_target_xy is not None:
-        target_yaw = np.arctan2(
-            exhibit_target_xy[1] - current_xy[1],
-            exhibit_target_xy[0] - current_xy[0],
-        )
-        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=exhibit_target_xy)
-        return
-    
-    human_target_xy = _select_nearest_candidate(
+        return exhibit_target_xy
+
+    return _select_nearest_candidate(
         current_xy,
         ctx.get("human_xy", np.zeros((0, 2), dtype=np.float32)),
         DISTRACTED_HUMAN_LOOK_RADIUS,
         exclude_index=ctx.get("index"),
     )
-    # If there's a nearby human, look at them
-    if human_target_xy is not None:
+
+
+def _initialize_distracted_target(
+    human,
+    ctx,
+    current_xy,
+    *,
+    fallback_reference_yaw: float,
+    fallback_target_xy=None,
+):
+    current_xy = np.asarray(current_xy, dtype=np.float32)
+
+    focus_target_xy = _select_distracted_focus_target(human, ctx, current_xy)
+    if focus_target_xy is not None:
         target_yaw = np.arctan2(
-            human_target_xy[1] - current_xy[1],
-            human_target_xy[0] - current_xy[0],
+            focus_target_xy[1] - current_xy[1],
+            focus_target_xy[0] - current_xy[0],
         )
-        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=human_target_xy)
+        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=focus_target_xy)
         return
-    # Otherwise, pick a random direction
-    target_yaw, sampled_target_xy = _sample_distracted_target_candidate(current_xy, current_yaw)
-    human._set_distracted_target_state(target_yaw=target_yaw, target_xy=sampled_target_xy)
 
-
-def _sample_distracted_target_candidate(current_xy, current_yaw: float):
+    # No valid focus target, so pick a random fallback yaw and corresponding target point.
     deviation_deg = np.random.uniform(
         DISTRACTED_YAW_DEVIATION_MIN_DEG,
         DISTRACTED_YAW_DEVIATION_MAX_DEG,
     )
     deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
     deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
-    target_yaw = _wrap_to_pi(current_yaw + deviation_rad)
-    direction_xy = np.array([np.cos(target_yaw), np.sin(target_yaw)], dtype=np.float32)
-    return float(target_yaw), np.asarray(
-        current_xy + DISTRACTED_FALLBACK_DISTANCE * direction_xy,
-        dtype=np.float32,
+    fallback_yaw = _wrap_to_pi(float(fallback_reference_yaw) + deviation_rad)
+    if fallback_target_xy is None:
+        direction_xy = np.array([np.cos(fallback_yaw), np.sin(fallback_yaw)], dtype=np.float32)
+        fallback_target_xy = current_xy + DISTRACTED_FALLBACK_DISTANCE * direction_xy
+
+    human._set_distracted_target_state(
+        target_yaw=float(fallback_yaw),
+        target_xy=np.asarray(fallback_target_xy, dtype=np.float32),
     )
-
-
-def _initialize_listening_distracted_target(human, current_xy, robot_xy):
-    current_xy = np.asarray(current_xy, dtype=np.float32)
-    robot_xy = np.asarray(robot_xy, dtype=np.float32)
-    deviation_deg = np.random.uniform(45.0, 90.0)
-    deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
-    robot_facing_yaw = np.arctan2(robot_xy[1] - current_xy[1], robot_xy[0] - current_xy[0])
-    target_yaw = _wrap_to_pi(robot_facing_yaw + deviation_sign * np.deg2rad(deviation_deg))
-    human._set_distracted_target_state(target_yaw=target_yaw, target_xy=current_xy)
 
 
 def _compute_listening_sector_target_point(
