@@ -4,7 +4,16 @@ from unittest.mock import patch
 import numpy as np
 
 from museum_env.env import MuseumEnv
-from museum_env.human import DISTRACTED_SOURCE_LISTENING, HumanMode, HumanProfile
+from museum_env.human import (
+    DISTRACTED_SOURCE_FOLLOWING,
+    DISTRACTED_SOURCE_LISTENING,
+    DISTRACTED_SPEED_SCALE,
+    HUMAN_YAW_RATE_GAIN,
+    Human,
+    HumanMode,
+    HumanProfile,
+)
+from museum_env.map_layouts import AxisAlignedRect, MapLayout
 from museum_env.robot import RobotCallbackPhase, RobotMode
 
 
@@ -216,6 +225,114 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 self.assertEqual(env.fuzzy_debug[0].context, "following")
         finally:
             env.close()
+
+    def test_following_distracted_moves_toward_follow_slot_with_speed_limit(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.distracted_target_xy = np.array([6.0, 6.0], dtype=np.float32)
+        human.distracted_target_yaw = float(np.pi / 2.0)
+
+        pose = (6.0, 5.0, 0.0)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[6.0, 5.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step_distracted(ctx, pose)
+
+        expected_velocity = np.array(
+            [-DISTRACTED_SPEED_SCALE * human.max_speed, 0.0],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
+        self.assertLessEqual(
+            float(np.linalg.norm(action[:2])),
+            DISTRACTED_SPEED_SCALE * human.max_speed + 1e-6,
+        )
+
+    def test_following_distracted_orients_toward_nearest_exhibit_while_moving(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (6.2, 6.0, 0.0)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 6.0, 0.0),
+            "robot_xy": np.array([5.0, 6.0], dtype=np.float32),
+            "human_xy": np.array([[6.2, 6.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step_distracted(ctx, pose)
+
+        expected_focus = np.array([9.786, 6.65], dtype=np.float32)
+        expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
+        expected_yaw_rate = HUMAN_YAW_RATE_GAIN * expected_yaw
+
+        np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
+        np.testing.assert_allclose(action[2], expected_yaw_rate, atol=1e-5)
+        self.assertLess(float(action[0]), 0.0)
+
+    def test_following_distracted_falls_back_to_synthetic_focus_target(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (6.0, 0.0, 0.0)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 0.0, 0.0),
+            "robot_xy": np.array([5.0, 0.0], dtype=np.float32),
+            "human_xy": np.array([[6.0, 0.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            action = human.step_distracted(ctx, pose)
+
+        focus_distance = float(
+            np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
+        )
+        self.assertAlmostEqual(focus_distance, 1.0, places=6)
+        self.assertTrue(np.isfinite(action).all())
 
     def test_full_flow_reaches_final_listen_ready(self):
         env = self._make_env(n_humans=1)

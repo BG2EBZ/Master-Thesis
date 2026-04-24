@@ -21,6 +21,10 @@ DISTRACTED_TARGET_DISTANCE_MIN = 0.5
 DISTRACTED_TARGET_DISTANCE_MAX = 1.5
 DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
+DEFAULT_FOLLOW_RADIUS = 1.0
+DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
+DISTRACTED_HUMAN_LOOK_RADIUS = 3.0
+DISTRACTED_FALLBACK_DISTANCE = 1.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC = 0.08
@@ -251,12 +255,68 @@ class Human:
         target_xy = np.asarray(target_xy, dtype=np.float32)
         self.distracted_target_yaw = float(target_yaw)
         self.distracted_target_xy = target_xy
-        self.current_waypoint = target_xy.copy()
         self.distracted_stop_reached = False
 
-    def _initialize_distracted_target(self, current_xy, current_yaw: float):
+    @staticmethod
+    def _select_nearest_candidate(current_xy, candidates, max_distance: float, *, exclude_index: Optional[int] = None):
+        candidates = np.asarray(candidates, dtype=np.float32)
+        if candidates.size == 0:
+            return None
+        if candidates.ndim == 1:
+            candidates = candidates.reshape(1, -1)
+
+        deltas = candidates[:, :2] - np.asarray(current_xy, dtype=np.float32)[None, :]
+        distances = np.linalg.norm(deltas, axis=1)
+        if exclude_index is not None and 0 <= int(exclude_index) < len(distances):
+            distances[int(exclude_index)] = np.inf
+
+        best_idx = int(np.argmin(distances))
+        best_distance = float(distances[best_idx])
+        if (not np.isfinite(best_distance)) or best_distance > float(max_distance):
+            return None
+        return np.asarray(candidates[best_idx, :2], dtype=np.float32)
+
+    def _get_distractor_exhibit_points(self):
+        exhibit_points = self.map_layout.metadata.get("distractor_exhibit_points", ())
+        points = np.asarray(exhibit_points, dtype=np.float32)
+        if points.size == 0:
+            return np.zeros((0, 2), dtype=np.float32)
+        return points.reshape(-1, 2)
+
+    def _initialize_distracted_target(self, ctx, current_xy, current_yaw: float):
+        current_xy = np.asarray(current_xy, dtype=np.float32)
+
+        # Lock onto one focus target for the whole following-distracted episode:
+        # exhibits first, then nearby people, then a synthetic fallback direction.
+        exhibit_target_xy = self._select_nearest_candidate(
+            current_xy,
+            self._get_distractor_exhibit_points(),
+            DISTRACTED_EXHIBIT_LOOK_RADIUS,
+        )
+        if exhibit_target_xy is not None:
+            target_yaw = np.arctan2(
+                exhibit_target_xy[1] - current_xy[1],
+                exhibit_target_xy[0] - current_xy[0],
+            )
+            self._set_distracted_target_state(target_yaw=target_yaw, target_xy=exhibit_target_xy)
+            return
+
+        human_target_xy = self._select_nearest_candidate(
+            current_xy,
+            ctx.get("human_xy", np.zeros((0, 2), dtype=np.float32)),
+            DISTRACTED_HUMAN_LOOK_RADIUS,
+            exclude_index=ctx.get("index"),
+        )
+        if human_target_xy is not None:
+            target_yaw = np.arctan2(
+                human_target_xy[1] - current_xy[1],
+                human_target_xy[0] - current_xy[0],
+            )
+            self._set_distracted_target_state(target_yaw=target_yaw, target_xy=human_target_xy)
+            return
+
         target_yaw, sampled_target_xy = self._sample_distracted_target_candidate(
-            current_xy=np.asarray(current_xy, dtype=np.float32),
+            current_xy=current_xy,
             current_yaw=current_yaw,
         )
         self._set_distracted_target_state(target_yaw=target_yaw, target_xy=sampled_target_xy)
@@ -269,12 +329,11 @@ class Human:
         deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
         deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
         target_yaw = self._wrap_to_pi(current_yaw + deviation_rad)
-        target_distance = np.random.uniform(
-            DISTRACTED_TARGET_DISTANCE_MIN,
-            DISTRACTED_TARGET_DISTANCE_MAX,
-        )
         direction_xy = np.array([np.cos(target_yaw), np.sin(target_yaw)], dtype=np.float32)
-        return float(target_yaw), np.asarray(current_xy + target_distance * direction_xy, dtype=np.float32)
+        return float(target_yaw), np.asarray(
+            current_xy + DISTRACTED_FALLBACK_DISTANCE * direction_xy,
+            dtype=np.float32,
+        )
 
     def apply_callback_response(self, response: str):
         if response == "rejoin":
@@ -298,7 +357,7 @@ class Human:
             relative_angle = 0.0
 
         if target_mode == HumanMode.FOLLOWING:
-            radius = ctx["follow_radius"]
+            radius = float(ctx.get("follow_radius", DEFAULT_FOLLOW_RADIUS))
             base_angle_offset = np.pi
         elif target_mode == HumanMode.IMPATIENT:
             radius = ctx["impatient_front_offset"]
@@ -430,36 +489,54 @@ class Human:
         self.distracted_timer += 1
         current_xy = np.asarray(pose[:2], dtype=np.float32)
         if self.distracted_target_xy is None:
-            self._initialize_distracted_target(current_xy=current_xy, current_yaw=yaw)
+            self._initialize_distracted_target(ctx=ctx, current_xy=current_xy, current_yaw=yaw)
 
-        target_xy = np.asarray(self.distracted_target_xy, dtype=np.float32)
-        to_target = target_xy - current_xy
-        dist_to_target = np.linalg.norm(to_target)
-        if dist_to_target < self.waypoint_threshold:
-            self.distracted_stop_reached = True
+        # A following-distracted human still aims for the normal follow slot,
+        # but moves at a reduced speed so they naturally lag behind the group.
+        self.assign_target_from_context(ctx, mode=HumanMode.FOLLOWING)
+        follow_target_xy = np.asarray(self.current_waypoint, dtype=np.float32)
+        to_follow_target = follow_target_xy - current_xy
+        dist_to_follow_target = np.linalg.norm(to_follow_target)
 
-        if self.distracted_stop_reached:
-            action = np.zeros(3, dtype=np.float32)
+        move_speed_limit = DISTRACTED_SPEED_SCALE * self.max_speed
+        if dist_to_follow_target > NORM_EPS:
+            v_goal = move_speed_limit * (to_follow_target / dist_to_follow_target)
         else:
-            move_speed_limit = DISTRACTED_SPEED_SCALE * self.max_speed
-            if dist_to_target > NORM_EPS:
-                v_goal = move_speed_limit * (to_target / dist_to_target)
+            v_goal = np.zeros(2, dtype=np.float32)
+
+        robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+        v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
+        v_total += self._compute_hr_spacing_force(
+            current_xy=current_xy,
+            robot_xy=robot_xy,
+            distance_min=self.hr_distance_min,
+            distance_max=self.hr_distance_max,
+        )
+        speed = np.linalg.norm(v_total)
+        if speed > move_speed_limit and speed > NORM_EPS:
+            v_total = v_total / speed * move_speed_limit
+
+        # Yaw tracks the distraction target instead of the motion direction,
+        # so "gaze" and body orientation both turn toward the distraction.
+        focus_target_xy = None
+        if self.distracted_target_xy is not None:
+            focus_target_xy = np.asarray(self.distracted_target_xy, dtype=np.float32)
+
+        if focus_target_xy is not None:
+            focus_delta = focus_target_xy - current_xy
+            if np.linalg.norm(focus_delta) > NORM_EPS:
+                desired_yaw = np.arctan2(focus_delta[1], focus_delta[0])
+            elif self.distracted_target_yaw is not None:
+                desired_yaw = self.distracted_target_yaw
             else:
-                v_goal = np.zeros(2, dtype=np.float32)
+                desired_yaw = yaw
+        elif self.distracted_target_yaw is not None:
+            desired_yaw = self.distracted_target_yaw
+        else:
+            desired_yaw = yaw
 
-            v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-            speed = np.linalg.norm(v_total)
-            if speed > move_speed_limit and speed > NORM_EPS:
-                v_total = v_total / speed * move_speed_limit
-                speed = np.linalg.norm(v_total)
-
-            desired_yaw = (
-                np.arctan2(v_total[1], v_total[0])
-                if speed > NORM_EPS
-                else self.distracted_target_yaw
-            )
-            yaw_err = self._wrap_to_pi(desired_yaw - yaw)
-            action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+        yaw_err = self._wrap_to_pi(desired_yaw - yaw)
+        action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
         if self.distracted_timer >= self.distracted_duration:
             self.set_mode(self.distracted_recovery_mode)
@@ -614,6 +691,8 @@ class Human:
         geomid = np.array([-1], dtype=np.int32)
         best_hit_distance = None
         for ray_height in ray_heights:
+            # Probe at torso and near-floor heights so thin wall geometry is not
+            # missed just because the current body origin sits slightly above it.
             ray_origin_with_height = ray_origin.copy()
             ray_origin_with_height[2] = ray_height
             geomid[0] = -1
@@ -683,6 +762,8 @@ class Human:
         dist_hr = np.linalg.norm(diff)
         direction = np.array([1.0, 0.0], dtype=np.float32) if dist_hr <= NORM_EPS else diff / dist_hr
 
+        # Inside the preferred band, no force is applied. Too close pushes away;
+        # too far can optionally pull the human back toward the robot.
         if distance_min is not None and dist_hr < distance_min:
             if dist_hr <= HR_REPULSION_GAIN_NEAR_DISTANCE:
                 repulsion_gain = HR_REPULSION_GAIN * HR_REPULSION_GAIN_NEAR_MULTIPLIER

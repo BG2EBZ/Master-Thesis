@@ -801,6 +801,7 @@ class MuseumEnv(gym.Env):
             "n_humans": len(self.humans),
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
+            "human_xy": world_frame.human_xy,
             "repulsion": repulsion_vec,
             "follow_radius": FOLLOW_RADIUS_DEFAULT,
             "fan_half_angle": self.follow_fan_half_angle,
