@@ -5,6 +5,7 @@ from pathlib import Path
 
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
+import mujoco.viewer
 import museum_env.register_env
 
 DEFAULT_MAX_STEPS = 300000
@@ -14,6 +15,19 @@ DEFAULT_SLEEP_SCALE = 1.0
 DEFAULT_RTF_PRINT_EVERY = 2500
 DEFAULT_VIDEO_ROOT = "videos"
 DEFAULT_NAME_PREFIX = "museum_full_run"
+
+
+class _PauseController:
+    def __init__(self, toggle_key):
+        self.toggle_key = int(toggle_key)
+        self.paused = False
+
+    def on_key(self, key):
+        if int(key) != self.toggle_key:
+            return
+        self.paused = not self.paused
+        status = "paused" if self.paused else "resumed"
+        print(f"[control] {status}")
 
 
 def _positive_int(value):
@@ -106,8 +120,24 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
     sim_dt = float(base_env.dt)
     target_sleep = (1.0 / DEFAULT_RENDER_FPS) * float(sleep_scale)
     wall_start = time.perf_counter()
+    pause_controller = None
 
-    for step in range(max_steps):
+    if realtime and base_env.viewer is None:
+        pause_controller = _PauseController(mujoco.viewer.glfw.KEY_P)
+        base_env.viewer = mujoco.viewer.launch_passive(
+            base_env.model,
+            base_env.data,
+            key_callback=pause_controller.on_key,
+        )
+        env.render()
+
+    step = 0
+    while step < max_steps:
+        if pause_controller is not None and pause_controller.paused:
+            env.render()
+            time.sleep(target_sleep)
+            continue
+
         _, _, terminated, truncated, info = env.step(None)
         if print_every and step % print_every == 0:
             print(_summarize_info(step, info))
@@ -119,6 +149,8 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
 
         if _report_step(step, terminated, truncated, info, wall_start, sim_dt):
             break
+
+        step += 1
 
 
 def run_demo(args):
