@@ -271,10 +271,8 @@ class MuseumEnv(gym.Env):
     def _configure_human_behaviors(self) -> None:
         for human in self.humans:
             human.max_distracted_duration_seconds = self.max_distracted_duration_seconds
-            human.distracted_duration = max(
-                1,
-                int(round(human.max_distracted_duration_seconds / self.dt)),
-            )
+            human.distracted_duration = round(human.max_distracted_duration_seconds / self.dt)
+            human.distracted_stop_duration = round(human.distracted_stop_duration_seconds / self.dt)
             human.impatient_duration = 2000
             human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0

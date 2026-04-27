@@ -21,6 +21,7 @@ DISTRACTED_TARGET_DISTANCE_MIN = 0.5
 DISTRACTED_TARGET_DISTANCE_MAX = 1.5
 DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
+DISTRACTED_STOP_DURATION_SECONDS = 5.0
 DEFAULT_FOLLOW_RADIUS = 1.0
 DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
 DISTRACTED_HUMAN_LOOK_RADIUS = 3.0
@@ -94,7 +95,9 @@ class Human:
         self.distracted_timer = 0
         self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
         self.distracted_duration = (round(self.max_distracted_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS))
-        
+        self.distracted_stop_duration_seconds = float(DISTRACTED_STOP_DURATION_SECONDS)
+        self.distracted_stop_duration = round(self.distracted_stop_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
+
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None

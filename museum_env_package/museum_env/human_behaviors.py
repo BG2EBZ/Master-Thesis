@@ -153,9 +153,8 @@ def _step_distracted(human, ctx, pose):
         return _step_listening_distracted(human, ctx, pose)
 
     yaw = pose[2]
-    human.distracted_timer += 1
     current_xy = np.asarray(pose[:2], dtype=np.float32)
-    # Check the distracted target state and initialize if needed. 
+    # Check the distracted target state and initialize if needed.
     if human.distracted_target_xy is None:
         _initialize_distracted_target(
             human,
@@ -163,16 +162,26 @@ def _step_distracted(human, ctx, pose):
             current_xy=current_xy,
             fallback_reference_yaw=yaw,
         )
-    
-    # Assign the current waypoint based on the context
-    human.assign_target_from_context(ctx, mode=HumanMode.FOLLOWING)
-    follow_target_xy = np.asarray(human.current_waypoint, dtype=np.float32)
-    to_follow_target = follow_target_xy - current_xy
-    dist_to_follow_target = np.linalg.norm(to_follow_target)
+
+    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
+    to_target_xy = target_xy - current_xy
+    dist_to_target = np.linalg.norm(to_target_xy)
+    if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
+        human.distracted_stop_reached = True
+        human.distracted_timer = 0
+
+    desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
+    if human.distracted_stop_reached:
+        return _step_following_distracted_stop(
+            human,
+            current_xy=current_xy,
+            current_yaw=yaw,
+            desired_yaw=desired_yaw,
+        )
 
     move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
-    if dist_to_follow_target > NORM_EPS:
-        v_goal = move_speed_limit * (to_follow_target / dist_to_follow_target)
+    if dist_to_target > NORM_EPS:
+        v_goal = move_speed_limit * (to_target_xy / dist_to_target)
     else:
         v_goal = np.zeros(2, dtype=np.float32)
 
@@ -188,17 +197,25 @@ def _step_distracted(human, ctx, pose):
     if speed > move_speed_limit and speed > NORM_EPS:
         v_total = v_total / speed * move_speed_limit
 
-    # Compute the desired yaw based on the current focus target
-    desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
     yaw_err = human._wrap_to_pi(desired_yaw - yaw)
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+    return human._apply_wall_constraint_to_action(action, current_xy)
 
-    if human.distracted_timer >= human.distracted_duration:
+
+def _step_following_distracted_stop(human, *, current_xy, current_yaw: float, desired_yaw: float):
+    human.distracted_timer += 1
+    yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+    if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
+        action = human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
+        action = human._apply_wall_constraint_to_action(action, current_xy)
+    else:
+        action = np.zeros(3, dtype=np.float32)
+
+    if human.distracted_timer >= human.distracted_stop_duration:
         human.set_mode(human.distracted_recovery_mode)
         if human.enable_event_logs:
             logger.info(f">>> {human.name} recovered -> {human.mode.upper()}")
-
-    return human._apply_wall_constraint_to_action(action, current_xy)
+    return action
 
 
 def _step_listening_distracted(human, ctx, pose):

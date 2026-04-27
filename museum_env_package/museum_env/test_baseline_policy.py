@@ -231,7 +231,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_following_distracted_moves_toward_follow_slot_with_speed_limit(self):
+    def test_following_distracted_moves_toward_distracted_target_with_speed_limit(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.set_mode(HumanMode.DISTRACTED)
         human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
@@ -260,7 +260,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             action = human.step(None, data, ctx)
 
         expected_velocity = np.array(
-            [-DISTRACTED_SPEED_SCALE * human.max_speed, 0.0],
+            [0.0, DISTRACTED_SPEED_SCALE * human.max_speed],
             dtype=np.float32,
         )
         np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
@@ -268,6 +268,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             float(np.linalg.norm(action[:2])),
             DISTRACTED_SPEED_SCALE * human.max_speed + 1e-6,
         )
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
 
     def test_following_distracted_orients_toward_nearest_exhibit_while_moving(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -298,10 +299,17 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         expected_focus = np.array([9.786, 6.65], dtype=np.float32)
         expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
         expected_yaw_rate = HUMAN_YAW_RATE_GAIN * expected_yaw
+        expected_velocity = (
+            DISTRACTED_SPEED_SCALE
+            * human.max_speed
+            * (expected_focus - np.array(pose[:2], dtype=np.float32))
+            / np.linalg.norm(expected_focus - np.array(pose[:2], dtype=np.float32))
+        )
 
         np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
+        np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-5)
         np.testing.assert_allclose(action[2], expected_yaw_rate, atol=1e-5)
-        self.assertLess(float(action[0]), 0.0)
+        self.assertGreater(float(action[0]), 0.0)
 
     def test_following_distracted_falls_back_to_synthetic_focus_target(self):
         empty_layout = MapLayout(
@@ -340,7 +348,56 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
         )
         self.assertAlmostEqual(focus_distance, 1.0, places=6)
+        expected_velocity = (
+            DISTRACTED_SPEED_SCALE
+            * human.max_speed
+            * (human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
+            / np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
+        )
+        np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
         self.assertTrue(np.isfinite(action).all())
+
+    def test_following_distracted_stops_at_target_then_recovers_after_hold(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.distracted_target_xy = np.array([1.1, 1.0], dtype=np.float32)
+        human.distracted_target_yaw = float(np.pi / 2.0)
+        human.distracted_stop_duration = 3
+        human.distracted_recovery_mode = HumanMode.FOLLOWING
+
+        pose = (1.0, 1.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 1.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            first_action = human.step(None, data, ctx)
+            self.assertTrue(human.distracted_stop_reached)
+            np.testing.assert_allclose(first_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+
+            second_action = human.step(None, data, ctx)
+            np.testing.assert_allclose(second_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+
+            third_action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(third_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertEqual(human.mode, HumanMode.FOLLOWING)
 
     def test_listening_distracted_prioritizes_nearest_exhibit_over_nearby_person(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
