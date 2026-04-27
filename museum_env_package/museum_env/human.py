@@ -93,10 +93,8 @@ class Human:
 
         self.distracted_timer = 0
         self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
-        self.distracted_duration = max(
-            1,
-            int(round(self.max_distracted_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)),
-        )
+        self.distracted_duration = (round(self.max_distracted_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS))
+        
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
@@ -119,8 +117,12 @@ class Human:
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
         self.overwhelmed_leave_speed = 1.5
-        self.overwhelmed_leave_duration = 1000
+        self.max_overwhelmed_leave_duration_seconds = 2.0
+        self.overwhelmed_leave_duration = round(self.max_overwhelmed_leave_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.overwhelmed_leave_timer = 0
+        self.max_overwhelmed_pause_duration_seconds = 3.0
+        self.overwhelmed_pause_duration = round(self.max_overwhelmed_pause_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
+        self.overwhelmed_pause_timer = 0
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
         self.overwhelmed_backoff_start_xy = None
         self.overwhelmed_recovery_mode = HumanMode.FOLLOWING
@@ -151,9 +153,9 @@ class Human:
     def reset_overwhelmed_state(self):
         self.overwhelmed_stage = None
         self.overwhelmed_leave_timer = 0
+        self.overwhelmed_pause_timer = 0
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
         self.overwhelmed_backoff_start_xy = None
-        self.overwhelmed_recovery_mode = HumanMode.FOLLOWING
 
     def reset_episode_state(self):
         self.mode = None
@@ -212,7 +214,8 @@ class Human:
         self.overwhelmed_recovery_mode = recovery_mode
         self.overwhelmed_stage = "backoff"
         self.overwhelmed_leave_timer = 0
-        self.overwhelmed_leave_dir = np.asarray(leave_dir, dtype=np.float32)
+        self.overwhelmed_pause_timer = 0
+        self.overwhelmed_leave_dir = leave_dir
         self.overwhelmed_backoff_start_xy = current_xy
 
     def start_impatient(self, recovery_mode: str = HumanMode.FOLLOWING):

@@ -229,9 +229,16 @@ def _step_listening_distracted(human, ctx, pose):
 
 
 def _step_overwhelmed(human, ctx, pose):
+    if human.overwhelmed_stage == "pause":
+        human.overwhelmed_pause_timer += 1
+        if human.overwhelmed_pause_timer >= human.overwhelmed_pause_duration:
+            human.set_mode(human.overwhelmed_recovery_mode)
+            if human.enable_event_logs:
+                logger.info(f">>> {human.name} recovered from OVERWHELMED -> {human.mode.upper()}")
+        return np.zeros(3, dtype=np.float32)
+
     pos_xy = np.asarray(pose[:2], dtype=np.float32)
-    leave_dir = np.asarray(human.overwhelmed_leave_dir, dtype=np.float32)
-    leave_dir = leave_dir / np.linalg.norm(leave_dir)
+    leave_dir = human.overwhelmed_leave_dir
     desired_yaw = np.arctan2(leave_dir[1], leave_dir[0])
 
     if human.overwhelmed_stage == "backoff":
@@ -240,7 +247,6 @@ def _step_overwhelmed(human, ctx, pose):
         dist_to_target = np.linalg.norm(to_target)
         if dist_to_target < OVERWHELMED_STAGE_SWITCH_DIST:
             human.overwhelmed_stage = "leave"
-            to_target = np.zeros(2, dtype=np.float32)
             dist_to_target = 0.0
 
         if dist_to_target > NORM_EPS:
@@ -255,9 +261,8 @@ def _step_overwhelmed(human, ctx, pose):
     human.overwhelmed_leave_timer += 1
     v_xy = min(human.overwhelmed_leave_speed, human.max_speed) * leave_dir
     if human.overwhelmed_leave_timer >= human.overwhelmed_leave_duration:
-        human.set_mode(human.overwhelmed_recovery_mode)
-        if human.enable_event_logs:
-            logger.info(f">>> {human.name} recovered from OVERWHELMED -> {human.mode.upper()}")
+        human.overwhelmed_stage = "pause"
+        human.overwhelmed_pause_timer = 0
 
     action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
     return human._apply_wall_constraint_to_action(action, pos_xy)

@@ -6,6 +6,7 @@ import numpy as np
 
 from museum_env.env import MuseumEnv
 from museum_env.human import (
+    DEFAULT_SIM_TIMESTEP_SECONDS,
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     DISTRACTED_SPEED_SCALE,
@@ -462,6 +463,73 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         )
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
+
+    def test_overwhelmed_duration_defaults_use_expected_steps(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        self.assertEqual(
+            human.overwhelmed_leave_duration,
+            round(human.max_overwhelmed_leave_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS),
+        )
+        self.assertEqual(
+            human.overwhelmed_pause_duration,
+            round(human.max_overwhelmed_pause_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS),
+        )
+
+    def test_overwhelmed_transitions_from_backoff_to_leave_to_pause(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.OVERWHELMED)
+        human.overwhelmed_stage = "backoff"
+        human.overwhelmed_backoff_start_xy = np.array([0.0, 0.0], dtype=np.float32)
+        human.overwhelmed_leave_dir = np.array([1.0, 0.0], dtype=np.float32)
+        human.overwhelmed_recovery_mode = HumanMode.FOLLOWING
+
+        backoff_pose = (human.overwhelmed_backoff_dist, 0.0, 0.0)
+        backoff_data = self._make_pose_data(backoff_pose)
+        leave_data = self._make_pose_data((0.0, 0.0, 0.0))
+
+        with patch.object(
+            human,
+            "_apply_wall_constraint_to_action",
+            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+        ):
+            backoff_action = human.step(None, backoff_data, {})
+            self.assertEqual(human.overwhelmed_stage, "leave")
+            np.testing.assert_allclose(backoff_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+
+            human.overwhelmed_leave_timer = human.overwhelmed_leave_duration - 1
+            leave_action = human.step(None, leave_data, {})
+            self.assertEqual(human.mode, HumanMode.OVERWHELMED)
+            self.assertEqual(human.overwhelmed_stage, "pause")
+            np.testing.assert_allclose(
+                leave_action[:2],
+                np.array([human.max_speed, 0.0], dtype=np.float32),
+                atol=1e-6,
+            )
+
+            pause_action = human.step(None, leave_data, {})
+            self.assertEqual(human.mode, HumanMode.OVERWHELMED)
+            self.assertEqual(human.overwhelmed_pause_timer, 1)
+            np.testing.assert_allclose(pause_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+
+    def test_overwhelmed_pause_recovers_to_following_and_listening(self):
+        for recovery_mode in (HumanMode.FOLLOWING, HumanMode.LISTENING):
+            with self.subTest(recovery_mode=recovery_mode):
+                human = Human("person1", "person1", 0, max_speed=1.0)
+                human.set_mode(HumanMode.OVERWHELMED)
+                human.overwhelmed_stage = "pause"
+                human.overwhelmed_recovery_mode = recovery_mode
+                human.overwhelmed_pause_timer = human.overwhelmed_pause_duration - 1
+                data = self._make_pose_data((0.0, 0.0, 0.0))
+
+                with patch.object(
+                    human,
+                    "_apply_wall_constraint_to_action",
+                    side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+                ):
+                    action = human.step(None, data, {})
+
+                self.assertEqual(human.mode, recovery_mode)
+                np.testing.assert_allclose(action, np.zeros(3, dtype=np.float32), atol=1e-6)
 
     def test_post_explanation_yield_uses_behavior_kind_through_step(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
