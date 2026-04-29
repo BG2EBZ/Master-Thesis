@@ -13,6 +13,7 @@ from .human import (
     DISTRACTED_HUMAN_LOOK_RADIUS,
     DISTRACTED_SOURCE_LISTENING,
     DISTRACTED_SPEED_SCALE,
+    DISTRACTED_TARGET_DISTANCE_MIN,
     DISTRACTED_YAW_DEVIATION_MAX_DEG,
     DISTRACTED_YAW_DEVIATION_MIN_DEG,
     HUMAN_ROTATION_STOP_DEG,
@@ -376,26 +377,6 @@ def _get_distractor_exhibit_points(human):
     return points.reshape(-1, 2)
 
 
-def _select_distracted_focus_target(human, ctx, current_xy):
-    current_xy = np.asarray(current_xy, dtype=np.float32)
-
-    exhibit_target_xy = _select_nearest_candidate(
-        current_xy,
-        _get_distractor_exhibit_points(human),
-        DISTRACTED_EXHIBIT_LOOK_RADIUS,
-    )
-    # First priority is looking at a nearby exhibit
-    if exhibit_target_xy is not None:
-        return exhibit_target_xy
-
-    return _select_nearest_candidate(
-        current_xy,
-        ctx.get("human_xy", np.zeros((0, 2), dtype=np.float32)),
-        DISTRACTED_HUMAN_LOOK_RADIUS,
-        exclude_index=ctx.get("index"),
-    )
-
-
 def _initialize_distracted_target(
     human,
     ctx,
@@ -406,7 +387,34 @@ def _initialize_distracted_target(
 ):
     current_xy = np.asarray(current_xy, dtype=np.float32)
 
-    focus_target_xy = _select_distracted_focus_target(human, ctx, current_xy)
+    exhibit_target_xy = _select_nearest_candidate(
+        current_xy,
+        _get_distractor_exhibit_points(human),
+        DISTRACTED_EXHIBIT_LOOK_RADIUS,
+    )
+    if exhibit_target_xy is not None:
+        to_exhibit_xy = exhibit_target_xy - current_xy
+        dist_to_exhibit = float(np.linalg.norm(to_exhibit_xy))
+        target_yaw = np.arctan2(
+            exhibit_target_xy[1] - current_xy[1],
+            exhibit_target_xy[0] - current_xy[0],
+        )
+        if dist_to_exhibit > DISTRACTED_TARGET_DISTANCE_MIN + NORM_EPS:
+            target_xy = (
+                exhibit_target_xy
+                - DISTRACTED_TARGET_DISTANCE_MIN * (to_exhibit_xy / dist_to_exhibit)
+            )
+        else:
+            target_xy = current_xy.copy()
+        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=target_xy)
+        return
+
+    focus_target_xy = _select_nearest_candidate(
+        current_xy,
+        ctx.get("human_xy", np.zeros((0, 2), dtype=np.float32)),
+        DISTRACTED_HUMAN_LOOK_RADIUS,
+        exclude_index=ctx.get("index"),
+    )
     if focus_target_xy is not None:
         target_yaw = np.arctan2(
             focus_target_xy[1] - current_xy[1],

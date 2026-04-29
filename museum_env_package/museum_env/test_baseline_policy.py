@@ -10,6 +10,7 @@ from museum_env.human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     DISTRACTED_SPEED_SCALE,
+    DISTRACTED_TARGET_DISTANCE_MIN,
     HUMAN_YAW_RATE_GAIN,
     Human,
     HumanMode,
@@ -286,8 +287,13 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
         action = human.step(None, data, ctx)
 
-        expected_focus = np.array([9.786, 6.65], dtype=np.float32)
-        expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
+        expected_exhibit = np.array([9.786, 6.65], dtype=np.float32)
+        exhibit_dir = expected_exhibit - np.array(pose[:2], dtype=np.float32)
+        expected_focus = (
+            expected_exhibit
+            - DISTRACTED_TARGET_DISTANCE_MIN * (exhibit_dir / np.linalg.norm(exhibit_dir))
+        )
+        expected_yaw = float(np.arctan2(expected_exhibit[1] - pose[1], expected_exhibit[0] - pose[0]))
         expected_yaw_rate = HUMAN_YAW_RATE_GAIN * expected_yaw
         expected_velocity = (
             DISTRACTED_SPEED_SCALE
@@ -402,8 +408,13 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
         action = human.step(None, data, ctx)
 
-        expected_focus = np.array([9.786, 6.65], dtype=np.float32)
-        expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
+        expected_exhibit = np.array([9.786, 6.65], dtype=np.float32)
+        exhibit_dir = expected_exhibit - np.array(pose[:2], dtype=np.float32)
+        expected_focus = (
+            expected_exhibit
+            - DISTRACTED_TARGET_DISTANCE_MIN * (exhibit_dir / np.linalg.norm(exhibit_dir))
+        )
+        expected_yaw = float(np.arctan2(expected_exhibit[1] - pose[1], expected_exhibit[0] - pose[0]))
 
         np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
