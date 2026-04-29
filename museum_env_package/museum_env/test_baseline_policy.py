@@ -521,6 +521,76 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
 
+    def test_listening_impatient_rotates_in_place_without_repulsion(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with (
+            patch.object(
+                human,
+                "_apply_wall_constraint_to_action",
+                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+            ),
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+            action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 4.0), places=5)
+
+    def test_listening_impatient_ignores_repulsion_translation(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        repulsion = np.array([0.2, -0.1], dtype=np.float32)
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0], [0.1, 0.0]], dtype=np.float32),
+            "repulsion": repulsion,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with (
+            patch.object(
+                human,
+                "_apply_wall_constraint_to_action",
+                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+            ),
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=0.0),
+        ):
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+            action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
+
     def test_overwhelmed_duration_defaults_use_expected_steps(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         self.assertEqual(

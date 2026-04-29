@@ -17,7 +17,6 @@ from .human import (
     DISTRACTED_YAW_DEVIATION_MIN_DEG,
     HUMAN_ROTATION_STOP_DEG,
     HUMAN_YAW_RATE_GAIN,
-    LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC,
     LISTENING_IMPATIENT_TARGET_REACHED_DEG,
     LISTENING_RING_GAIN,
     LISTENING_SECTOR_PROJECTION_EPS,
@@ -304,16 +303,7 @@ def _step_impatient(human, ctx, pose):
             )
             yaw_err = human._wrap_to_pi(desired_yaw - yaw)
 
-        perp = np.array([-np.sin(base_yaw), np.cos(base_yaw)], dtype=np.float32)
-        v_total = (
-            human.listening_impatient_turn_sign
-            * LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC
-            * perp
-        )
-        v_total += np.asarray(ctx["repulsion"], dtype=np.float32)
-        speed = np.linalg.norm(v_total)
-        if speed > human.max_speed and speed > NORM_EPS:
-            v_total = v_total / speed * human.max_speed
+        v_total = np.zeros(2, dtype=np.float32)
         action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
         action = human._apply_wall_constraint_to_action(action, current_xy)
     else:

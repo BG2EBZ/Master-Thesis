@@ -28,7 +28,6 @@ DISTRACTED_HUMAN_LOOK_RADIUS = 3.0
 DISTRACTED_FALLBACK_DISTANCE = 1.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
-LISTENING_IMPATIENT_SWAY_SPEED_METERS_PER_SEC = 0.08
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
@@ -119,7 +118,7 @@ class Human:
 
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
-        self.overwhelmed_leave_speed = 1.5
+        self.overwhelmed_leave_speed = 1.0
         self.max_overwhelmed_leave_duration_seconds = 2.0
         self.overwhelmed_leave_duration = round(self.max_overwhelmed_leave_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.overwhelmed_leave_timer = 0
