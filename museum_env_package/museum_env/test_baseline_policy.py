@@ -252,12 +252,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "impatient_front_offset": human.impatient_front_offset,
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         expected_velocity = np.array(
             [0.0, DISTRACTED_SPEED_SCALE * human.max_speed],
@@ -289,12 +284,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "impatient_front_offset": human.impatient_front_offset,
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         expected_focus = np.array([9.786, 6.65], dtype=np.float32)
         expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
@@ -337,12 +327,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "impatient_front_offset": human.impatient_front_offset,
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         focus_distance = float(
             np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))
@@ -380,21 +365,16 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "impatient_front_offset": human.impatient_front_offset,
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            first_action = human.step(None, data, ctx)
-            self.assertTrue(human.distracted_stop_reached)
-            np.testing.assert_allclose(first_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
-            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+        first_action = human.step(None, data, ctx)
+        self.assertTrue(human.distracted_stop_reached)
+        np.testing.assert_allclose(first_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
 
-            second_action = human.step(None, data, ctx)
-            np.testing.assert_allclose(second_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
-            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+        second_action = human.step(None, data, ctx)
+        np.testing.assert_allclose(second_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
 
-            third_action = human.step(None, data, ctx)
+        third_action = human.step(None, data, ctx)
 
         np.testing.assert_allclose(third_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertEqual(human.mode, HumanMode.FOLLOWING)
@@ -420,12 +400,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "listening_sector_half_angle": np.deg2rad(80.0),
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         expected_focus = np.array([9.786, 6.65], dtype=np.float32)
         expected_yaw = float(np.arctan2(expected_focus[1] - pose[1], expected_focus[0] - pose[0]))
@@ -462,12 +437,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "listening_sector_half_angle": np.deg2rad(80.0),
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         expected_focus = np.array([0.0, 2.0], dtype=np.float32)
         np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
@@ -503,11 +473,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         }
 
         with (
-            patch.object(
-                human,
-                "_apply_wall_constraint_to_action",
-                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-            ),
             patch("numpy.random.uniform", return_value=45.0),
             patch("numpy.random.rand", return_value=0.0),
         ):
@@ -523,13 +488,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
     def test_adjust_target_velocity_for_walls_keeps_clear_velocity(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
-        current_xy = np.array([0.0, 0.0], dtype=np.float32)
         guide_xy = np.array([1.0, 0.0], dtype=np.float32)
         desired_v_xy = np.array([0.4, 0.1], dtype=np.float32)
 
         with patch.object(human, "_raycast_hit_distance", return_value=1.0):
             adjusted_v_xy = human._adjust_target_velocity_for_walls(
-                current_xy=current_xy,
                 guide_xy=guide_xy,
                 desired_v_xy=desired_v_xy,
             )
@@ -538,12 +501,10 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
     def test_adjust_target_velocity_for_walls_selects_side_detour_with_progress(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
-        current_xy = np.array([0.0, 0.0], dtype=np.float32)
         guide_xy = np.array([1.0, 0.0], dtype=np.float32)
         desired_v_xy = np.array([1.0, 0.0], dtype=np.float32)
 
-        def allow_only_positive_y(current_xy, v_xy):
-            del current_xy
+        def allow_only_positive_y(v_xy):
             v_xy = np.asarray(v_xy, dtype=np.float32)
             if float(v_xy[1]) > 0.0:
                 return v_xy
@@ -554,7 +515,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             patch.object(human, "_constrain_velocity_with_walkable", side_effect=allow_only_positive_y),
         ):
             adjusted_v_xy = human._adjust_target_velocity_for_walls(
-                current_xy=current_xy,
                 guide_xy=guide_xy,
                 desired_v_xy=desired_v_xy,
             )
@@ -565,7 +525,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
     def test_adjust_target_velocity_for_walls_stops_when_no_detour_advances(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
-        current_xy = np.array([0.0, 0.0], dtype=np.float32)
         guide_xy = np.array([1.0, 0.0], dtype=np.float32)
         desired_v_xy = np.array([1.0, 0.0], dtype=np.float32)
 
@@ -578,12 +537,24 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             ),
         ):
             adjusted_v_xy = human._adjust_target_velocity_for_walls(
-                current_xy=current_xy,
                 guide_xy=guide_xy,
                 desired_v_xy=desired_v_xy,
             )
 
         np.testing.assert_allclose(adjusted_v_xy, np.zeros(2, dtype=np.float32), atol=1e-6)
+
+    def test_raycast_hit_distance_uses_single_height_probe(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human._runtime_model = object()
+        human._runtime_data = SimpleNamespace(xpos=np.array([[1.0, 2.0, 0.125]], dtype=np.float64))
+        human.body_id = 0
+
+        with patch("museum_env.human.mujoco.mj_ray", return_value=0.2) as ray_mock:
+            hit_distance = human._raycast_hit_distance(np.array([1.0, 0.0], dtype=np.float32))
+
+        self.assertEqual(ray_mock.call_count, 1)
+        np.testing.assert_allclose(ray_mock.call_args.args[2], np.array([1.0, 2.0, 0.125]), atol=1e-6)
+        self.assertAlmostEqual(hit_distance, 0.2, places=6)
 
     def test_move_routes_target_velocity_through_wall_adjustment_helper(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -595,14 +566,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "repulsion": np.zeros(2, dtype=np.float32),
         }
 
-        with (
-            patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock,
-            patch.object(
-                human,
-                "_apply_wall_constraint_to_action",
-                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-            ),
-        ):
+        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
             action = human._move(to_target_xy, 0.0, ctx, current_xy)
 
         adjust_mock.assert_called_once()
@@ -629,14 +593,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "listening_sector_half_angle": np.deg2rad(80.0),
         }
 
-        with (
-            patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock,
-            patch.object(
-                human,
-                "_apply_wall_constraint_to_action",
-                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-            ),
-        ):
+        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
             action = human.step(None, data, ctx)
 
         adjust_mock.assert_called_once()
@@ -664,11 +621,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         }
 
         with (
-            patch.object(
-                human,
-                "_apply_wall_constraint_to_action",
-                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-            ),
             patch("numpy.random.uniform", return_value=45.0),
             patch("numpy.random.rand", return_value=1.0),
         ):
@@ -699,11 +651,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         }
 
         with (
-            patch.object(
-                human,
-                "_apply_wall_constraint_to_action",
-                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-            ),
             patch("numpy.random.uniform", return_value=45.0),
             patch("numpy.random.rand", return_value=0.0),
         ):
@@ -736,29 +683,24 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         backoff_data = self._make_pose_data(backoff_pose)
         leave_data = self._make_pose_data((0.0, 0.0, 0.0))
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            backoff_action = human.step(None, backoff_data, {})
-            self.assertEqual(human.overwhelmed_stage, "leave")
-            np.testing.assert_allclose(backoff_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+        backoff_action = human.step(None, backoff_data, {})
+        self.assertEqual(human.overwhelmed_stage, "leave")
+        np.testing.assert_allclose(backoff_action, np.zeros(3, dtype=np.float32), atol=1e-6)
 
-            human.overwhelmed_leave_timer = human.overwhelmed_leave_duration - 1
-            leave_action = human.step(None, leave_data, {})
-            self.assertEqual(human.mode, HumanMode.OVERWHELMED)
-            self.assertEqual(human.overwhelmed_stage, "pause")
-            np.testing.assert_allclose(
-                leave_action[:2],
-                np.array([human.max_speed, 0.0], dtype=np.float32),
-                atol=1e-6,
-            )
+        human.overwhelmed_leave_timer = human.overwhelmed_leave_duration - 1
+        leave_action = human.step(None, leave_data, {})
+        self.assertEqual(human.mode, HumanMode.OVERWHELMED)
+        self.assertEqual(human.overwhelmed_stage, "pause")
+        np.testing.assert_allclose(
+            leave_action[:2],
+            np.array([human.max_speed, 0.0], dtype=np.float32),
+            atol=1e-6,
+        )
 
-            pause_action = human.step(None, leave_data, {})
-            self.assertEqual(human.mode, HumanMode.OVERWHELMED)
-            self.assertEqual(human.overwhelmed_pause_timer, 1)
-            np.testing.assert_allclose(pause_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+        pause_action = human.step(None, leave_data, {})
+        self.assertEqual(human.mode, HumanMode.OVERWHELMED)
+        self.assertEqual(human.overwhelmed_pause_timer, 1)
+        np.testing.assert_allclose(pause_action, np.zeros(3, dtype=np.float32), atol=1e-6)
 
     def test_overwhelmed_pause_recovers_to_following_and_listening(self):
         for recovery_mode in (HumanMode.FOLLOWING, HumanMode.LISTENING):
@@ -770,12 +712,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 human.overwhelmed_pause_timer = human.overwhelmed_pause_duration - 1
                 data = self._make_pose_data((0.0, 0.0, 0.0))
 
-                with patch.object(
-                    human,
-                    "_apply_wall_constraint_to_action",
-                    side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-                ):
-                    action = human.step(None, data, {})
+                action = human.step(None, data, {})
 
                 self.assertEqual(human.mode, recovery_mode)
                 np.testing.assert_allclose(action, np.zeros(3, dtype=np.float32), atol=1e-6)
@@ -794,12 +731,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "repulsion": np.zeros(2, dtype=np.float32),
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         self.assertGreater(float(action[0]), 0.0)
         self.assertAlmostEqual(float(action[1]), 0.0, places=6)
@@ -823,12 +755,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "live_robot_xy": np.array([0.0, 0.0], dtype=np.float32),
         }
 
-        with patch.object(
-            human,
-            "_apply_wall_constraint_to_action",
-            side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
-        ):
-            action = human.step(None, data, ctx)
+        action = human.step(None, data, ctx)
 
         expected_yaw = float(np.arctan2(1.0, -1.0))
         expected_yaw_rate = HUMAN_YAW_RATE_GAIN * expected_yaw
