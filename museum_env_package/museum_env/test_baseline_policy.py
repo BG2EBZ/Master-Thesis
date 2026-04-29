@@ -385,6 +385,68 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(third_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertEqual(human.mode, HumanMode.FOLLOWING)
 
+    def test_following_distracted_force_recovers_after_max_duration(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.distracted_target_xy = np.array([3.0, 1.0], dtype=np.float32)
+        human.distracted_target_yaw = 0.0
+        human.distracted_duration = 2
+        human.distracted_recovery_mode = HumanMode.FOLLOWING
+
+        pose = (1.0, 1.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 1.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
+        self.assertFalse(human.distracted_stop_reached)
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.FOLLOWING)
+
+    def test_listening_distracted_force_recovers_after_max_duration(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_LISTENING
+        human.distracted_duration = 3
+        human.distracted_recovery_mode = HumanMode.LISTENING
+
+        pose = (6.2, 6.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 6.0, 0.0),
+            "robot_xy": np.array([5.0, 6.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[6.2, 6.0], [6.4, 6.1]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.LISTENING)
+
     def test_listening_distracted_prioritizes_nearest_exhibit_over_nearby_person(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.set_mode(HumanMode.DISTRACTED)

@@ -153,58 +153,72 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
 
 
 def _step_distracted(human, ctx, pose):
+    human.distracted_elapsed_steps += 1
+
     if human.distracted_source == DISTRACTED_SOURCE_LISTENING:
-        return _step_listening_distracted(human, ctx, pose)
-
-    yaw = pose[2]
-    current_xy = np.asarray(pose[:2], dtype=np.float32)
-    # Check the distracted target state and initialize if needed.
-    if human.distracted_target_xy is None:
-        _initialize_distracted_target(
-            human,
-            ctx,
-            current_xy=current_xy,
-            fallback_reference_yaw=yaw,
-        )
-
-    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
-    to_target_xy = target_xy - current_xy
-    dist_to_target = np.linalg.norm(to_target_xy)
-    if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
-        human.distracted_stop_reached = True
-        human.distracted_timer = 0
-
-    desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
-    if human.distracted_stop_reached:
-        return _step_following_distracted_stop(
-            human,
-            current_yaw=yaw,
-            desired_yaw=desired_yaw,
-        )
-
-    move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
-    if dist_to_target > NORM_EPS:
-        v_goal = move_speed_limit * (to_target_xy / dist_to_target)
+        action = _step_listening_distracted(human, ctx, pose)
     else:
-        v_goal = np.zeros(2, dtype=np.float32)
+        yaw = pose[2]
+        current_xy = np.asarray(pose[:2], dtype=np.float32)
+        # Check the distracted target state and initialize if needed.
+        if human.distracted_target_xy is None:
+            _initialize_distracted_target(
+                human,
+                ctx,
+                current_xy=current_xy,
+                fallback_reference_yaw=yaw,
+            )
 
-    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-    v_total += human._compute_hr_spacing_force(
-        current_xy=current_xy,
-        robot_xy=robot_xy,
-        distance_min=human.hr_distance_min,
-        distance_max=human.hr_distance_max,
-    )
-    v_total = human._limit_speed(v_total, move_speed_limit)
-    v_total = human._adjust_target_velocity_for_walls(
-        guide_xy=to_target_xy,
-        desired_v_xy=v_total,
-    )
+        target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
+        to_target_xy = target_xy - current_xy
+        dist_to_target = np.linalg.norm(to_target_xy)
+        if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
+            human.distracted_stop_reached = True
+            human.distracted_timer = 0
 
-    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
-    action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+        desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
+        if human.distracted_stop_reached:
+            action = _step_following_distracted_stop(
+                human,
+                current_yaw=yaw,
+                desired_yaw=desired_yaw,
+            )
+        else:
+            move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
+            if dist_to_target > NORM_EPS:
+                v_goal = move_speed_limit * (to_target_xy / dist_to_target)
+            else:
+                v_goal = np.zeros(2, dtype=np.float32)
+
+            robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+            v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
+            v_total += human._compute_hr_spacing_force(
+                current_xy=current_xy,
+                robot_xy=robot_xy,
+                distance_min=human.hr_distance_min,
+                distance_max=human.hr_distance_max,
+            )
+            v_total = human._limit_speed(v_total, move_speed_limit)
+            v_total = human._adjust_target_velocity_for_walls(
+                guide_xy=to_target_xy,
+                desired_v_xy=v_total,
+            )
+
+            yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+            action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+
+    _maybe_force_recover_distracted(human)
     return action
+
+
+def _maybe_force_recover_distracted(human):
+    if human.mode != HumanMode.DISTRACTED:
+        return
+    if human.distracted_elapsed_steps < human.distracted_duration:
+        return
+    human.set_mode(human.distracted_recovery_mode)
+    if human.enable_event_logs:
+        logger.info(f">>> {human.name} recovered from DISTRACTED timeout -> {human.mode.upper()}")
 
 
 def _step_following_distracted_stop(human, *, current_yaw: float, desired_yaw: float):

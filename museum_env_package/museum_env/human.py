@@ -97,6 +97,7 @@ class Human:
         self.hr_distance_max = float(HR_DISTANCE_MAX)
 
         self.distracted_timer = 0
+        self.distracted_elapsed_steps = 0
         self.max_distracted_duration_seconds = float(DISTRACTED_DURATION_SECONDS_DEFAULT)
         self.distracted_duration = (round(self.max_distracted_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS))
         self.distracted_stop_duration_seconds = float(DISTRACTED_STOP_DURATION_SECONDS)
@@ -145,6 +146,7 @@ class Human:
             self._stop_impatient()
         if prev_mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
+            self.distracted_elapsed_steps = 0
             self._clear_distracted_navigation_state()
             self.distracted_source = None
             self.distracted_recovery_mode = HumanMode.FOLLOWING
@@ -155,6 +157,7 @@ class Human:
         self.mode = mode
         if mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
+            self.distracted_elapsed_steps = 0
             self._clear_distracted_navigation_state()
 
     def reset_overwhelmed_state(self):
@@ -170,6 +173,7 @@ class Human:
         self.current_waypoint = self._random_waypoint()
 
         self.distracted_timer = 0
+        self.distracted_elapsed_steps = 0
         self._clear_distracted_navigation_state()
         self.distracted_source = None
         self.distracted_recovery_mode = HumanMode.FOLLOWING
