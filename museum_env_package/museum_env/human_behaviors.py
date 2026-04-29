@@ -101,9 +101,14 @@ def _step_listening(human, ctx, pose):
     speed = np.linalg.norm(v_total)
     if speed > human.max_speed and speed > NORM_EPS:
         v_total = v_total / speed * human.max_speed
+    v_total = human._adjust_target_velocity_for_walls(
+        current_xy=current_xy,
+        guide_xy=target_xy - current_xy,
+        desired_v_xy=v_total,
+    )
 
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
-    return human._apply_wall_constraint_to_action(action, current_xy)
+    return action
 
 
 def _step_post_explanation_listening_anchor(human, ctx, pose):
@@ -142,9 +147,14 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
     speed = np.linalg.norm(v_total)
     if speed > human.max_speed and speed > NORM_EPS:
         v_total = v_total / speed * human.max_speed
+    v_total = human._adjust_target_velocity_for_walls(
+        current_xy=current_xy,
+        guide_xy=target_xy - current_xy,
+        desired_v_xy=v_total,
+    )
 
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
-    return human._apply_wall_constraint_to_action(action, current_xy)
+    return action
 
 
 def _step_distracted(human, ctx, pose):
@@ -195,10 +205,15 @@ def _step_distracted(human, ctx, pose):
     speed = np.linalg.norm(v_total)
     if speed > move_speed_limit and speed > NORM_EPS:
         v_total = v_total / speed * move_speed_limit
+    v_total = human._adjust_target_velocity_for_walls(
+        current_xy=current_xy,
+        guide_xy=to_target_xy,
+        desired_v_xy=v_total,
+    )
 
     yaw_err = human._wrap_to_pi(desired_yaw - yaw)
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
-    return human._apply_wall_constraint_to_action(action, current_xy)
+    return action
 
 
 def _step_following_distracted_stop(human, *, current_xy, current_yaw: float, desired_yaw: float):
@@ -270,18 +285,28 @@ def _step_overwhelmed(human, ctx, pose):
             v_xy = backoff_speed * (to_target / dist_to_target)
         else:
             v_xy = np.zeros(2, dtype=np.float32)
+        v_xy = human._adjust_target_velocity_for_walls(
+            current_xy=pos_xy,
+            guide_xy=to_target,
+            desired_v_xy=v_xy,
+        )
 
         action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
-        return human._apply_wall_constraint_to_action(action, pos_xy)
+        return action
 
     human.overwhelmed_leave_timer += 1
     v_xy = min(human.overwhelmed_leave_speed, human.max_speed) * leave_dir
+    v_xy = human._adjust_target_velocity_for_walls(
+        current_xy=pos_xy,
+        guide_xy=leave_dir,
+        desired_v_xy=v_xy,
+    )
     if human.overwhelmed_leave_timer >= human.overwhelmed_leave_duration:
         human.overwhelmed_stage = "pause"
         human.overwhelmed_pause_timer = 0
 
     action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
-    return human._apply_wall_constraint_to_action(action, pos_xy)
+    return action
 
 
 def _step_impatient(human, ctx, pose):

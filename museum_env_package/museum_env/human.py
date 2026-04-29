@@ -40,11 +40,12 @@ HR_REPULSION_GAIN_MID_DISTANCE = 1.2
 HR_REPULSION_GAIN_NEAR_DISTANCE = 0.8
 HR_REPULSION_GAIN_MID_MULTIPLIER = 4.0
 HR_REPULSION_GAIN_NEAR_MULTIPLIER = 10.0
-NORM_EPS = 1e-6
+NORM_EPS = 1e-3
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
 MIN_SPEED_EPS = 1e-6
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
+WALL_DETOUR_ANGLES_DEG = (30.0, -30.0, 60.0, -60.0, 90.0, -90.0)
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -328,14 +329,85 @@ class Human:
         if speed > self.max_speed:
             v_total = v_total / speed * self.max_speed
 
+        v_total = self._adjust_target_velocity_for_walls(
+            current_xy=current_xy,
+            guide_xy=to_target_xy,
+            desired_v_xy=v_total,
+        )
+        speed = np.linalg.norm(v_total)
         desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > NORM_EPS else yaw
         action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * self._wrap_to_pi(desired_yaw - yaw))
-        return self._apply_wall_constraint_to_action(action, current_xy)
+        return action
+
+    def _adjust_target_velocity_for_walls(self, current_xy, guide_xy, desired_v_xy):
+        desired_v_xy = np.asarray(desired_v_xy, dtype=np.float32)
+        desired_speed = float(np.linalg.norm(desired_v_xy))
+        if desired_speed <= MIN_SPEED_EPS:
+            return np.zeros(2, dtype=np.float32)
+        if desired_speed > self.max_speed:
+            desired_v_xy = desired_v_xy / desired_speed * self.max_speed
+            desired_speed = float(self.max_speed)
+
+        guide_xy = np.asarray(guide_xy, dtype=np.float32)
+        guide_norm = float(np.linalg.norm(guide_xy))
+        if guide_norm <= NORM_EPS:
+            return self._constrain_velocity_with_walkable(current_xy, desired_v_xy)
+        # Detect if there's a wall in the way of the desired velocity.
+        hit_distance = self._raycast_hit_distance(desired_v_xy)
+        if hit_distance is None or hit_distance >= RAYCAST_SLOWDOWN_DISTANCE_METERS:
+            return desired_v_xy
+
+        guide_dir = guide_xy / guide_norm
+        best_v_xy = None
+        best_progress = 0.0
+        best_speed = 0.0
+
+        for angle_deg in WALL_DETOUR_ANGLES_DEG:
+            angle_rad = np.deg2rad(angle_deg)
+            cos_ang = float(np.cos(angle_rad))
+            sin_ang = float(np.sin(angle_rad))
+            candidate_v_xy = np.array(
+                [
+                    cos_ang * desired_v_xy[0] - sin_ang * desired_v_xy[1],
+                    sin_ang * desired_v_xy[0] + cos_ang * desired_v_xy[1],
+                ],
+                dtype=np.float32,
+            )
+            candidate_v_xy = self._constrain_velocity_with_walkable(current_xy, candidate_v_xy)
+            candidate_v_xy = np.asarray(candidate_v_xy, dtype=np.float32)
+            candidate_speed = float(np.linalg.norm(candidate_v_xy))
+            if candidate_speed <= MIN_SPEED_EPS:
+                continue
+
+            progress = float(np.dot(candidate_v_xy, guide_dir))
+            if progress <= MIN_SPEED_EPS:
+                continue
+
+            is_better_progress = progress > best_progress + MIN_SPEED_EPS
+            is_tie_better_speed = (
+                abs(progress - best_progress) <= MIN_SPEED_EPS
+                and candidate_speed > best_speed + MIN_SPEED_EPS
+            )
+            if best_v_xy is None or is_better_progress or is_tie_better_speed:
+                best_v_xy = candidate_v_xy
+                best_progress = progress
+                best_speed = candidate_speed
+
+        if best_v_xy is None:
+            return np.zeros(2, dtype=np.float32)
+        return np.asarray(best_v_xy, dtype=np.float32)
 
     def _raycast_hit_distance(self, direction_xy):
         direction_xy = np.asarray(direction_xy, dtype=np.float32)
         desired_speed = np.linalg.norm(direction_xy)
         if desired_speed <= MIN_SPEED_EPS:
+            return None
+        if (
+            self._runtime_model is None
+            or self._runtime_data is None
+            or self.body_id is None
+            or not hasattr(self._runtime_data, "xpos")
+        ):
             return None
 
         ray_direction = np.zeros(3, dtype=np.float64)
@@ -413,12 +485,11 @@ class Human:
         return np.zeros(2, dtype=np.float32)
 
     def _constrain_velocity_with_walkable(self, current_xy, v_xy):
-        del current_xy
         v_xy = np.asarray(v_xy, dtype=np.float32)
         speed = np.linalg.norm(v_xy)
-        if speed > self.max_speed and speed > MIN_SPEED_EPS:
+        if speed > self.max_speed:
             v_xy = v_xy / speed * self.max_speed
-            speed = np.linalg.norm(v_xy)
+            speed = float(self.max_speed)
         if speed <= MIN_SPEED_EPS:
             return v_xy
 

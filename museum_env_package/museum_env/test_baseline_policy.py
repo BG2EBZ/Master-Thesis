@@ -521,6 +521,128 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
 
+    def test_adjust_target_velocity_for_walls_keeps_clear_velocity(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        guide_xy = np.array([1.0, 0.0], dtype=np.float32)
+        desired_v_xy = np.array([0.4, 0.1], dtype=np.float32)
+
+        with patch.object(human, "_raycast_hit_distance", return_value=1.0):
+            adjusted_v_xy = human._adjust_target_velocity_for_walls(
+                current_xy=current_xy,
+                guide_xy=guide_xy,
+                desired_v_xy=desired_v_xy,
+            )
+
+        np.testing.assert_allclose(adjusted_v_xy, desired_v_xy, atol=1e-6)
+
+    def test_adjust_target_velocity_for_walls_selects_side_detour_with_progress(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        guide_xy = np.array([1.0, 0.0], dtype=np.float32)
+        desired_v_xy = np.array([1.0, 0.0], dtype=np.float32)
+
+        def allow_only_positive_y(current_xy, v_xy):
+            del current_xy
+            v_xy = np.asarray(v_xy, dtype=np.float32)
+            if float(v_xy[1]) > 0.0:
+                return v_xy
+            return np.zeros(2, dtype=np.float32)
+
+        with (
+            patch.object(human, "_raycast_hit_distance", return_value=0.1),
+            patch.object(human, "_constrain_velocity_with_walkable", side_effect=allow_only_positive_y),
+        ):
+            adjusted_v_xy = human._adjust_target_velocity_for_walls(
+                current_xy=current_xy,
+                guide_xy=guide_xy,
+                desired_v_xy=desired_v_xy,
+            )
+
+        self.assertGreater(float(adjusted_v_xy[0]), 0.0)
+        self.assertGreater(float(adjusted_v_xy[1]), 0.0)
+        self.assertGreater(float(np.dot(adjusted_v_xy, guide_xy)), 0.0)
+
+    def test_adjust_target_velocity_for_walls_stops_when_no_detour_advances(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        guide_xy = np.array([1.0, 0.0], dtype=np.float32)
+        desired_v_xy = np.array([1.0, 0.0], dtype=np.float32)
+
+        with (
+            patch.object(human, "_raycast_hit_distance", return_value=0.1),
+            patch.object(
+                human,
+                "_constrain_velocity_with_walkable",
+                return_value=np.zeros(2, dtype=np.float32),
+            ),
+        ):
+            adjusted_v_xy = human._adjust_target_velocity_for_walls(
+                current_xy=current_xy,
+                guide_xy=guide_xy,
+                desired_v_xy=desired_v_xy,
+            )
+
+        np.testing.assert_allclose(adjusted_v_xy, np.zeros(2, dtype=np.float32), atol=1e-6)
+
+    def test_move_routes_target_velocity_through_wall_adjustment_helper(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        to_target_xy = np.array([1.0, 0.0], dtype=np.float32)
+        adjusted_v_xy = np.array([0.0, 0.5], dtype=np.float32)
+        ctx = {
+            "robot_xy": np.array([2.0, 0.0], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+        }
+
+        with (
+            patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock,
+            patch.object(
+                human,
+                "_apply_wall_constraint_to_action",
+                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+            ),
+        ):
+            action = human._move(to_target_xy, 0.0, ctx, current_xy)
+
+        adjust_mock.assert_called_once()
+        np.testing.assert_allclose(adjust_mock.call_args.kwargs["guide_xy"], to_target_xy, atol=1e-6)
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+
+    def test_listening_uses_wall_adjustment_helper_for_target_motion(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.LISTENING)
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        adjusted_v_xy = np.array([0.0, 0.3], dtype=np.float32)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with (
+            patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock,
+            patch.object(
+                human,
+                "_apply_wall_constraint_to_action",
+                side_effect=lambda action, current_xy: np.array(action, dtype=np.float32),
+            ),
+        ):
+            action = human.step(None, data, ctx)
+
+        adjust_mock.assert_called_once()
+        self.assertGreater(float(np.linalg.norm(adjust_mock.call_args.kwargs["guide_xy"])), 0.0)
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+
     def test_listening_impatient_rotates_in_place_without_repulsion(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.start_impatient(recovery_mode=HumanMode.LISTENING)
