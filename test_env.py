@@ -10,6 +10,7 @@ import museum_env.register_env
 
 DEFAULT_MAX_STEPS = 300000
 DEFAULT_RENDER_FPS = 60
+DEFAULT_RENDER_EVERY_STEPS = 10
 DEFAULT_VIDEO_FPS = 500
 DEFAULT_SLEEP_SCALE = 1.0
 DEFAULT_RTF_PRINT_EVERY = 2500
@@ -129,6 +130,9 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
             base_env.data,
             key_callback=pause_controller.on_key,
         )
+        if base_env.viewer.user_scn is not None:
+            base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         env.render()
 
     step = 0
@@ -143,9 +147,14 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
             print(_summarize_info(step, info))
             _print_rtf("loop", step + 1, sim_dt, wall_start)
 
+        rendered_this_step = False
         if realtime:
-            env.render()
-            # time.sleep(target_sleep)
+            if (step + 1) % DEFAULT_RENDER_EVERY_STEPS == 0:
+                env.render()
+                rendered_this_step = True
+
+            if not rendered_this_step and (terminated or truncated):
+                env.render()
 
         if _report_step(step, terminated, truncated, info, wall_start, sim_dt):
             break
