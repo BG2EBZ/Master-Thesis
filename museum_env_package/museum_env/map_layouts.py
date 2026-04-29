@@ -115,6 +115,20 @@ DEFAULT_MUSEUM_LAYOUT = MapLayout(
     ),
     metadata={
         "rooms": ("room_a", "corridor", "room_b"),
+        "room_regions": {
+            "room_a": AxisAlignedRect(0.0, 10.0, 0.0, 10.0),
+            "room_b": AxisAlignedRect(6.5, 12.0, -15.0, -10.0),
+        },
+        "impatient_transition_targets": {
+            "room_a": {
+                "approach_xy": (11.0, -12.5),
+                "focus_xy": (11.786, -12.50),
+            },
+            "room_b": {
+                "approach_xy": (1.0, 5.0),
+                "focus_xy": (0.214, 5.00),
+            },
+        },
         "distractor_exhibit_points": (
             (2.25, 9.785),
             (7.55, 9.785),

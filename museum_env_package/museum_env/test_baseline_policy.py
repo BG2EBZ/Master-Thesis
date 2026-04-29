@@ -733,6 +733,126 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
 
+    def test_listening_impatient_moves_toward_next_exhibit_after_look_phase(self):
+        cases = (
+            ((1.0, 5.0, 0.0), np.array([5.0, 5.0], dtype=np.float32), "room_a"),
+            ((9.25, -12.5, 0.0), np.array([9.25, -11.0], dtype=np.float32), "room_b"),
+        )
+        for pose, robot_xy, source_room in cases:
+            with self.subTest(pose=pose, source_room=source_room):
+                human = Human("person1", "person1", 0, max_speed=1.0)
+                human.impatient_speed_multiplier = 1.0
+                with (
+                    patch("numpy.random.uniform", return_value=45.0),
+                    patch("numpy.random.rand", return_value=1.0),
+                ):
+                    human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+                human.impatient_duration = 6
+                human.impatient_timer = human.impatient_duration // 2
+
+                data = self._make_pose_data(pose)
+                ctx = {
+                    "index": 0,
+                    "n_humans": 1,
+                    "robot_pose": (float(robot_xy[0]), float(robot_xy[1]), 0.0),
+                    "robot_xy": robot_xy,
+                    "robot_yaw": 0.0,
+                    "human_xy": np.array([pose[:2]], dtype=np.float32),
+                    "repulsion": np.zeros(2, dtype=np.float32),
+                    "fan_half_angle": np.deg2rad(80.0),
+                    "impatient_front_offset": human.impatient_front_offset,
+                    "listen_radius": 1.0,
+                    "listening_sector_half_angle": np.deg2rad(80.0),
+                }
+
+                action = human.step(None, data, ctx)
+
+                target_spec = human.map_layout.metadata["impatient_transition_targets"][source_room]
+                approach_xy = np.asarray(target_spec["approach_xy"], dtype=np.float32)
+                focus_xy = np.asarray(target_spec["focus_xy"], dtype=np.float32)
+                direction = approach_xy - np.asarray(pose[:2], dtype=np.float32)
+                expected_velocity = direction / np.linalg.norm(direction)
+                expected_yaw = float(np.arctan2(focus_xy[1] - pose[1], focus_xy[0] - pose[0]))
+
+                np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
+                self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * expected_yaw, places=5)
+
+    def test_listening_impatient_holds_at_target_until_duration_ends(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.impatient_speed_multiplier = 1.0
+        with (
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+        human.impatient_duration = 5
+        human.impatient_timer = human.impatient_duration // 2
+
+        pose = (11.05, -12.5, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[11.05, -12.5]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        action = human.step(None, data, ctx)
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertEqual(human.mode, HumanMode.IMPATIENT)
+
+        human.impatient_timer = human.impatient_duration - 1
+        action = human.step(None, data, ctx)
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertEqual(human.mode, HumanMode.LISTENING)
+
+    def test_listening_impatient_corridor_fallback_uses_robot_nearest_room(self):
+        for robot_xy, expected_target in (
+            (np.array([5.0, 5.0], dtype=np.float32), np.array([11.0, -12.5], dtype=np.float32)),
+            (np.array([9.25, -12.5], dtype=np.float32), np.array([1.0, 5.0], dtype=np.float32)),
+        ):
+            with self.subTest(robot_xy=tuple(robot_xy.tolist())):
+                human = Human("person1", "person1", 0, max_speed=1.0)
+                human.impatient_speed_multiplier = 1.0
+                with (
+                    patch("numpy.random.uniform", return_value=45.0),
+                    patch("numpy.random.rand", return_value=1.0),
+                ):
+                    human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+                human.impatient_duration = 6
+                human.impatient_timer = human.impatient_duration // 2
+
+                pose = (8.0, -5.0, 0.0)
+                data = self._make_pose_data(pose)
+                ctx = {
+                    "index": 0,
+                    "n_humans": 1,
+                    "robot_pose": (float(robot_xy[0]), float(robot_xy[1]), 0.0),
+                    "robot_xy": robot_xy,
+                    "robot_yaw": 0.0,
+                    "human_xy": np.array([[8.0, -5.0]], dtype=np.float32),
+                    "repulsion": np.zeros(2, dtype=np.float32),
+                    "fan_half_angle": np.deg2rad(80.0),
+                    "impatient_front_offset": human.impatient_front_offset,
+                    "listen_radius": 1.0,
+                    "listening_sector_half_angle": np.deg2rad(80.0),
+                }
+
+                action = human.step(None, data, ctx)
+                expected_velocity = expected_target - np.asarray(pose[:2], dtype=np.float32)
+                expected_velocity = expected_velocity / np.linalg.norm(expected_velocity)
+                np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
+
     def test_overwhelmed_duration_defaults_use_expected_steps(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         self.assertEqual(

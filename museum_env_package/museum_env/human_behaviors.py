@@ -305,6 +305,20 @@ def _step_overwhelmed(human, ctx, pose):
     return action
 
 
+def _step_listening_impatient_glance(human, *, base_yaw: float, yaw: float):
+    desired_yaw = human._wrap_to_pi(
+        base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
+    )
+    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    if abs(yaw_err) <= np.deg2rad(LISTENING_IMPATIENT_TARGET_REACHED_DEG):
+        human.listening_impatient_turn_sign *= -1.0
+        desired_yaw = human._wrap_to_pi(
+            base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
+        )
+        yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    return human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
+
+
 def _step_impatient(human, ctx, pose):
     human.impatient_timer += 1
     current_xy = np.asarray(pose[:2], dtype=np.float32)
@@ -313,19 +327,75 @@ def _step_impatient(human, ctx, pose):
         robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
         to_robot = robot_xy - current_xy
         base_yaw = np.arctan2(to_robot[1], to_robot[0]) if np.linalg.norm(to_robot) > NORM_EPS else yaw
-        desired_yaw = human._wrap_to_pi(
-            base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
-        )
-        yaw_err = human._wrap_to_pi(desired_yaw - yaw)
-        if abs(yaw_err) <= np.deg2rad(LISTENING_IMPATIENT_TARGET_REACHED_DEG):
-            human.listening_impatient_turn_sign *= -1.0
-            desired_yaw = human._wrap_to_pi(
-                base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
+        look_steps = max(1, int(human.impatient_duration) // 2)
+        if human.impatient_timer <= look_steps:
+            action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
+        else:
+            room_regions = human.map_layout.metadata.get("room_regions", {})
+            transition_targets = human.map_layout.metadata.get("impatient_transition_targets", {})
+            source_room = next(
+                (
+                    str(room_name)
+                    for room_name, room_region in room_regions.items()
+                    if hasattr(room_region, "contains_point") and room_region.contains_point(robot_xy)
+                ),
+                None,
             )
-            yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+            if source_room is None:
+                source_room = min(
+                    (
+                        str(room_name)
+                        for room_name, room_region in room_regions.items()
+                        if hasattr(room_region, "center")
+                    ),
+                    key=lambda room_name: float(
+                        np.linalg.norm(
+                            np.asarray(room_regions[room_name].center(), dtype=np.float32) - robot_xy
+                        )
+                    ),
+                    default=None,
+                )
 
-        v_total = np.zeros(2, dtype=np.float32)
-        action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+            target_spec = transition_targets.get(source_room, {})
+            approach_xy = target_spec.get("approach_xy")
+            focus_xy = target_spec.get("focus_xy")
+            if approach_xy is None or focus_xy is None:
+                action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
+            else:
+                target_xy = np.asarray(approach_xy, dtype=np.float32)
+                focus_xy = np.asarray(focus_xy, dtype=np.float32)
+                to_target_xy = target_xy - current_xy
+                dist_to_target = float(np.linalg.norm(to_target_xy))
+                focus_delta = focus_xy - current_xy
+                desired_yaw = (
+                    float(np.arctan2(focus_delta[1], focus_delta[0]))
+                    if np.linalg.norm(focus_delta) > NORM_EPS
+                    else float(yaw)
+                )
+
+                if dist_to_target <= human.waypoint_threshold:
+                    action = human._compose_action(
+                        np.zeros(2, dtype=np.float32),
+                        HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - yaw),
+                    )
+                else:
+                    v_goal = human.max_speed * (to_target_xy / dist_to_target)
+                    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
+                    v_total += human._compute_hr_spacing_force(
+                        current_xy=current_xy,
+                        robot_xy=robot_xy,
+                        distance_min=human.hr_distance_min,
+                        distance_max=None,
+                    )
+                    v_total = human._limit_speed(v_total, human.max_speed)
+                    v_total = human._adjust_target_velocity_for_walls(
+                        guide_xy=to_target_xy,
+                        desired_v_xy=v_total,
+                    )
+                    action = human._compose_action(
+                        v_total,
+                        HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - yaw),
+                    )
     else:
         human.assign_target_from_context(ctx)
         action = _step_following(human, ctx, pose)
