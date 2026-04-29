@@ -207,19 +207,14 @@ def _step_distracted(human, ctx, pose):
             yaw_err = human._wrap_to_pi(desired_yaw - yaw)
             action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
-    _maybe_force_recover_distracted(human)
+    if (
+        human.mode == HumanMode.DISTRACTED
+        and human.distracted_elapsed_steps >= human.distracted_duration
+    ):
+        human.set_mode(human.distracted_recovery_mode)
+        if human.enable_event_logs:
+            logger.info(f">>> {human.name} recovered from DISTRACTED timeout -> {human.mode.upper()}")
     return action
-
-
-def _maybe_force_recover_distracted(human):
-    if human.mode != HumanMode.DISTRACTED:
-        return
-    if human.distracted_elapsed_steps < human.distracted_duration:
-        return
-    human.set_mode(human.distracted_recovery_mode)
-    if human.enable_event_logs:
-        logger.info(f">>> {human.name} recovered from DISTRACTED timeout -> {human.mode.upper()}")
-
 
 def _step_following_distracted_stop(human, *, current_yaw: float, desired_yaw: float):
     human.distracted_timer += 1
