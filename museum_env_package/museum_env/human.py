@@ -290,10 +290,6 @@ class Human:
         self.distracted_partner_index = None if partner_index is None else int(partner_index)
         self.speaking_active = bool(behavior_kind == DISTRACTED_BEHAVIOR_CONVERSATION)
 
-    def apply_callback_response(self, response: str):
-        if response == "rejoin":
-            self.set_mode(self.distracted_recovery_mode)
-
     @staticmethod
     def _compose_action(v_xy, yaw_rate):
         action = np.zeros(3, dtype=np.float32)

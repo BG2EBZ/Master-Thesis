@@ -9,6 +9,7 @@ from museum_env.env import MuseumEnv
 from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
     HUMAN_SPEAKING_HALO_RGBA_ON,
+    ROBOT_COLOR_SAD,
 )
 from museum_env.human import (
     DEFAULT_SIM_TIMESTEP_SECONDS,
@@ -24,7 +25,6 @@ from museum_env.human import (
     HumanProfile,
 )
 from museum_env.map_layouts import AxisAlignedRect, MapLayout
-from museum_env.robot import RobotCallbackPhase, RobotMode
 
 
 class MuseumEnvRefactorTests(unittest.TestCase):
@@ -49,31 +49,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
     def _make_pose_data(self, pose):
         return SimpleNamespace(qpos=np.array(pose, dtype=np.float32))
-
-    def _arm_callback(
-        self,
-        env,
-        *,
-        target_idx: int,
-        phase=RobotCallbackPhase.CUE,
-        attempt_index: int = 1,
-        cue_total_steps: int = 1,
-        cue_elapsed_steps: int = 0,
-        response_sampled: bool = True,
-    ):
-        target_xy = np.array(env.humans[target_idx].get_pose(env.data)[:2], dtype=np.float32)
-        env.callback_state.active_target_idx = int(target_idx)
-        env.robot.callback_active = True
-        env.robot.callback_target_idx = int(target_idx)
-        env.robot.callback_target_xy = target_xy
-        env.robot.callback_attempt_index = int(attempt_index)
-        env.robot.callback_phase = str(phase)
-        env.robot.callback_cue_total_steps = int(cue_total_steps)
-        env.robot.callback_cue_elapsed_steps = int(cue_elapsed_steps)
-        env.robot.callback_response_sampled = bool(response_sampled)
-        env.robot.callback_cue_completed_this_step = False
-        env.robot.callback_turn_done = phase != RobotCallbackPhase.TURN
-        env.robot.mode = RobotMode.CALLBACK
 
     def test_reset_contract_and_default_profile(self):
         env = self._make_env(n_humans=5)
@@ -150,64 +125,68 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_callback_starts_from_paused_listening(self):
+    def test_listening_distracted_does_not_pause_or_trigger_callback(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=14)
             human = env.humans[0]
             env.listening_state.enter_wait(False)
-            env.listening_state.pause()
-            env.robot.listen_mode = False
+            env.robot.listen_mode = True
             human.set_mode(HumanMode.DISTRACTED)
             human.distracted_source = DISTRACTED_SOURCE_LISTENING
             human.distracted_recovery_mode = HumanMode.LISTENING
 
             _, _, _, _, info = env.step(None)
 
-            self.assertTrue(info["events"]["callback_triggered"])
-            self.assertTrue(env.robot.callback_active)
-            self.assertIsNotNone(info["state"]["callback_phase"])
+            self.assertEqual(env.listening_state.phase, "wait")
+            self.assertTrue(env.robot.listen_mode)
+            self.assertFalse(info["events"]["callback_triggered"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertIsNone(info["state"]["callback_phase"])
         finally:
             env.close()
 
-    def test_callback_success_resumes_wait_phase(self):
+    def test_distracted_turns_robot_blue_without_other_response(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=15)
             human = env.humans[0]
-            human.set_mode(HumanMode.LISTENING)
-            env.listening_state.enter_wait(False)
-            env.listening_state.counter = 7
-            env.listening_state.pause()
-            env.robot.listen_mode = False
-            env.callback_state.success_mode = HumanMode.LISTENING
-            self._arm_callback(env, target_idx=0)
+            env.follow_phase = "transit_follow"
+            human.set_mode(HumanMode.DISTRACTED)
+            human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+            human.distracted_recovery_mode = HumanMode.FOLLOWING
 
             _, _, _, _, info = env.step(None)
 
-            self.assertTrue(info["events"]["callback_completed"])
-            self.assertTrue(info["events"]["callback_success"])
-            self.assertEqual(env.listening_state.phase, "wait")
-            self.assertEqual(env.listening_state.counter, 8)
-            self.assertTrue(env.robot.listen_mode)
+            self.assertEqual(info["state"]["robot_emotion"], "sad")
+            self.assertFalse(info["events"]["callback_triggered"])
+            self.assertFalse(info["events"]["callback_completed"])
+            self.assertFalse(info["events"]["callback_success"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertIsNone(info["state"]["callback_phase"])
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.robot_base_geom_id],
+                ROBOT_COLOR_SAD,
+                atol=1e-6,
+            )
         finally:
             env.close()
 
-    def test_callback_retries_once_when_target_stays_distracted(self):
+    def test_stale_callback_state_is_cleared_without_robot_response(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=16)
-            human = env.humans[0]
-            human.set_mode(HumanMode.DISTRACTED)
-            human.distracted_recovery_mode = HumanMode.FOLLOWING
-            env.callback_state.success_mode = HumanMode.FOLLOWING
-            self._arm_callback(env, target_idx=0)
+            env.robot.callback_active = True
+            env.robot.callback_phase = "cue"
+            env.robot.callback_target_idx = 0
+            env.robot.callback_target_xy = np.array(env.humans[0].get_pose(env.data)[:2], dtype=np.float32)
+            env.robot.mode = "callback"
 
             _, _, _, _, info = env.step(None)
 
-            self.assertFalse(info["events"]["callback_completed"])
-            self.assertTrue(env.robot.callback_active)
-            self.assertEqual(env.robot.callback_attempt_index, 2)
+            self.assertFalse(env.robot.callback_active)
+            self.assertIsNone(env.robot.callback_phase)
+            self.assertNotEqual(info["state"]["robot_mode"], "callback")
         finally:
             env.close()
 

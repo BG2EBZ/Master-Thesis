@@ -256,16 +256,11 @@ class Robot:
         return action
 
     def update_emotion(self, human_modes):
-        """Update robot emotion from sad/happy rules."""
-        # Priority: SAD > HAPPY (timed hold) > NATURAL.
+        """Update robot emotion from the current human crowd state."""
         for mode in human_modes:
             if mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
                 self.emotion = RobotEmotion.SAD
                 return self.emotion
-        if self.happy_hold_steps_remaining > 0:
-            self.emotion = RobotEmotion.HAPPY
-            self.happy_hold_steps_remaining -= 1
-            return self.emotion
         self.emotion = RobotEmotion.NATURAL
         return self.emotion
 
@@ -292,27 +287,10 @@ class Robot:
               "enter_listen": bool
             }
         """
+        # Distracted humans no longer trigger callback behavior, so any stale
+        # callback state should be discarded before the standard controller runs.
         if self.callback_active:
-            dist, desired_yaw, actual_yaw = self._compute_waypoint_metrics(robot_pose)
-            callback_action = self._callback_action(robot_pose)
-            return {
-                "action": callback_action,
-                "dist": float(dist),
-                "desired_yaw": float(desired_yaw),
-                "actual_yaw": float(actual_yaw),
-                "mode": RobotMode.CALLBACK,
-                "enter_listen": False,
-                "emotion": str(self.emotion),
-                "speaker_active": bool(self.speaker_active),
-                "callback_attempt_index": int(self.callback_attempt_index),
-                "callback_phase": (
-                    str(self.callback_phase) if self.callback_phase is not None else None
-                ),
-                "callback_cue_elapsed_steps": int(self.callback_cue_elapsed_steps),
-                "callback_cue_total_steps": int(self.callback_cue_total_steps),
-                "callback_response_sampled": bool(self.callback_response_sampled),
-                "callback_cue_completed_this_step": bool(self.callback_cue_completed_this_step),
-            }
+            self._finish_callback()
 
         # base waypoint action
         base_action, dist, desired_yaw, actual_yaw = self._waypoint_action(robot_pose)
