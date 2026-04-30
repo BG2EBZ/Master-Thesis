@@ -23,6 +23,7 @@ from .human import (
     LISTENING_IMPATIENT_TARGET_REACHED_DEG,
     LISTENING_RING_GAIN,
     LISTENING_SECTOR_PROJECTION_EPS,
+    MIN_SPEED_EPS,
     NORM_EPS,
     OVERWHELMED_STAGE_SWITCH_DIST,
     HumanMode,
@@ -215,6 +216,15 @@ def _step_distracted(human, ctx, pose):
                 guide_xy=to_target_xy,
                 desired_v_xy=v_total,
             )
+            guide_norm = float(np.linalg.norm(to_target_xy))
+            if guide_norm > NORM_EPS:
+                guide_dir = to_target_xy / guide_norm
+                if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
+                    fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
+                    if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
+                        v_total = np.asarray(fallback_v_xy, dtype=np.float32)
+                    else:
+                        v_total = np.zeros(2, dtype=np.float32)
 
             yaw_err = human._wrap_to_pi(desired_yaw - yaw)
             action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)

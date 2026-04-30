@@ -328,6 +328,38 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
 
+    def test_following_distracted_preserves_forward_progress_when_hr_force_reverses_velocity(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.distracted_target_xy = np.array([6.0, 6.0], dtype=np.float32)
+        human.distracted_target_yaw = float(np.pi / 2.0)
+
+        pose = (6.0, 5.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (6.0, 1.0, 0.0),
+            "robot_xy": np.array([6.0, 1.0], dtype=np.float32),
+            "human_xy": np.array([[6.0, 5.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        action = human.step(None, data, ctx)
+
+        to_target_xy = human.distracted_target_xy - np.array(pose[:2], dtype=np.float32)
+        self.assertGreater(float(np.dot(action[:2], to_target_xy)), 0.0)
+        np.testing.assert_allclose(
+            action[:2],
+            np.array([0.0, DISTRACTED_SPEED_SCALE * human.max_speed], dtype=np.float32),
+            atol=1e-6,
+        )
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
+
     def test_following_distracted_orients_toward_nearest_exhibit_while_moving(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.set_mode(HumanMode.DISTRACTED)
