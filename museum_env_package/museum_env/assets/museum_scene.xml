@@ -26,38 +26,38 @@
             <!-- Left corridor wall at x=6.5 -->
 
             <!-- Left wall of corridor -->
-            <geom name="corridor_wall_left" type="box" pos="6.5 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
+            <geom name="corridor_wall_left" type="box" pos="6.5 -5 1.5" size="0.15 5.15 1.5" rgba="0.85 0.85 0.85 1"/>
 
             <!-- Right corridor wall at x=10 -->
-            <geom name="corridor_wall_right" type="box" pos="10 -5 1.5" size="0.15 5 1.5" rgba="0.85 0.85 0.85 1"/>
+            <geom name="corridor_wall_right" type="box" pos="10 -5 1.5" size="0.15 5.15 1.5" rgba="0.85 0.85 0.85 1"/>
 
 
             <!-- ROOM A (10x10): x[0,10], y[0,10] -->
             <!-- Top wall y=10 -->
-            <geom name="roomA_wall_top" type="box" pos="5 10 1.5" size="5 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomA_wall_top" type="box" pos="5 10 1.5" size="5.15 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
             <!-- Left wall x=0 -->
-            <geom name="roomA_wall_left" type="box" pos="0 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomA_wall_left" type="box" pos="0 5 1.5" size="0.15 5.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
             <!-- Right wall x=10 -->
-            <geom name="roomA_wall_right" type="box" pos="10 5 1.5" size="0.15 5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomA_wall_right" type="box" pos="10 5 1.5" size="0.15 5.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
-            <!-- Bottom wall y=0, leave a 3.5m opening at the RIGHT side: x in [6.5,10] -->
-            <geom name="roomA_wall_bottom_left" type="box" pos="3.25 0 1.5" size="3.25 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Bottom wall y=0, keep the right-side opening to the corridor -->
+            <geom name="roomA_wall_bottom_left" type="box" pos="3.25 0 1.5" size="3.40 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
 
             <!-- ROOM B: x[6.5,12], y[-15,-10] (5.5x5) -->
             <!-- Left wall x=6.5 -->
-            <geom name="roomB_wall_left" type="box" pos="6.5 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomB_wall_left" type="box" pos="6.5 -12.5 1.5" size="0.15 2.65 1.5" rgba="0.88 0.88 0.88 1"/>
 
             <!-- Right wall x=12 -->
-            <geom name="roomB_wall_right" type="box" pos="12 -12.5 1.5" size="0.15 2.5 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomB_wall_right" type="box" pos="12 -12.5 1.5" size="0.15 2.65 1.5" rgba="0.88 0.88 0.88 1"/>
 
             <!-- Bottom wall y=-15 -->
-            <geom name="roomB_wall_bottom" type="box" pos="9.25 -15 1.5" size="2.75 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <geom name="roomB_wall_bottom" type="box" pos="9.25 -15 1.5" size="2.90 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
-            <!-- Top wall y=-10, leave a 3m opening at the LEFT side: x in [7,10] to connect corridor -->
-            <geom name="roomB_wall_top_right" type="box" pos="11 -10 1.5" size="1 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
+            <!-- Top wall y=-10, keep the left-side opening to connect corridor -->
+            <geom name="roomB_wall_top_right" type="box" pos="11 -10 1.5" size="1.15 0.15 1.5" rgba="0.88 0.88 0.88 1"/>
 
             <!-- ============ WALL EXHIBITIONS (visual only) ============ -->
             <!-- Room A framed paintings -->
