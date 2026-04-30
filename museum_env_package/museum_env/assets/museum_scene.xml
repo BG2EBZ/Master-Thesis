@@ -186,6 +186,7 @@
 
                   <!-- Nose: small marker to show front direction (person faces +y in its local frame) -->
                   <geom name="person1_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person1_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
 
                   <!-- Tracking site -->
                   <site name="person1_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
@@ -200,6 +201,7 @@
                   <geom name="person2_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.20 0.70 0.30 1"/>
                   <geom name="person2_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person2_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person2_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person2_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p2" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -211,6 +213,7 @@
                   <geom name="person3_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.22 0.72 0.33 1"/>
                   <geom name="person3_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person3_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person3_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person3_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p3" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -222,6 +225,7 @@
                   <geom name="person4_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.24 0.74 0.35 1"/>
                   <geom name="person4_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person4_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person4_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person4_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p4" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -233,6 +237,7 @@
                   <geom name="person5_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.26 0.76 0.37 1"/>
                   <geom name="person5_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person5_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person5_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person5_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p5" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -244,6 +249,7 @@
                   <geom name="person6_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.28 0.78 0.39 1"/>
                   <geom name="person6_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person6_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person6_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person6_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p6" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -255,6 +261,7 @@
                   <geom name="person7_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.30 0.80 0.41 1"/>
                   <geom name="person7_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person7_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person7_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person7_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p7" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -266,6 +273,7 @@
                   <geom name="person8_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.32 0.82 0.43 1"/>
                   <geom name="person8_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person8_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person8_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person8_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p8" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -277,6 +285,7 @@
                   <geom name="person9_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.34 0.84 0.45 1"/>
                   <geom name="person9_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person9_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person9_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person9_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p9" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -288,6 +297,7 @@
                   <geom name="person10_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.36 0.86 0.47 1"/>
                   <geom name="person10_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person10_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person10_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person10_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p10" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -299,6 +309,7 @@
                   <geom name="person11_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.38 0.88 0.49 1"/>
                   <geom name="person11_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person11_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person11_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person11_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p11" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -310,6 +321,7 @@
                   <geom name="person12_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.40 0.90 0.51 1"/>
                   <geom name="person12_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person12_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person12_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person12_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p12" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -321,6 +333,7 @@
                   <geom name="person13_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.42 0.92 0.53 1"/>
                   <geom name="person13_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person13_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person13_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person13_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p13" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -332,6 +345,7 @@
                   <geom name="person14_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.44 0.94 0.55 1"/>
                   <geom name="person14_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person14_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person14_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person14_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p14" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>
@@ -343,6 +357,7 @@
                   <geom name="person15_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.46 0.96 0.57 1"/>
                   <geom name="person15_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person15_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
+                  <geom name="person15_speaking_halo" type="cylinder" pos="0 0 -0.115" size="0.32 0.004" rgba="1.0 0.9 0.2 0.0" contype="0" conaffinity="0"/>
                   <site name="person15_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
                   <site name="p15" pos="0 0 0.52" size="0.005" rgba="1 1 1 1" group="2"/>
             </body>

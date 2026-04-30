@@ -2,11 +2,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import mujoco
 import numpy as np
 
 from museum_env.env import MuseumEnv
+from museum_env.env_reporting import (
+    HUMAN_SPEAKING_HALO_RGBA_OFF,
+    HUMAN_SPEAKING_HALO_RGBA_ON,
+)
 from museum_env.human import (
     DEFAULT_SIM_TIMESTEP_SECONDS,
+    DISTRACTED_BEHAVIOR_CONVERSATION,
+    DISTRACTED_CONVERSATION_STOP_DISTANCE,
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
     DISTRACTED_SPEED_SCALE,
@@ -201,6 +208,82 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertFalse(info["events"]["callback_completed"])
             self.assertTrue(env.robot.callback_active)
             self.assertEqual(env.robot.callback_attempt_index, 2)
+        finally:
+            env.close()
+
+    def test_step_enables_human_speaking_halos_for_conversation(self):
+        env = self._make_env(n_humans=2, callback_trigger_distance_meters=10.0)
+        try:
+            env.reset(seed=18)
+            first_human = env.humans[0]
+            second_human = env.humans[1]
+
+            env.data.qpos[first_human.qpos_idx : first_human.qpos_idx + 3] = np.array(
+                [5.0, 5.8, 0.0],
+                dtype=np.float32,
+            )
+            env.data.qvel[first_human.qpos_idx : first_human.qpos_idx + 3] = 0.0
+            env.data.qpos[second_human.qpos_idx : second_human.qpos_idx + 3] = np.array(
+                [5.6, 5.8, np.pi],
+                dtype=np.float32,
+            )
+            env.data.qvel[second_human.qpos_idx : second_human.qpos_idx + 3] = 0.0
+            mujoco.mj_forward(env.model, env.data)
+
+            for human in env.humans:
+                human.set_mode(HumanMode.DISTRACTED)
+                human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+            env.step(None)
+
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.all_human_speaking_halo_geom_ids[0]],
+                HUMAN_SPEAKING_HALO_RGBA_ON,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.all_human_speaking_halo_geom_ids[1]],
+                HUMAN_SPEAKING_HALO_RGBA_ON,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.all_human_speaking_halo_geom_ids[2]],
+                HUMAN_SPEAKING_HALO_RGBA_OFF,
+                atol=1e-6,
+            )
+        finally:
+            env.close()
+
+    def test_sync_human_visual_state_clears_halo_after_exit_and_reset(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=19)
+            human = env.humans[0]
+            halo_geom_id = env.all_human_speaking_halo_geom_ids[0]
+            inactive_halo_geom_id = env.all_human_speaking_halo_geom_ids[1]
+
+            human.set_mode(HumanMode.DISTRACTED)
+            human.speaking_active = True
+            env._sync_human_visual_state()
+            np.testing.assert_allclose(env.model.geom_rgba[halo_geom_id], HUMAN_SPEAKING_HALO_RGBA_ON, atol=1e-6)
+
+            human.set_mode(HumanMode.FOLLOWING)
+            env._sync_human_visual_state()
+            np.testing.assert_allclose(env.model.geom_rgba[halo_geom_id], HUMAN_SPEAKING_HALO_RGBA_OFF, atol=1e-6)
+
+            env.all_humans[1].speaking_active = True
+            env._sync_human_visual_state()
+            np.testing.assert_allclose(
+                env.model.geom_rgba[inactive_halo_geom_id],
+                HUMAN_SPEAKING_HALO_RGBA_OFF,
+                atol=1e-6,
+            )
+
+            human.set_mode(HumanMode.DISTRACTED)
+            human.speaking_active = True
+            env._sync_human_visual_state()
+            env.reset(seed=20)
+            np.testing.assert_allclose(env.model.geom_rgba[halo_geom_id], HUMAN_SPEAKING_HALO_RGBA_OFF, atol=1e-6)
         finally:
             env.close()
 
@@ -558,6 +641,253 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         )
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
+
+    def test_distracted_conversation_prioritizes_nearby_distracted_partner_over_exhibit(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (6.2, 6.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 6.0, 0.0),
+            "robot_xy": np.array([5.0, 6.0], dtype=np.float32),
+            "human_xy": np.array([[6.2, 6.0], [6.4, 6.1]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.DISTRACTED],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        action = human.step(None, data, ctx)
+
+        self.assertEqual(human.distracted_behavior_kind, DISTRACTED_BEHAVIOR_CONVERSATION)
+        self.assertEqual(human.distracted_partner_index, 1)
+        self.assertTrue(human.speaking_active)
+        np.testing.assert_allclose(
+            human.distracted_target_xy,
+            np.array(pose[:2], dtype=np.float32),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(
+            float(action[2]),
+            HUMAN_YAW_RATE_GAIN * float(np.arctan2(0.1, 0.2)),
+            places=4,
+        )
+
+    def test_distracted_conversation_selects_one_nearest_partner_and_keeps_it_while_valid(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        first_ctx = {
+            "index": 0,
+            "n_humans": 3,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[0.0, 0.0], [2.5, 0.0], [1.5, 0.0]], dtype=np.float32),
+            "human_modes": [
+                HumanMode.DISTRACTED,
+                HumanMode.DISTRACTED,
+                HumanMode.DISTRACTED,
+            ],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        human.step(None, data, first_ctx)
+        self.assertEqual(human.distracted_partner_index, 2)
+
+        sticky_ctx = {
+            **first_ctx,
+            "human_xy": np.array([[0.0, 0.0], [0.9, 0.0], [1.5, 0.0]], dtype=np.float32),
+        }
+        human.step(None, data, sticky_ctx)
+        self.assertEqual(human.distracted_partner_index, 2)
+        self.assertEqual(human.distracted_behavior_kind, DISTRACTED_BEHAVIOR_CONVERSATION)
+
+    def test_distracted_conversation_moves_toward_stop_distance_through_wall_adjustment(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        adjusted_v_xy = np.array([0.0, 0.3], dtype=np.float32)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[0.0, 0.0], [2.0, 0.0]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.DISTRACTED],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
+            action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(
+            human.distracted_target_xy,
+            np.array([2.0 - DISTRACTED_CONVERSATION_STOP_DISTANCE, 0.0], dtype=np.float32),
+            atol=1e-6,
+        )
+        adjust_mock.assert_called_once()
+        np.testing.assert_allclose(
+            adjust_mock.call_args.kwargs["guide_xy"],
+            np.array([2.0 - DISTRACTED_CONVERSATION_STOP_DISTANCE, 0.0], dtype=np.float32),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+        self.assertTrue(human.speaking_active)
+
+    def test_distracted_conversation_stops_and_rotates_when_within_stop_distance(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[0.0, 0.0], [0.0, 0.5]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.DISTRACTED],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        action = human.step(None, data, ctx)
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
+
+        aligned_action = human.step(None, self._make_pose_data((0.0, 0.0, np.pi / 2.0)), ctx)
+        np.testing.assert_allclose(aligned_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+
+    def test_distracted_conversation_falls_back_to_regular_focus_when_partner_invalid(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        conversation_ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[0.0, 0.0], [2.0, 0.0]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.DISTRACTED],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+        human.step(None, data, conversation_ctx)
+        self.assertTrue(human.speaking_active)
+
+        lost_partner_ctx = {
+            **conversation_ctx,
+            "human_xy": np.array([[0.0, 0.0], [5.0, 0.0]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.FOLLOWING],
+        }
+        with (
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            action = human.step(None, data, lost_partner_ctx)
+
+        self.assertFalse(human.speaking_active)
+        self.assertIsNone(human.distracted_partner_index)
+        self.assertNotEqual(human.distracted_behavior_kind, DISTRACTED_BEHAVIOR_CONVERSATION)
+        self.assertAlmostEqual(
+            float(np.linalg.norm(human.distracted_target_xy - np.array(pose[:2], dtype=np.float32))),
+            1.0,
+            places=6,
+        )
+        self.assertTrue(np.isfinite(action).all())
+
+    def test_listening_distracted_conversation_times_out_back_to_listening(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_LISTENING
+        human.distracted_recovery_mode = HumanMode.LISTENING
+        human.distracted_duration = 2
+
+        pose = (0.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 2,
+            "robot_pose": (1.0, 0.0, 0.0),
+            "robot_xy": np.array([1.0, 0.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([[0.0, 0.0], [2.0, 0.0]], dtype=np.float32),
+            "human_modes": [HumanMode.DISTRACTED, HumanMode.DISTRACTED],
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.DISTRACTED)
+        self.assertTrue(human.speaking_active)
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.LISTENING)
+        self.assertFalse(human.speaking_active)
 
     def test_adjust_target_velocity_for_walls_keeps_clear_velocity(self):
         human = Human("person1", "person1", 0, max_speed=1.0)

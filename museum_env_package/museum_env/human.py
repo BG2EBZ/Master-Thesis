@@ -26,6 +26,7 @@ DEFAULT_FOLLOW_RADIUS = 1.0
 DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
 DISTRACTED_HUMAN_LOOK_RADIUS = 3.0
 DISTRACTED_FALLBACK_DISTANCE = 1.0
+DISTRACTED_CONVERSATION_STOP_DISTANCE = 0.8
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
@@ -50,6 +51,8 @@ WALL_DETOUR_ROTATIONS = tuple(
     (float(np.cos(np.deg2rad(angle_deg))), float(np.sin(np.deg2rad(angle_deg))))
     for angle_deg in WALL_DETOUR_ANGLES_DEG
 )
+DISTRACTED_BEHAVIOR_FOCUS = "focus"
+DISTRACTED_BEHAVIOR_CONVERSATION = "conversation"
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -106,8 +109,11 @@ class Human:
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
+        self.distracted_behavior_kind = None
+        self.distracted_partner_index = None
         self.distracted_recovery_mode = HumanMode.FOLLOWING
         self.distracted_source = None
+        self.speaking_active = False
 
         self.impatient_duration = 800
         self.impatient_timer = 0
@@ -264,12 +270,25 @@ class Human:
         self.distracted_target_xy = None
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
+        self.distracted_behavior_kind = None
+        self.distracted_partner_index = None
+        self.speaking_active = False
 
-    def _set_distracted_target_state(self, target_yaw: float, target_xy):
+    def _set_distracted_target_state(
+        self,
+        target_yaw: float,
+        target_xy,
+        *,
+        behavior_kind: str = DISTRACTED_BEHAVIOR_FOCUS,
+        partner_index=None,
+    ):
         target_xy = np.asarray(target_xy, dtype=np.float32)
         self.distracted_target_yaw = float(target_yaw)
         self.distracted_target_xy = target_xy
         self.distracted_stop_reached = False
+        self.distracted_behavior_kind = str(behavior_kind)
+        self.distracted_partner_index = None if partner_index is None else int(partner_index)
+        self.speaking_active = bool(behavior_kind == DISTRACTED_BEHAVIOR_CONVERSATION)
 
     def apply_callback_response(self, response: str):
         if response == "rejoin":

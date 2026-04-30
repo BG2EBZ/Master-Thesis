@@ -8,6 +8,8 @@ utilities.
 import numpy as np
 
 from .human import (
+    DISTRACTED_BEHAVIOR_CONVERSATION,
+    DISTRACTED_CONVERSATION_STOP_DISTANCE,
     DISTRACTED_EXHIBIT_LOOK_RADIUS,
     DISTRACTED_FALLBACK_DISTANCE,
     DISTRACTED_HUMAN_LOOK_RADIUS,
@@ -154,12 +156,22 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
 
 def _step_distracted(human, ctx, pose):
     human.distracted_elapsed_steps += 1
+    yaw = pose[2]
+    current_xy = np.asarray(pose[:2], dtype=np.float32)
 
-    if human.distracted_source == DISTRACTED_SOURCE_LISTENING:
+    partner_xy = _sync_distracted_conversation_state(human, ctx, current_xy)
+    if partner_xy is not None:
+        action = _step_distracted_conversation(
+            human,
+            ctx,
+            current_xy=current_xy,
+            current_yaw=yaw,
+            partner_xy=partner_xy,
+        )
+
+    elif human.distracted_source == DISTRACTED_SOURCE_LISTENING:
         action = _step_listening_distracted(human, ctx, pose)
     else:
-        yaw = pose[2]
-        current_xy = np.asarray(pose[:2], dtype=np.float32)
         # Check the distracted target state and initialize if needed.
         if human.distracted_target_xy is None:
             _initialize_distracted_target(
@@ -415,6 +427,124 @@ def _step_post_explanation_yield(human, ctx, pose):
     return human._move(target_xy - current_xy, pose[2], ctx, current_xy)
 
 
+def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float, partner_xy):
+    partner_xy = np.asarray(partner_xy, dtype=np.float32)
+    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
+    to_partner_xy = partner_xy - current_xy
+    dist_to_partner = float(np.linalg.norm(to_partner_xy))
+    desired_yaw = float(
+        np.arctan2(to_partner_xy[1], to_partner_xy[0])
+        if dist_to_partner > NORM_EPS
+        else human.distracted_target_yaw
+    )
+
+    if dist_to_partner <= DISTRACTED_CONVERSATION_STOP_DISTANCE + NORM_EPS:
+        yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+        if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
+            return human._compose_action(
+                np.zeros(2, dtype=np.float32),
+                HUMAN_YAW_RATE_GAIN * yaw_err,
+            )
+        return np.zeros(3, dtype=np.float32)
+
+    to_target_xy = target_xy - current_xy
+    move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
+    if np.linalg.norm(to_target_xy) > NORM_EPS:
+        v_goal = move_speed_limit * (to_target_xy / np.linalg.norm(to_target_xy))
+    else:
+        v_goal = np.zeros(2, dtype=np.float32)
+
+    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
+    v_total += human._compute_hr_spacing_force(
+        current_xy=current_xy,
+        robot_xy=robot_xy,
+        distance_min=human.hr_distance_min,
+        distance_max=human.hr_distance_max,
+    )
+    v_total = human._limit_speed(v_total, move_speed_limit)
+    v_total = human._adjust_target_velocity_for_walls(
+        guide_xy=to_target_xy,
+        desired_v_xy=v_total,
+    )
+
+    yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+
+
+def _sync_distracted_conversation_state(human, ctx, current_xy):
+    partner = _resolve_distracted_conversation_partner(human, ctx, current_xy)
+    if partner is None:
+        if human.distracted_behavior_kind == DISTRACTED_BEHAVIOR_CONVERSATION:
+            human._clear_distracted_navigation_state()
+        return None
+
+    partner_index, partner_xy = partner
+    partner_xy = np.asarray(partner_xy, dtype=np.float32)
+    to_partner_xy = partner_xy - current_xy
+    dist_to_partner = float(np.linalg.norm(to_partner_xy))
+    target_yaw = float(
+        np.arctan2(to_partner_xy[1], to_partner_xy[0])
+        if dist_to_partner > NORM_EPS
+        else human.distracted_target_yaw if human.distracted_target_yaw is not None else 0.0
+    )
+    if dist_to_partner > DISTRACTED_CONVERSATION_STOP_DISTANCE + NORM_EPS:
+        target_xy = (
+            partner_xy
+            - DISTRACTED_CONVERSATION_STOP_DISTANCE * (to_partner_xy / dist_to_partner)
+        )
+    else:
+        target_xy = np.asarray(current_xy, dtype=np.float32).copy()
+
+    human._set_distracted_target_state(
+        target_yaw=target_yaw,
+        target_xy=target_xy,
+        behavior_kind=DISTRACTED_BEHAVIOR_CONVERSATION,
+        partner_index=partner_index,
+    )
+    return partner_xy
+
+
+def _resolve_distracted_conversation_partner(human, ctx, current_xy):
+    human_xy = np.asarray(ctx.get("human_xy", np.zeros((0, 2), dtype=np.float32)), dtype=np.float32)
+    if human_xy.size == 0:
+        return None
+    if human_xy.ndim == 1:
+        human_xy = human_xy.reshape(1, -1)
+
+    human_modes = tuple(ctx.get("human_modes", ()))
+    if len(human_modes) != human_xy.shape[0]:
+        human_modes = tuple([None] * human_xy.shape[0])
+
+    current_index = int(ctx.get("index", -1))
+    partner_index = human.distracted_partner_index
+    if partner_index is not None and 0 <= int(partner_index) < human_xy.shape[0]:
+        partner_index = int(partner_index)
+        if (
+            partner_index != current_index
+            and human_modes[partner_index] == HumanMode.DISTRACTED
+        ):
+            partner_xy = np.asarray(human_xy[partner_index, :2], dtype=np.float32)
+            if np.linalg.norm(partner_xy - current_xy) <= DISTRACTED_HUMAN_LOOK_RADIUS:
+                return partner_index, partner_xy
+
+    candidate_indices = [
+        idx
+        for idx, mode in enumerate(human_modes)
+        if idx != current_index and mode == HumanMode.DISTRACTED
+    ]
+    if not candidate_indices:
+        return None
+
+    candidate_xy = human_xy[np.asarray(candidate_indices, dtype=np.int32), :2]
+    return _select_nearest_candidate_index(
+        current_xy,
+        candidate_xy,
+        DISTRACTED_HUMAN_LOOK_RADIUS,
+        candidate_indices=candidate_indices,
+    )
+
+
 def _resolve_focus_yaw(human, current_xy, *, fallback_yaw: float) -> float:
     focus_target_xy = None
     if human.distracted_target_xy is not None:
@@ -429,23 +559,44 @@ def _resolve_focus_yaw(human, current_xy, *, fallback_yaw: float) -> float:
     return float(fallback_yaw)
 
 
-def _select_nearest_candidate(current_xy, candidates, max_distance: float, *, exclude_index=None):
+def _select_nearest_candidate_index(
+    current_xy,
+    candidates,
+    max_distance: float,
+    *,
+    candidate_indices=None,
+    exclude_index=None,
+):
     candidates = np.asarray(candidates, dtype=np.float32)
     if candidates.size == 0:
-        return None
+        return None, None
     if candidates.ndim == 1:
         candidates = candidates.reshape(1, -1)
+    if candidate_indices is None:
+        candidate_indices = np.arange(candidates.shape[0], dtype=np.int32)
+    else:
+        candidate_indices = np.asarray(candidate_indices, dtype=np.int32)
 
     deltas = candidates[:, :2] - np.asarray(current_xy, dtype=np.float32)[None, :]
     distances = np.linalg.norm(deltas, axis=1)
-    if exclude_index is not None and 0 <= int(exclude_index) < len(distances):
-        distances[int(exclude_index)] = np.inf
+    if exclude_index is not None:
+        distances[candidate_indices == int(exclude_index)] = np.inf
 
     best_idx = int(np.argmin(distances))
     best_distance = float(distances[best_idx])
     if (not np.isfinite(best_distance)) or best_distance > float(max_distance):
-        return None
-    return np.asarray(candidates[best_idx, :2], dtype=np.float32)
+        return None, None
+    return int(candidate_indices[best_idx]), np.asarray(candidates[best_idx, :2], dtype=np.float32)
+
+
+def _select_nearest_candidate(current_xy, candidates, max_distance: float, *, exclude_index=None):
+    _candidate_index, candidate_xy = _select_nearest_candidate_index(
+        current_xy,
+        candidates,
+        max_distance,
+        exclude_index=exclude_index,
+    )
+    return candidate_xy
 
 
 def _get_distractor_exhibit_points(human):

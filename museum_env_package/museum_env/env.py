@@ -9,6 +9,8 @@ import numpy as np
 from gymnasium import spaces
 
 from .env_reporting import (
+    HUMAN_SPEAKING_HALO_RGBA_OFF,
+    HUMAN_SPEAKING_HALO_RGBA_ON,
     apply_label_scene_option_to_viewer,
     apply_robot_visual_state,
     build_label_scene_option,
@@ -239,10 +241,14 @@ class MuseumEnv(gym.Env):
         for human, body_id in zip(self.all_humans, self.all_human_body_ids):
             human.body_id = body_id
         self.human_body_ids = self.all_human_body_ids[: len(self.humans)]
+        self.all_human_speaking_halo_geom_ids = [
+            self.model.geom(f"{human.body_name}_speaking_halo").id for human in self.all_humans
+        ]
 
         self._label_scene_option = build_label_scene_option()
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
+        self._sync_human_visual_state()
 
     def _log_event(self, msg: str) -> None:
         if self.enable_event_logs:
@@ -351,6 +357,20 @@ class MuseumEnv(gym.Env):
             visual_state=visual_state,
         )
         self._last_robot_visual_signature = visual_state.signature
+
+    def _sync_human_visual_state(self) -> None:
+        active_count = len(self.humans)
+        for idx, geom_id in enumerate(self.all_human_speaking_halo_geom_ids):
+            human = self.all_humans[idx]
+            halo_rgba = (
+                HUMAN_SPEAKING_HALO_RGBA_ON
+                if idx < active_count and bool(human.speaking_active)
+                else HUMAN_SPEAKING_HALO_RGBA_OFF
+            )
+            self.model.geom_rgba[geom_id] = halo_rgba
+
+    def _get_current_human_modes(self) -> list[str]:
+        return [human.mode for human in self.humans]
 
     def _is_robot_in_move_stage(self, robot_pose) -> bool:
         if self.robot.listen_mode or self.listening_state.phase == LISTEN_PHASE_WAIT or self.robot.callback_active:
@@ -773,6 +793,7 @@ class MuseumEnv(gym.Env):
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             human.set_mode(HumanMode.FOLLOWING if self.follow_phase is not None else HumanMode.WANDERING)
+        current_human_modes = self._get_current_human_modes()
 
         human.update_following_duration(
             eligible_following=self.follow_phase is not None and human.mode == HumanMode.FOLLOWING
@@ -800,6 +821,7 @@ class MuseumEnv(gym.Env):
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
             "human_xy": world_frame.human_xy,
+            "human_modes": current_human_modes,
             "repulsion": repulsion_vec,
             "follow_radius": FOLLOW_RADIUS_DEFAULT,
             "fan_half_angle": self.follow_fan_half_angle,
@@ -811,6 +833,7 @@ class MuseumEnv(gym.Env):
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             human.set_mode(HumanMode.LISTENING)
+        current_human_modes = self._get_current_human_modes()
 
         if human.mode == HumanMode.LISTENING and self._should_evaluate_fuzzy(idx, context="listening"):
             fuzzy_debug = self._compute_human_fuzzy_debug(
@@ -836,6 +859,7 @@ class MuseumEnv(gym.Env):
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],
             "human_xy": world_frame.human_xy,
+            "human_modes": current_human_modes,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
@@ -862,12 +886,15 @@ class MuseumEnv(gym.Env):
             else np.array(world_frame.robot_xy, dtype=np.float32)
         )
         anchor_robot_yaw = float(self.post_explanation_state.anchor_robot_yaw)
+        current_human_modes = self._get_current_human_modes()
 
         move_ctx = {
             "index": idx,
             "n_humans": len(self.humans),
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
+            "human_xy": world_frame.human_xy,
+            "human_modes": current_human_modes,
             "repulsion": repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
@@ -1012,6 +1039,7 @@ class MuseumEnv(gym.Env):
         )
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
+        self._sync_human_visual_state()
         gx, gy = self.robot.get_current_waypoint()
         x, y = world_frame.robot_xy
         return np.array([x, y, gx - x, gy - y], dtype=np.float32), {}
@@ -1095,6 +1123,7 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
         self._apply_human_controls(pre_frame)
+        self._sync_human_visual_state()
 
         mujoco.mj_step(self.model, self.data)
         post_frame = build_world_frame(
