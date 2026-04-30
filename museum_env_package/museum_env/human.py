@@ -43,10 +43,12 @@ HR_REPULSION_GAIN_MID_MULTIPLIER = 4.0
 HR_REPULSION_GAIN_NEAR_MULTIPLIER = 10.0
 NORM_EPS = 1e-3
 HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
-MIN_SPEED_EPS = 1e-6
+MIN_SPEED_EPS = 1e-3
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
-WALL_DETOUR_ANGLES_DEG = (45.0, -45.0 ,90.0, -90.0, 120.0, -120.0)
+WALL_REPULSION_DISTANCE_METERS = 0.45
+WALL_REPULSION_GAIN = 2.0
+WALL_DETOUR_ANGLES_DEG = (90.0, -90.0, 120.0, -120.0)
 WALL_DETOUR_ROTATIONS = tuple(
     (float(np.cos(np.deg2rad(angle_deg))), float(np.sin(np.deg2rad(angle_deg))))
     for angle_deg in WALL_DETOUR_ANGLES_DEG
@@ -339,15 +341,6 @@ class Human:
         return human_behaviors.step_behavior(self, ctx, pose)
 
     def _move(self, to_target_xy, yaw, ctx, current_xy):
-        robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-        v_repulsion = np.asarray(ctx["repulsion"], dtype=np.float32)
-        v_hr = self._compute_hr_spacing_force(
-            current_xy=current_xy,
-            robot_xy=robot_xy,
-            distance_min=self.hr_distance_min,
-            distance_max=self.hr_distance_max,
-        )
-
         to_target_xy = np.asarray(to_target_xy, dtype=np.float32)
         dist = np.linalg.norm(to_target_xy)
         if dist > NORM_EPS:
@@ -355,17 +348,54 @@ class Human:
         else:
             v_follow = np.zeros(2, dtype=np.float32)
 
-        v_total = v_follow + v_repulsion + v_hr
-        v_total = self._limit_speed(v_total, self.max_speed)
-
-        v_total = self._adjust_target_velocity_for_walls(
+        v_total = self._compose_move_velocity(
+            current_xy=current_xy,
             guide_xy=to_target_xy,
-            desired_v_xy=v_total,
+            goal_v_xy=v_follow,
+            speed_limit=self.max_speed,
+            repulsion_xy=ctx["repulsion"],
+            robot_xy=ctx["robot_xy"],
+            hr_distance_min=self.hr_distance_min,
+            hr_distance_max=self.hr_distance_max,
         )
         speed = np.linalg.norm(v_total)
         desired_yaw = np.arctan2(v_total[1], v_total[0]) if speed > NORM_EPS else yaw
         action = self._compose_action(v_total, HUMAN_YAW_RATE_GAIN * self._wrap_to_pi(desired_yaw - yaw))
         return action
+
+    def _compose_move_velocity(
+        self,
+        *,
+        current_xy,
+        guide_xy,
+        goal_v_xy,
+        speed_limit,
+        repulsion_xy=None,
+        robot_xy=None,
+        hr_distance_min=None,
+        hr_distance_max=None,
+    ) -> np.ndarray:
+        current_xy = np.asarray(current_xy, dtype=np.float32)
+        guide_xy = np.asarray(guide_xy, dtype=np.float32)
+        v_total = np.asarray(goal_v_xy, dtype=np.float32).copy()
+
+        if repulsion_xy is not None:
+            v_total += np.asarray(repulsion_xy, dtype=np.float32)
+
+        if robot_xy is not None and (hr_distance_min is not None or hr_distance_max is not None):
+            v_total += self._compute_hr_spacing_force(
+                current_xy=current_xy,
+                robot_xy=robot_xy,
+                distance_min=hr_distance_min,
+                distance_max=hr_distance_max,
+            )
+
+        v_total += self._compute_wall_spacing_force(guide_xy)
+        v_total = self._limit_speed(v_total, speed_limit)
+        return self._adjust_target_velocity_for_walls(
+            guide_xy=guide_xy,
+            desired_v_xy=v_total,
+        )
 
     def _adjust_target_velocity_for_walls(self, guide_xy, desired_v_xy):
         desired_v_xy = np.asarray(desired_v_xy, dtype=np.float32)
@@ -508,6 +538,42 @@ class Human:
             v_xy * min(1.0, clearance / RAYCAST_SLOWDOWN_DISTANCE_METERS),
             dtype=np.float32,
         )
+
+    def _compute_wall_spacing_force(self, guide_xy):
+        guide_xy = np.asarray(guide_xy, dtype=np.float32)
+        guide_norm = float(np.linalg.norm(guide_xy))
+        if guide_norm <= NORM_EPS:
+            return np.zeros(2, dtype=np.float32)
+
+        guide_dir = guide_xy / guide_norm
+        left_dir = np.array([-guide_dir[1], guide_dir[0]], dtype=np.float32)
+        right_dir = -left_dir
+
+        wall_force = np.zeros(2, dtype=np.float32)
+        left_hit_distance = self._raycast_hit_distance(left_dir)
+        if (
+            left_hit_distance is not None
+            and left_hit_distance < WALL_REPULSION_DISTANCE_METERS
+        ):
+            wall_force -= np.asarray(
+                WALL_REPULSION_GAIN
+                * (WALL_REPULSION_DISTANCE_METERS - float(left_hit_distance))
+                * left_dir,
+                dtype=np.float32,
+            )
+
+        right_hit_distance = self._raycast_hit_distance(right_dir)
+        if (
+            right_hit_distance is not None
+            and right_hit_distance < WALL_REPULSION_DISTANCE_METERS
+        ):
+            wall_force += np.asarray(
+                WALL_REPULSION_GAIN
+                * (WALL_REPULSION_DISTANCE_METERS - float(right_hit_distance))
+                * left_dir,
+                dtype=np.float32,
+            )
+        return wall_force
 
     def get_pose(self, data):
         return (

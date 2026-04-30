@@ -20,6 +20,8 @@ from museum_env.human import (
     DISTRACTED_SPEED_SCALE,
     DISTRACTED_TARGET_DISTANCE_MIN,
     HUMAN_YAW_RATE_GAIN,
+    WALL_REPULSION_DISTANCE_METERS,
+    WALL_REPULSION_GAIN,
     Human,
     HumanMode,
     HumanProfile,
@@ -732,7 +734,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         self.assertEqual(human.distracted_partner_index, 2)
         self.assertEqual(human.distracted_behavior_kind, DISTRACTED_BEHAVIOR_CONVERSATION)
 
-    def test_distracted_conversation_moves_toward_stop_distance_through_wall_adjustment(self):
+    def test_distracted_conversation_uses_compose_move_velocity_for_target_motion(self):
         empty_layout = MapLayout(
             name="test_layout_without_exhibits",
             default_xml_asset="museum_scene.xml",
@@ -760,7 +762,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "impatient_front_offset": human.impatient_front_offset,
         }
 
-        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
             action = human.step(None, data, ctx)
 
         np.testing.assert_allclose(
@@ -768,12 +770,13 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             np.array([2.0 - DISTRACTED_CONVERSATION_STOP_DISTANCE, 0.0], dtype=np.float32),
             atol=1e-6,
         )
-        adjust_mock.assert_called_once()
+        compose_mock.assert_called_once()
         np.testing.assert_allclose(
-            adjust_mock.call_args.kwargs["guide_xy"],
+            compose_mock.call_args.kwargs["guide_xy"],
             np.array([2.0 - DISTRACTED_CONVERSATION_STOP_DISTANCE, 0.0], dtype=np.float32),
             atol=1e-6,
         )
+        self.assertEqual(compose_mock.call_args.kwargs["speed_limit"], DISTRACTED_SPEED_SCALE * human.max_speed)
         np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
         self.assertTrue(human.speaking_active)
 
@@ -970,7 +973,111 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(ray_mock.call_args.args[2], np.array([1.0, 2.0, 0.125]), atol=1e-6)
         self.assertAlmostEqual(hit_distance, 0.2, places=6)
 
-    def test_move_routes_target_velocity_through_wall_adjustment_helper(self):
+    def test_wall_spacing_force_is_zero_when_side_probes_are_clear(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+
+        with patch.object(human, "_raycast_hit_distance", return_value=1.0):
+            wall_force = human._compute_wall_spacing_force(np.array([1.0, 0.0], dtype=np.float32))
+
+        np.testing.assert_allclose(wall_force, np.zeros(2, dtype=np.float32), atol=1e-6)
+
+    def test_wall_spacing_force_pushes_right_when_left_wall_is_close(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+
+        with patch.object(human, "_raycast_hit_distance", side_effect=[0.2, 1.0]):
+            wall_force = human._compute_wall_spacing_force(np.array([1.0, 0.0], dtype=np.float32))
+
+        expected_force = np.array(
+            [0.0, -WALL_REPULSION_GAIN * (WALL_REPULSION_DISTANCE_METERS - 0.2)],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(wall_force, expected_force, atol=1e-6)
+
+    def test_wall_spacing_force_pushes_left_when_right_wall_is_close(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+
+        with patch.object(human, "_raycast_hit_distance", side_effect=[1.0, 0.2]):
+            wall_force = human._compute_wall_spacing_force(np.array([1.0, 0.0], dtype=np.float32))
+
+        expected_force = np.array(
+            [0.0, WALL_REPULSION_GAIN * (WALL_REPULSION_DISTANCE_METERS - 0.2)],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(wall_force, expected_force, atol=1e-6)
+
+    def test_compose_move_velocity_adds_wall_force_before_wall_adjustment(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        guide_xy = np.array([1.0, 0.0], dtype=np.float32)
+        wall_force = np.array([0.0, 0.2], dtype=np.float32)
+        expected_pre_adjust_v_xy = human._limit_speed(
+            np.array([1.0, 0.2], dtype=np.float32),
+            human.max_speed,
+        )
+
+        with (
+            patch.object(human, "_compute_wall_spacing_force", return_value=wall_force),
+            patch.object(
+                human,
+                "_adjust_target_velocity_for_walls",
+                side_effect=lambda guide_xy, desired_v_xy: np.asarray(desired_v_xy, dtype=np.float32),
+            ) as adjust_mock,
+        ):
+            v_total = human._compose_move_velocity(
+                current_xy=current_xy,
+                guide_xy=guide_xy,
+                goal_v_xy=np.array([1.0, 0.0], dtype=np.float32),
+                speed_limit=human.max_speed,
+            )
+
+        np.testing.assert_allclose(adjust_mock.call_args.kwargs["guide_xy"], guide_xy, atol=1e-6)
+        np.testing.assert_allclose(
+            adjust_mock.call_args.kwargs["desired_v_xy"],
+            expected_pre_adjust_v_xy,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(v_total, expected_pre_adjust_v_xy, atol=1e-6)
+
+    def test_compose_move_velocity_combines_goal_repulsion_hr_and_wall_before_adjustment(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        current_xy = np.array([0.0, 0.0], dtype=np.float32)
+        guide_xy = np.array([1.0, 0.0], dtype=np.float32)
+        goal_v_xy = np.array([0.4, 0.0], dtype=np.float32)
+        repulsion_xy = np.array([0.1, 0.0], dtype=np.float32)
+        hr_force = np.array([0.0, 0.2], dtype=np.float32)
+        wall_force = np.array([0.0, 0.1], dtype=np.float32)
+        expected_pre_adjust_v_xy = np.array([0.5, 0.3], dtype=np.float32)
+
+        with (
+            patch.object(human, "_compute_hr_spacing_force", return_value=hr_force) as hr_mock,
+            patch.object(human, "_compute_wall_spacing_force", return_value=wall_force),
+            patch.object(
+                human,
+                "_adjust_target_velocity_for_walls",
+                side_effect=lambda guide_xy, desired_v_xy: np.asarray(desired_v_xy, dtype=np.float32),
+            ) as adjust_mock,
+        ):
+            v_total = human._compose_move_velocity(
+                current_xy=current_xy,
+                guide_xy=guide_xy,
+                goal_v_xy=goal_v_xy,
+                speed_limit=2.0,
+                repulsion_xy=repulsion_xy,
+                robot_xy=np.array([2.0, 0.0], dtype=np.float32),
+                hr_distance_min=human.hr_distance_min,
+                hr_distance_max=human.hr_distance_max,
+            )
+
+        hr_mock.assert_called_once()
+        np.testing.assert_allclose(adjust_mock.call_args.kwargs["guide_xy"], guide_xy, atol=1e-6)
+        np.testing.assert_allclose(
+            adjust_mock.call_args.kwargs["desired_v_xy"],
+            expected_pre_adjust_v_xy,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(v_total, expected_pre_adjust_v_xy, atol=1e-6)
+
+    def test_move_uses_compose_move_velocity_helper(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         current_xy = np.array([0.0, 0.0], dtype=np.float32)
         to_target_xy = np.array([1.0, 0.0], dtype=np.float32)
@@ -980,14 +1087,20 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "repulsion": np.zeros(2, dtype=np.float32),
         }
 
-        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
             action = human._move(to_target_xy, 0.0, ctx, current_xy)
 
-        adjust_mock.assert_called_once()
-        np.testing.assert_allclose(adjust_mock.call_args.kwargs["guide_xy"], to_target_xy, atol=1e-6)
+        compose_mock.assert_called_once()
+        np.testing.assert_allclose(compose_mock.call_args.kwargs["guide_xy"], to_target_xy, atol=1e-6)
+        np.testing.assert_allclose(
+            compose_mock.call_args.kwargs["goal_v_xy"],
+            np.array([1.0, 0.0], dtype=np.float32),
+            atol=1e-6,
+        )
+        self.assertEqual(compose_mock.call_args.kwargs["speed_limit"], human.max_speed)
         np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
 
-    def test_listening_uses_wall_adjustment_helper_for_target_motion(self):
+    def test_listening_uses_compose_move_velocity_for_target_motion(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.set_mode(HumanMode.LISTENING)
         pose = (0.0, 0.0, 0.0)
@@ -1007,12 +1120,50 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "listening_sector_half_angle": np.deg2rad(80.0),
         }
 
-        with patch.object(human, "_adjust_target_velocity_for_walls", return_value=adjusted_v_xy) as adjust_mock:
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
             action = human.step(None, data, ctx)
 
-        adjust_mock.assert_called_once()
-        self.assertGreater(float(np.linalg.norm(adjust_mock.call_args.kwargs["guide_xy"])), 0.0)
+        compose_mock.assert_called_once()
+        self.assertGreater(float(np.linalg.norm(compose_mock.call_args.kwargs["guide_xy"])), 0.0)
+        self.assertIsNone(compose_mock.call_args.kwargs["hr_distance_max"])
         np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+
+    def test_following_distracted_uses_compose_move_velocity_and_preserves_forward_progress(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.distracted_target_xy = np.array([6.0, 6.0], dtype=np.float32)
+        human.distracted_target_yaw = float(np.pi / 2.0)
+
+        pose = (6.0, 5.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "human_xy": np.array([[6.0, 5.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+        reverse_v_xy = np.array([0.0, -0.5], dtype=np.float32)
+        fallback_v_xy = np.array([0.0, 0.5], dtype=np.float32)
+
+        with (
+            patch.object(human, "_compose_move_velocity", return_value=reverse_v_xy) as compose_mock,
+            patch.object(human, "_constrain_velocity_with_walkable", return_value=fallback_v_xy),
+        ):
+            action = human.step(None, data, ctx)
+
+        compose_mock.assert_called_once()
+        np.testing.assert_allclose(
+            compose_mock.call_args.kwargs["guide_xy"],
+            np.array([0.0, 1.0], dtype=np.float32),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(action[:2], fallback_v_xy, atol=1e-6)
 
     def test_listening_impatient_rotates_in_place_without_repulsion(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -1118,6 +1269,42 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
                 self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * expected_yaw, places=5)
+
+    def test_listening_impatient_move_uses_compose_move_velocity(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.impatient_speed_multiplier = 1.0
+        with (
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+        human.impatient_duration = 6
+        human.impatient_timer = human.impatient_duration // 2
+
+        pose = (1.0, 5.0, 0.0)
+        data = self._make_pose_data(pose)
+        adjusted_v_xy = np.array([0.2, 0.1], dtype=np.float32)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 5.0, 0.0),
+            "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([pose[:2]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
+            action = human.step(None, data, ctx)
+
+        compose_mock.assert_called_once()
+        self.assertIsNone(compose_mock.call_args.kwargs["hr_distance_max"])
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
 
     def test_listening_impatient_holds_at_target_until_duration_ends(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -1235,6 +1422,43 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         self.assertEqual(human.mode, HumanMode.OVERWHELMED)
         self.assertEqual(human.overwhelmed_pause_timer, 1)
         np.testing.assert_allclose(pause_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+
+    def test_overwhelmed_backoff_uses_compose_move_velocity_without_hr_or_repulsion(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.OVERWHELMED)
+        human.overwhelmed_stage = "backoff"
+        human.overwhelmed_backoff_start_xy = np.array([0.0, 0.0], dtype=np.float32)
+        human.overwhelmed_leave_dir = np.array([1.0, 0.0], dtype=np.float32)
+        adjusted_v_xy = np.array([0.2, 0.1], dtype=np.float32)
+
+        data = self._make_pose_data((0.0, 0.0, 0.0))
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
+            action = human.step(None, data, {})
+
+        compose_mock.assert_called_once()
+        self.assertNotIn("repulsion_xy", compose_mock.call_args.kwargs)
+        self.assertNotIn("robot_xy", compose_mock.call_args.kwargs)
+        self.assertNotIn("hr_distance_min", compose_mock.call_args.kwargs)
+        self.assertNotIn("hr_distance_max", compose_mock.call_args.kwargs)
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+
+    def test_overwhelmed_leave_uses_compose_move_velocity_without_hr_or_repulsion(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.OVERWHELMED)
+        human.overwhelmed_stage = "leave"
+        human.overwhelmed_leave_dir = np.array([1.0, 0.0], dtype=np.float32)
+        adjusted_v_xy = np.array([0.2, 0.1], dtype=np.float32)
+
+        data = self._make_pose_data((0.0, 0.0, 0.0))
+        with patch.object(human, "_compose_move_velocity", return_value=adjusted_v_xy) as compose_mock:
+            action = human.step(None, data, {})
+
+        compose_mock.assert_called_once()
+        self.assertNotIn("repulsion_xy", compose_mock.call_args.kwargs)
+        self.assertNotIn("robot_xy", compose_mock.call_args.kwargs)
+        self.assertNotIn("hr_distance_min", compose_mock.call_args.kwargs)
+        self.assertNotIn("hr_distance_max", compose_mock.call_args.kwargs)
+        np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
 
     def test_overwhelmed_pause_recovers_to_following_and_listening(self):
         for recovery_mode in (HumanMode.FOLLOWING, HumanMode.LISTENING):

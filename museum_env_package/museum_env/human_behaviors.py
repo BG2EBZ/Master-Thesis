@@ -94,18 +94,17 @@ def _step_listening(human, ctx, pose):
         listen_radius=ctx["listen_radius"],
         sector_half_angle=ctx["listening_sector_half_angle"],
     )
-    v_goal = LISTENING_RING_GAIN * (target_xy - current_xy)
-    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-    v_total += human._compute_hr_spacing_force(
+    guide_xy = target_xy - current_xy
+    v_goal = LISTENING_RING_GAIN * guide_xy
+    v_total = human._compose_move_velocity(
         current_xy=current_xy,
+        guide_xy=guide_xy,
+        goal_v_xy=v_goal,
+        speed_limit=human.max_speed,
+        repulsion_xy=ctx["repulsion"],
         robot_xy=robot_xy,
-        distance_min=human.hr_distance_min,
-        distance_max=None,
-    )
-    v_total = human._limit_speed(v_total, human.max_speed)
-    v_total = human._adjust_target_velocity_for_walls(
-        guide_xy=target_xy - current_xy,
-        desired_v_xy=v_total,
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=None,
     )
 
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -137,18 +136,17 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
         listen_radius=ctx["listen_radius"],
         sector_half_angle=ctx["listening_sector_half_angle"],
     )
-    v_goal = LISTENING_RING_GAIN * (target_xy - current_xy)
-    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-    v_total += human._compute_hr_spacing_force(
+    guide_xy = target_xy - current_xy
+    v_goal = LISTENING_RING_GAIN * guide_xy
+    v_total = human._compose_move_velocity(
         current_xy=current_xy,
+        guide_xy=guide_xy,
+        goal_v_xy=v_goal,
+        speed_limit=human.max_speed,
+        repulsion_xy=ctx["repulsion"],
         robot_xy=live_robot_xy,
-        distance_min=human.hr_distance_min,
-        distance_max=None,
-    )
-    v_total = human._limit_speed(v_total, human.max_speed)
-    v_total = human._adjust_target_velocity_for_walls(
-        guide_xy=target_xy - current_xy,
-        desired_v_xy=v_total,
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=None,
     )
 
     action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -204,17 +202,15 @@ def _step_distracted(human, ctx, pose):
                 v_goal = np.zeros(2, dtype=np.float32)
 
             robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-            v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-            v_total += human._compute_hr_spacing_force(
+            v_total = human._compose_move_velocity(
                 current_xy=current_xy,
-                robot_xy=robot_xy,
-                distance_min=human.hr_distance_min,
-                distance_max=human.hr_distance_max,
-            )
-            v_total = human._limit_speed(v_total, move_speed_limit)
-            v_total = human._adjust_target_velocity_for_walls(
                 guide_xy=to_target_xy,
-                desired_v_xy=v_total,
+                goal_v_xy=v_goal,
+                speed_limit=move_speed_limit,
+                repulsion_xy=ctx["repulsion"],
+                robot_xy=robot_xy,
+                hr_distance_min=human.hr_distance_min,
+                hr_distance_max=human.hr_distance_max,
             )
             guide_norm = float(np.linalg.norm(to_target_xy))
             if guide_norm > NORM_EPS:
@@ -300,24 +296,29 @@ def _step_overwhelmed(human, ctx, pose):
             human.overwhelmed_stage = "leave"
             dist_to_target = 0.0
 
+        move_speed_limit = min(human.overwhelmed_leave_speed, human.max_speed)
         if dist_to_target > NORM_EPS:
-            backoff_speed = min(human.overwhelmed_leave_speed, human.max_speed)
-            v_xy = backoff_speed * (to_target / dist_to_target)
+            goal_v_xy = move_speed_limit * (to_target / dist_to_target)
         else:
-            v_xy = np.zeros(2, dtype=np.float32)
-        v_xy = human._adjust_target_velocity_for_walls(
+            goal_v_xy = np.zeros(2, dtype=np.float32)
+        v_xy = human._compose_move_velocity(
+            current_xy=pos_xy,
             guide_xy=to_target,
-            desired_v_xy=v_xy,
+            goal_v_xy=goal_v_xy,
+            speed_limit=move_speed_limit,
         )
 
         action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
         return action
 
     human.overwhelmed_leave_timer += 1
-    v_xy = min(human.overwhelmed_leave_speed, human.max_speed) * leave_dir
-    v_xy = human._adjust_target_velocity_for_walls(
+    move_speed_limit = min(human.overwhelmed_leave_speed, human.max_speed)
+    goal_v_xy = move_speed_limit * leave_dir
+    v_xy = human._compose_move_velocity(
+        current_xy=pos_xy,
         guide_xy=leave_dir,
-        desired_v_xy=v_xy,
+        goal_v_xy=goal_v_xy,
+        speed_limit=move_speed_limit,
     )
     if human.overwhelmed_leave_timer >= human.overwhelmed_leave_duration:
         human.overwhelmed_stage = "pause"
@@ -402,17 +403,15 @@ def _step_impatient(human, ctx, pose):
                     )
                 else:
                     v_goal = human.max_speed * (to_target_xy / dist_to_target)
-                    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-                    v_total += human._compute_hr_spacing_force(
+                    v_total = human._compose_move_velocity(
                         current_xy=current_xy,
-                        robot_xy=robot_xy,
-                        distance_min=human.hr_distance_min,
-                        distance_max=None,
-                    )
-                    v_total = human._limit_speed(v_total, human.max_speed)
-                    v_total = human._adjust_target_velocity_for_walls(
                         guide_xy=to_target_xy,
-                        desired_v_xy=v_total,
+                        goal_v_xy=v_goal,
+                        speed_limit=human.max_speed,
+                        repulsion_xy=ctx["repulsion"],
+                        robot_xy=robot_xy,
+                        hr_distance_min=human.hr_distance_min,
+                        hr_distance_max=None,
                     )
                     action = human._compose_action(
                         v_total,
@@ -465,17 +464,15 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
         v_goal = np.zeros(2, dtype=np.float32)
 
     robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-    v_total = v_goal + np.asarray(ctx["repulsion"], dtype=np.float32)
-    v_total += human._compute_hr_spacing_force(
+    v_total = human._compose_move_velocity(
         current_xy=current_xy,
-        robot_xy=robot_xy,
-        distance_min=human.hr_distance_min,
-        distance_max=human.hr_distance_max,
-    )
-    v_total = human._limit_speed(v_total, move_speed_limit)
-    v_total = human._adjust_target_velocity_for_walls(
         guide_xy=to_target_xy,
-        desired_v_xy=v_total,
+        goal_v_xy=v_goal,
+        speed_limit=move_speed_limit,
+        repulsion_xy=ctx["repulsion"],
+        robot_xy=robot_xy,
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=human.hr_distance_max,
     )
 
     yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
