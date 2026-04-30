@@ -677,6 +677,9 @@ class MuseumEnv(gym.Env):
             "follow_radius": FOLLOW_RADIUS_DEFAULT,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
+            "impatient_recovery_mode": (
+                HumanMode.FOLLOWING if self.follow_phase is not None else HumanMode.WANDERING
+            ),
         }
         return human.step(self.model, self.data, ctx)
 
@@ -714,6 +717,7 @@ class MuseumEnv(gym.Env):
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
+            "impatient_recovery_mode": HumanMode.LISTENING,
             "listen_radius": self.listen_fan_radius,
             "listening_sector_half_angle": self.listen_front_sector_half_angle,
         }
@@ -749,6 +753,9 @@ class MuseumEnv(gym.Env):
             "repulsion": repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
+            "impatient_recovery_mode": (
+                HumanMode.FOLLOWING if role == POST_EXPLANATION_ROLE_YIELD else HumanMode.LISTENING
+            ),
         }
         if human.mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             return human.step(self.model, self.data, move_ctx)

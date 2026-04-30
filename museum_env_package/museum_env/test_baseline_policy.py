@@ -1381,6 +1381,34 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 expected_velocity = expected_velocity / np.linalg.norm(expected_velocity)
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
 
+    def test_general_phase_impatient_recovers_to_current_phase_mode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=19)
+            env.follow_phase = "transit_follow"
+            human = env.humans[0]
+            with (
+                patch("numpy.random.uniform", return_value=45.0),
+                patch("numpy.random.rand", return_value=1.0),
+            ):
+                human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+            human.impatient_duration = 1
+            human.impatient_timer = 0
+
+            current_xy = np.array(human.get_pose(env.data)[:2], dtype=np.float32)
+            world_frame = SimpleNamespace(
+                repulsion_vectors=np.zeros((1, 2), dtype=np.float32),
+                robot_pose=(5.0, 5.0, 0.0),
+                robot_xy=np.array([5.0, 5.0], dtype=np.float32),
+                human_xy=current_xy.reshape(1, 2),
+            )
+
+            env._apply_general_phase_strategy(human, 0, world_frame)
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
     def test_overwhelmed_duration_defaults_use_expected_steps(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         self.assertEqual(

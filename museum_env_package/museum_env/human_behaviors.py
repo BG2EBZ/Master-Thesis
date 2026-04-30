@@ -422,7 +422,8 @@ def _step_impatient(human, ctx, pose):
         action = _step_following(human, ctx, pose)
 
     if human.impatient_timer >= human.impatient_duration:
-        human.set_mode(human.impatient_recovery_mode)
+        recovery_mode = ctx.get("impatient_recovery_mode", human.impatient_recovery_mode)
+        human.set_mode(recovery_mode)
         if human.enable_event_logs:
             logger.info(f">>> {human.name} recovered from IMPATIENT -> {human.mode.upper()}")
     return action
