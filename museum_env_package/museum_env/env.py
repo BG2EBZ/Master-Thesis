@@ -362,6 +362,7 @@ class MuseumEnv(gym.Env):
         return self.runtime_cache.refresh_counter > debug_state.refresh_counter
 
     def _compute_human_fuzzy_debug(self, idx: int, context: str, session_steps: int, observations):
+        human = self.humans[idx]
         inputs = self.following_fuzzy_engine.clip_inputs(
             following_time=float(session_steps) * float(self.dt),
             hhd=resolve_fuzzy_metric_input(
@@ -374,7 +375,11 @@ class MuseumEnv(gym.Env):
             ),
             density=float(observations.local_crowding_count_1m[idx]),
         )
-        result = self.following_fuzzy_engine.compute(**inputs, context=context)
+        result = self.following_fuzzy_engine.compute(
+            **inputs,
+            context=context,
+            profile=human.profile,
+        )
         return {"inputs": inputs, "result": result}
 
     def _record_fuzzy_debug(self, idx: int, context: str, fuzzy_debug: dict) -> None:

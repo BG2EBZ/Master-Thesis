@@ -21,6 +21,7 @@ class FollowingFuzzyEngine:
         hrd: float,
         density: float,
         context: str = "following",
+        profile: str = "normal",
     ) -> dict:
         clipped = self.clip_inputs(
             following_time=following_time,
@@ -28,11 +29,16 @@ class FollowingFuzzyEngine:
             hrd=hrd,
             density=density,
         )
-        return _compute(**clipped, context=context)
+        return _compute(**clipped, context=context, profile=profile)
 
-    def compute_batch(self, inputs: np.ndarray, context: str = "following") -> list[dict]:
+    def compute_batch(
+        self,
+        inputs: np.ndarray,
+        context: str = "following",
+        profile: str = "normal",
+    ) -> list[dict]:
         rows = np.asarray(inputs, dtype=np.float32)
-        return [self.compute(*row, context=context) for row in rows]
+        return [self.compute(*row, context=context, profile=profile) for row in rows]
 
 
 def compute(
@@ -41,6 +47,7 @@ def compute(
     hrd: float,
     density: float,
     context: str = "following",
+    profile: str = "normal",
 ) -> dict:
     return _compute(
         following_time=following_time,
@@ -48,11 +55,16 @@ def compute(
         hrd=hrd,
         density=density,
         context=context,
+        profile=profile,
     )
 
 
-def compute_batch(inputs: np.ndarray, context: str = "following") -> list[dict]:
-    return _compute_batch(inputs=inputs, context=context)
+def compute_batch(
+    inputs: np.ndarray,
+    context: str = "following",
+    profile: str = "normal",
+) -> list[dict]:
+    return _compute_batch(inputs=inputs, context=context, profile=profile)
 
 
 __all__ = ["FollowingFuzzyEngine", "compute", "compute_batch"]

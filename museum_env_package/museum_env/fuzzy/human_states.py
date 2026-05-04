@@ -28,11 +28,14 @@ import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 
+from ..human import HumanProfile
+
 
 _RES = 1000
 _DEFAULT = 0.5
 _TIE_TOLERANCE = 0.01
 _CONTEXTS = ("following", "listening")
+_PROFILES = (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT)
 
 _CONTEXT_ALIASES = {
     "follow": "following",
@@ -50,7 +53,7 @@ def _normalize_context(context: str) -> str:
     return normalized
 
 
-def _define_input_mfs(context: str, ft, hhd, hrd, density) -> None:
+def _define_normal_input_mfs(context: str, ft, hhd, hrd, density) -> None:
     if context == "following":
         ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 10, 20])
         ft["medium"] = fuzz.trapmf(ft.universe, [10, 20, 30, 40])
@@ -85,6 +88,12 @@ def _define_input_mfs(context: str, ft, hhd, hrd, density) -> None:
     density["medium"] = fuzz.trapmf(density.universe, [3, 3, 7, 7])
     density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
+def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density) -> None:
+    if profile == HumanProfile.NEURODIVERGENT:
+        _define_normal_input_mfs(context, ft, hhd, hrd, density)
+        return
+    _define_normal_input_mfs(context, ft, hhd, hrd, density)
+
 
 def _define_output_mfs(engaged, overwhelmed, distracted, impatient) -> None:
     for output_var in (engaged, overwhelmed, distracted, impatient):
@@ -116,8 +125,10 @@ def _build_rules(ft, hhd, hrd, density, engaged, overwhelmed, distracted, impati
     ]
 
 
-def _build_system(context: str) -> ctrl.ControlSystem:
+def _build_system(context: str, profile: str) -> ctrl.ControlSystem:
     normalized_context = _normalize_context(context)
+    normalized_profile = str(profile).strip().lower()
+
 
     ft = ctrl.Antecedent(np.linspace(0, 60, _RES), "following_time")
     hhd = ctrl.Antecedent(np.linspace(0, 4, _RES), "hhd")
@@ -129,13 +140,18 @@ def _build_system(context: str) -> ctrl.ControlSystem:
     distracted = ctrl.Consequent(np.linspace(0, 1, _RES), "distracted", defuzzify_method="centroid")
     impatient = ctrl.Consequent(np.linspace(0, 1, _RES), "impatient", defuzzify_method="centroid")
 
-    _define_input_mfs(normalized_context, ft, hhd, hrd, density)
+    _define_input_mfs(normalized_context, normalized_profile, ft, hhd, hrd, density)
     _define_output_mfs(engaged, overwhelmed, distracted, impatient)
     rules = _build_rules(ft, hhd, hrd, density, engaged, overwhelmed, distracted, impatient)
     return ctrl.ControlSystem(rules)
 
 
-_SYSTEMS = {context: _build_system(context) for context in _CONTEXTS}
+_SYSTEMS = {
+    ("following", "normal"): _build_system("following", "normal"),
+    ("following", "neurodivergent"): _build_system("following", "neurodivergent"),
+    ("listening", "normal"): _build_system("listening", "normal"),
+    ("listening", "neurodivergent"): _build_system("listening", "neurodivergent"),
+}
 
 
 def _select_dominant_state(results: dict[str, float], tie_tolerance: float = _TIE_TOLERANCE) -> str:
@@ -159,6 +175,7 @@ def compute(
     density: float,
     *,
     context: str,
+    profile: str = HumanProfile.NORMAL,
 ) -> dict:
     """
     Run the fuzzy inference system for a single input vector.
@@ -166,7 +183,12 @@ def compute(
     Returns a dict with keys:
     overwhelmed, distracted, impatient, engaged, dominant_state, dominant_value.
     """
-    simulation = ctrl.ControlSystemSimulation(_SYSTEMS[_normalize_context(context)])
+    normalized_context = _normalize_context(context)
+    normalized_profile = str(profile).strip().lower()
+    if normalized_profile not in _PROFILES:
+        valid = ", ".join(_PROFILES)
+        raise ValueError(f"Unknown fuzzy profile: {profile!r}. Expected one of: {valid}.")
+    simulation = ctrl.ControlSystemSimulation(_SYSTEMS[(normalized_context, normalized_profile)])
     simulation.input["following_time"] = float(following_time)
     simulation.input["hhd"] = float(hhd)
     simulation.input["hrd"] = float(hrd)
@@ -186,10 +208,15 @@ def compute(
     return results
 
 
-def compute_batch(inputs: np.ndarray, *, context: str) -> list[dict]:
+def compute_batch(
+    inputs: np.ndarray,
+    *,
+    context: str,
+    profile: str = HumanProfile.NORMAL,
+) -> list[dict]:
     """Run inference on multiple input vectors."""
     rows = np.asarray(inputs, dtype=np.float32)
-    return [compute(*row, context=context) for row in rows]
+    return [compute(*row, context=context, profile=profile) for row in rows]
 
 
 if __name__ == "__main__":

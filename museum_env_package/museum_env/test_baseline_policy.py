@@ -416,6 +416,10 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result) as mock_compute:
                 env.step(None)
                 self.assertEqual(mock_compute.call_count, 1)
+                self.assertEqual(
+                    mock_compute.call_args.kwargs["profile"],
+                    HumanProfile.NEURODIVERGENT,
+                )
 
                 env.step(None)
                 self.assertEqual(mock_compute.call_count, 1)
