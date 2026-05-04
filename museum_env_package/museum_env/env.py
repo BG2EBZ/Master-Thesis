@@ -18,7 +18,6 @@ from .env_reporting import (
     resolve_robot_visual_state,
 )
 from .env_runtime import (
-    DIST_EPS,
     build_human_goals,
     build_world_frame,
     compute_reached_goal_indices,
@@ -50,7 +49,6 @@ from .human import (
 from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
 from .robot import (
-    ROBOT_WAYPOINT_REACHED_DIST,
     Robot,
     RobotMode,
 )
@@ -200,7 +198,6 @@ class MuseumEnv(gym.Env):
         from .fuzzy import FollowingFuzzyEngine
 
         self.following_fuzzy_engine = FollowingFuzzyEngine()
-        self.perceived_distracted_indices = []
         self._last_robot_visual_signature = None
 
         self.all_humans = [
@@ -247,8 +244,7 @@ class MuseumEnv(gym.Env):
         self._sync_human_visual_state()
 
     def _log_event(self, msg: str) -> None:
-        if self.enable_event_logs:
-            logger.info(msg)
+        logger.info(msg)
 
     def _set_active_humans(self, n_humans: int) -> None:
         self.humans = list(self.all_humans[: max(0, int(n_humans))])
@@ -267,8 +263,6 @@ class MuseumEnv(gym.Env):
         self.fuzzy_debug = build_fuzzy_debug_states(self.n_humans)
         self.callback_state.reset(self.n_humans)
         self.runtime_cache.reset()
-        if hasattr(self, "all_human_body_ids"):
-            self.human_body_ids = self.all_human_body_ids[: self.n_humans]
 
     def _configure_human_behaviors(self) -> None:
         for human in self.humans:
@@ -354,32 +348,6 @@ class MuseumEnv(gym.Env):
 
     def _get_current_human_modes(self) -> list[str]:
         return [human.mode for human in self.humans]
-
-    def _is_robot_in_move_stage(self, robot_pose) -> bool:
-        if self.robot.listen_mode or self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED):
-            return False
-        rx, ry, _ = robot_pose
-        wx, wy = self.robot.get_current_waypoint()
-        dist = float(np.hypot(wx - rx, wy - ry) + DIST_EPS)
-        return dist >= ROBOT_WAYPOINT_REACHED_DIST
-
-    def _analyze_humans(self, world_frame) -> dict:
-        if len(self.humans) == 0:
-            return {
-                "perceived_distracted_indices": [],
-                "emotion_modes": [],
-            }
-
-        human_modes = [human.mode for human in self.humans]
-        emotion_modes = list(human_modes)
-        mode_array = np.asarray(human_modes, dtype=object)
-        distracted_mask = mode_array == HumanMode.DISTRACTED
-        perceived_distracted_indices = [int(idx) for idx in np.flatnonzero(distracted_mask)]
-
-        return {
-            "perceived_distracted_indices": perceived_distracted_indices,
-            "emotion_modes": emotion_modes,
-        }
 
     def _should_evaluate_fuzzy(self, idx: int, context: str) -> bool:
         if context == "following" and self.follow_phase != FOLLOW_PHASE_TRANSIT:
@@ -694,15 +662,6 @@ class MuseumEnv(gym.Env):
         events.question_completed = True
         return True
 
-    def _update_robot_emotion(self, events: StepEvents, analysis: dict) -> None:
-        del events
-        self.perceived_distracted_indices = list(analysis["perceived_distracted_indices"])
-        emotion_modes = list(analysis["emotion_modes"])
-        self.robot.update_emotion(emotion_modes)
-
-        self._sync_robot_speaker_state()
-        self._sync_robot_visual_state()
-
     def _apply_general_phase_strategy(self, human, idx: int, world_frame) -> np.ndarray:
         repulsion_vec = world_frame.repulsion_vectors[idx] if idx < len(world_frame.repulsion_vectors) else np.zeros(2, dtype=np.float32)
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
@@ -934,7 +893,6 @@ class MuseumEnv(gym.Env):
         self.callback_state.reset(len(self.humans))
         self.runtime_cache.reset()
         self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
-        self.perceived_distracted_indices = []
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
 
@@ -1027,7 +985,6 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
         self._apply_human_controls(pre_frame)
-        self._sync_human_visual_state()
 
         mujoco.mj_step(self.model, self.data)
         post_frame = build_world_frame(
@@ -1065,8 +1022,12 @@ class MuseumEnv(gym.Env):
             listening_sector_half_angle=self.listen_front_sector_half_angle,
         )
 
-        analysis_after = self._analyze_humans(post_frame)
-        self._update_robot_emotion(events, analysis_after)
+        human_modes = [human.mode for human in self.humans]
+        mode_array = np.asarray(human_modes, dtype=object)
+        perceived_distracted_indices = [int(idx) for idx in np.flatnonzero(mode_array == HumanMode.DISTRACTED)]
+        self.robot.update_emotion(human_modes)
+        self._sync_robot_speaker_state()
+        self._sync_robot_visual_state()
 
         terminated = bool(events.final_listen_ready)
         truncated = bool(self.step_count >= self.max_steps)
@@ -1088,7 +1049,7 @@ class MuseumEnv(gym.Env):
             human_goals=human_goals,
             humans=self.humans,
             reached_goal_indices=reached_goal_indices,
-            perceived_distracted_indices=self.perceived_distracted_indices,
+            perceived_distracted_indices=perceived_distracted_indices,
         )
         reward = -float(info["robot"]["dist_to_goal"])
         gx, gy = self.robot.get_current_waypoint()
