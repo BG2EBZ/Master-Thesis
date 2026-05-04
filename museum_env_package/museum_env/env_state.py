@@ -53,6 +53,18 @@ class ListeningState:
     paused_phase: str = LISTEN_PHASE_IDLE
     paused_counter: int = 0
     paused_is_final: bool = False
+    question_sampling_done: bool = False
+    question_pause_steps_remaining: int = 0
+    question_human_indices: list[int] = field(default_factory=list)
+
+    def _reset_question_state(self) -> None:
+        self.question_sampling_done = False
+        self.question_pause_steps_remaining = 0
+        self.question_human_indices.clear()
+
+    def clear_active_question(self) -> None:
+        self.question_pause_steps_remaining = 0
+        self.question_human_indices.clear()
 
     def reset(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
@@ -61,21 +73,25 @@ class ListeningState:
         self.paused_phase = LISTEN_PHASE_IDLE
         self.paused_counter = 0
         self.paused_is_final = False
+        self._reset_question_state()
 
     def enter_intro(self, is_final: bool) -> None:
         self.phase = LISTEN_PHASE_INTRO
         self.counter = 0
         self.is_final = bool(is_final)
+        self._reset_question_state()
 
     def enter_wait(self, is_final: bool) -> None:
         self.phase = LISTEN_PHASE_WAIT
         self.counter = 0
         self.is_final = bool(is_final)
+        self._reset_question_state()
 
     def enter_idle(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
         self.counter = 0
         self.is_final = False
+        self._reset_question_state()
 
     def pause(self) -> None:
         self.paused_phase = self.phase
@@ -185,6 +201,8 @@ class StepEvents:
     entered_listen: bool = False
     started_listen_wait: bool = False
     completed_listen_wait: bool = False
+    question_started: bool = False
+    question_completed: bool = False
     final_listen_ready: bool = False
     callback_triggered: bool = False
     callback_completed: bool = False
@@ -197,6 +215,8 @@ class StepEvents:
             "entered_listen": bool(self.entered_listen),
             "started_listen_wait": bool(self.started_listen_wait),
             "completed_listen_wait": bool(self.completed_listen_wait),
+            "question_started": bool(self.question_started),
+            "question_completed": bool(self.question_completed),
             "final_listen_ready": bool(self.final_listen_ready),
             "callback_triggered": bool(self.callback_triggered),
             "callback_completed": bool(self.callback_completed),

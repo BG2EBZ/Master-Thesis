@@ -28,6 +28,7 @@ from .env_state import (
     FOLLOW_PHASE_PRE_LISTEN_ENGAGE,
     FOLLOW_PHASE_TRANSIT,
     LISTEN_PHASE_INTRO,
+    LISTEN_PHASE_PAUSED,
     LISTEN_PHASE_WAIT,
     POST_EXPLANATION_ROLE_WAIT,
     POST_EXPLANATION_ROLE_YIELD,
@@ -75,6 +76,8 @@ LISTENING_REPULSION_SCALE = 1.0
 LISTEN_REACHED_MIN_DISTANCE = 0.8
 LISTEN_INTRO_DELAY_SECONDS_DEFAULT = 3.0
 LISTEN_WAIT_SECONDS_DEFAULT = 25.0
+LISTEN_QUESTION_PROBABILITY_DEFAULT = 0.10
+LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT = 3.0
 HUMAN_MAX_SPEED_DEFAULT = 1.0
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.1
@@ -174,6 +177,9 @@ class MuseumEnv(gym.Env):
         self.listen_intro_delay_steps = max(1, int(round(self.listen_intro_delay_seconds / self.dt)))
         self.listen_wait_seconds = LISTEN_WAIT_SECONDS_DEFAULT
         self.listen_wait_steps = max(1, int(round(self.listen_wait_seconds / self.dt)))
+        self.listen_question_probability = float(LISTEN_QUESTION_PROBABILITY_DEFAULT)
+        self.listen_question_pause_seconds = float(LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT)
+        self.listen_question_pause_steps = max(1, int(round(self.listen_question_pause_seconds / self.dt)))
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
@@ -350,7 +356,7 @@ class MuseumEnv(gym.Env):
         return [human.mode for human in self.humans]
 
     def _is_robot_in_move_stage(self, robot_pose) -> bool:
-        if self.robot.listen_mode or self.listening_state.phase == LISTEN_PHASE_WAIT:
+        if self.robot.listen_mode or self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED):
             return False
         rx, ry, _ = robot_pose
         wx, wy = self.robot.get_current_waypoint()
@@ -631,6 +637,63 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.update_listening_session_progress(active=(human.mode == HumanMode.LISTENING))
 
+    # Recover speaking human to normal listening behavior
+    def _clear_listening_question_humans(self) -> None:
+        for idx in self.listening_state.question_human_indices:
+            if 0 <= int(idx) < len(self.humans):
+                self.humans[int(idx)].speaking_active = False
+        self.listening_state.clear_active_question()
+
+    def _maybe_start_listening_questions(self, events: StepEvents) -> bool:
+        if self.listening_state.phase != LISTEN_PHASE_WAIT:
+            return False
+        if self.listening_state.question_sampling_done:
+            return False
+
+        halfway_step = max(1, int(self.listen_wait_steps) // 2)
+        if self.listening_state.counter < halfway_step:
+            return False
+
+        self.listening_state.question_sampling_done = True
+        candidate_indices = [
+            idx for idx, human in enumerate(self.humans) if human.mode == HumanMode.LISTENING
+        ]
+        if not candidate_indices:
+            return False
+
+        sampled = self.np_random.random(len(candidate_indices)) < float(self.listen_question_probability)
+        question_human_indices = [
+            int(candidate_indices[idx]) for idx, hit in enumerate(sampled.tolist()) if bool(hit)
+        ]
+        if not question_human_indices:
+            return False
+
+        self.listening_state.pause()
+        self.listening_state.question_pause_steps_remaining = int(self.listen_question_pause_steps)
+        self.listening_state.question_human_indices = question_human_indices
+        for idx in question_human_indices:
+            self.humans[idx].speaking_active = True
+        events.question_started = True
+        return True
+
+    def _progress_listening_question_pause(self, events: StepEvents) -> bool:
+        if self.listening_state.phase != LISTEN_PHASE_PAUSED:
+            return False
+        if self.listening_state.question_pause_steps_remaining <= 0:
+            return False
+
+        self.listening_state.question_pause_steps_remaining = max(
+            0,
+            int(self.listening_state.question_pause_steps_remaining) - 1,
+        )
+        if self.listening_state.question_pause_steps_remaining > 0:
+            return False
+
+        self._clear_listening_question_humans()
+        self.listening_state.resume()
+        events.question_completed = True
+        return True
+
     def _update_robot_emotion(self, events: StepEvents, analysis: dict) -> None:
         del events
         self.perceived_distracted_indices = list(analysis["perceived_distracted_indices"])
@@ -819,10 +882,16 @@ class MuseumEnv(gym.Env):
                 )
             return
 
+        if self._progress_listening_question_pause(events):
+            return
+
         if self.listening_state.phase != LISTEN_PHASE_WAIT:
             return
 
         self.listening_state.counter += 1
+        if self._maybe_start_listening_questions(events):
+            return
+
         if self.listening_state.counter < self.listen_wait_steps:
             return
 
@@ -830,6 +899,7 @@ class MuseumEnv(gym.Env):
         if self.listening_state.is_final:
             events.final_listen_ready = True
             self._log_event(">>> Listening wait complete at final display.")
+            self._clear_listening_question_humans()
             self.listening_state.enter_idle()
             for human in self.humans:
                 human.reset_listening_session_state()
@@ -843,6 +913,7 @@ class MuseumEnv(gym.Env):
             robot_yaw=world_frame.robot_pose[2],
             human_xy=world_frame.human_xy,
         )
+        self._clear_listening_question_humans()
         self.listening_state.enter_idle()
         for human in self.humans:
             human.reset_listening_session_state()
@@ -919,7 +990,7 @@ class MuseumEnv(gym.Env):
             social_distance=self.social_distance,
             repulsion_gain=self.repulsion_gain,
         )
-        waiting_listen_hold = self.listening_state.phase == LISTEN_PHASE_WAIT
+        waiting_listen_hold = self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED)
         robot_action = np.zeros(3, dtype=np.float32)
         if waiting_listen_hold:
             self.robot.mode = RobotMode.STOP
@@ -933,6 +1004,7 @@ class MuseumEnv(gym.Env):
             if robot_out["enter_listen"]:
                 events.entered_listen = True
                 self.follow_phase = None
+                self._clear_listening_question_humans()
                 self.listening_state.enter_intro(
                     is_final=self.robot.is_final_reached(float(robot_out["dist"]))
                 )
@@ -974,6 +1046,7 @@ class MuseumEnv(gym.Env):
 
         self._update_human_listening_session_progress()
         self._progress_listening_phase(events, post_frame)
+        self._sync_human_visual_state()
 
         human_goals = build_human_goals(
             self.humans,
