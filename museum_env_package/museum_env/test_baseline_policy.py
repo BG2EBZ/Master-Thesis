@@ -14,6 +14,7 @@ from museum_env.env_reporting import (
 from museum_env.human import (
     DEFAULT_SIM_TIMESTEP_SECONDS,
     DISTRACTED_BEHAVIOR_CONVERSATION,
+    DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING,
     DISTRACTED_CONVERSATION_STOP_DISTANCE,
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
@@ -577,6 +578,88 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         )
         np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
         self.assertTrue(np.isfinite(action).all())
+
+    def test_nd_following_distracted_stops_immediately_before_moving_to_target(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_profile(HumanProfile.NEURODIVERGENT)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+
+        pose = (6.2, 6.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (5.0, 6.0, 0.0),
+            "robot_xy": np.array([5.0, 6.0], dtype=np.float32),
+            "human_xy": np.array([[6.2, 6.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        first_action = human.step(None, data, ctx)
+
+        expected_exhibit = np.array([9.786, 6.65], dtype=np.float32)
+        exhibit_dir = expected_exhibit - np.array(pose[:2], dtype=np.float32)
+        expected_focus = (
+            expected_exhibit
+            - DISTRACTED_TARGET_DISTANCE_MIN * (exhibit_dir / np.linalg.norm(exhibit_dir))
+        )
+
+        np.testing.assert_allclose(first_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+        np.testing.assert_allclose(human.distracted_target_xy, expected_focus, atol=1e-6)
+
+        second_action = human.step(None, data, ctx)
+        self.assertGreater(float(np.linalg.norm(second_action[:2])), 0.0)
+
+    def test_nd_following_distracted_uses_stop_and_go_when_no_focus_target_exists(self):
+        empty_layout = MapLayout(
+            name="test_layout_without_exhibits",
+            default_xml_asset="museum_scene.xml",
+            spawn_rects=(AxisAlignedRect(0.0, 1.0, 0.0, 1.0),),
+            robot_waypoints=((0.0, 0.0),),
+            metadata={},
+        )
+        human = Human("person1", "person1", 0, max_speed=1.0, map_layout=empty_layout)
+        human.set_profile(HumanProfile.NEURODIVERGENT)
+        human.set_mode(HumanMode.DISTRACTED)
+        human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+        human.nd_distracted_stop_and_go_stop_steps = 1
+        human.nd_distracted_stop_and_go_move_steps = 1
+
+        pose = (1.0, 0.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (0.0, 0.0, 0.0),
+            "robot_xy": np.array([0.0, 0.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 0.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        with (
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            first_action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(first_action, np.zeros(3, dtype=np.float32), atol=1e-6)
+        self.assertIsNone(human.distracted_target_xy)
+        self.assertEqual(human.distracted_behavior_kind, DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING)
+
+        second_action = human.step(None, data, ctx)
+        np.testing.assert_allclose(second_action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+
+        third_action = human.step(None, data, ctx)
+        self.assertIsNone(human.distracted_target_xy)
+        self.assertGreater(float(np.linalg.norm(third_action[:2])), 0.0)
+        self.assertLess(float(third_action[0]), 0.0)
 
     def test_following_distracted_stops_at_target_then_recovers_after_hold(self):
         human = Human("person1", "person1", 0, max_speed=1.0)

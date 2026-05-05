@@ -9,6 +9,7 @@ import numpy as np
 
 from .human import (
     DISTRACTED_BEHAVIOR_CONVERSATION,
+    DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING,
     DISTRACTED_CONVERSATION_STOP_DISTANCE,
     DISTRACTED_EXHIBIT_LOOK_RADIUS,
     DISTRACTED_FALLBACK_DISTANCE,
@@ -27,6 +28,7 @@ from .human import (
     NORM_EPS,
     OVERWHELMED_STAGE_SWITCH_DIST,
     HumanMode,
+    HumanProfile,
     logger,
 )
 
@@ -171,59 +173,32 @@ def _step_distracted(human, ctx, pose):
     elif human.distracted_source == DISTRACTED_SOURCE_LISTENING:
         action = _step_listening_distracted(human, ctx, pose)
     else:
+        nd_following_distracted = human.profile == HumanProfile.NEURODIVERGENT
+
         # Check the distracted target state and initialize if needed.
         if human.distracted_target_xy is None:
-            _initialize_distracted_target(
+            target_found = _initialize_distracted_target(
                 human,
                 ctx,
                 current_xy=current_xy,
                 fallback_reference_yaw=yaw,
+                allow_random_fallback=not nd_following_distracted,
             )
+            if nd_following_distracted and (not target_found):
+                human.distracted_behavior_kind = DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING
+                human.distracted_partner_index = None
+                human.speaking_active = False
 
-        target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
-        to_target_xy = target_xy - current_xy
-        dist_to_target = np.linalg.norm(to_target_xy)
-        if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
-            human.distracted_stop_reached = True
-            human.distracted_timer = 0
-
-        desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
-        if human.distracted_stop_reached:
-            action = _step_following_distracted_stop(
-                human,
-                current_yaw=yaw,
-                desired_yaw=desired_yaw,
-            )
-        else:
-            move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
-            if dist_to_target > NORM_EPS:
-                v_goal = move_speed_limit * (to_target_xy / dist_to_target)
+            if nd_following_distracted and human.distracted_elapsed_steps == 1:
+                action = np.zeros(3, dtype=np.float32)
+            elif nd_following_distracted and human.distracted_target_xy is None:
+                action = _step_nd_stop_and_go_following(human, ctx, pose)
             else:
-                v_goal = np.zeros(2, dtype=np.float32)
-
-            robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-            v_total = human._compose_move_velocity(
-                current_xy=current_xy,
-                guide_xy=to_target_xy,
-                goal_v_xy=v_goal,
-                speed_limit=move_speed_limit,
-                repulsion_xy=ctx["repulsion"],
-                robot_xy=robot_xy,
-                hr_distance_min=human.hr_distance_min,
-                hr_distance_max=human.hr_distance_max,
-            )
-            guide_norm = float(np.linalg.norm(to_target_xy))
-            if guide_norm > NORM_EPS:
-                guide_dir = to_target_xy / guide_norm
-                if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
-                    fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
-                    if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
-                        v_total = np.asarray(fallback_v_xy, dtype=np.float32)
-                    else:
-                        v_total = np.zeros(2, dtype=np.float32)
-
-            yaw_err = human._wrap_to_pi(desired_yaw - yaw)
-            action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+                action = _step_following_distracted_focus(human, ctx, current_xy=current_xy, yaw=yaw)
+        elif nd_following_distracted and human.distracted_behavior_kind == DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING:
+            action = _step_nd_stop_and_go_following(human, ctx, pose)
+        else:
+            action = _step_following_distracted_focus(human, ctx, current_xy=current_xy, yaw=yaw)
 
     if (
         human.mode == HumanMode.DISTRACTED
@@ -233,6 +208,72 @@ def _step_distracted(human, ctx, pose):
         if human.enable_event_logs:
             logger.info(f">>> {human.name} recovered from DISTRACTED timeout -> {human.mode.upper()}")
     return action
+
+
+def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
+    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
+    to_target_xy = target_xy - current_xy
+    dist_to_target = np.linalg.norm(to_target_xy)
+    if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
+        human.distracted_stop_reached = True
+        human.distracted_timer = 0
+
+    desired_yaw = _resolve_focus_yaw(human, current_xy, fallback_yaw=yaw)
+    if human.distracted_stop_reached:
+        return _step_following_distracted_stop(
+            human,
+            current_yaw=yaw,
+            desired_yaw=desired_yaw,
+        )
+
+    move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
+    if dist_to_target > NORM_EPS:
+        v_goal = move_speed_limit * (to_target_xy / dist_to_target)
+    else:
+        v_goal = np.zeros(2, dtype=np.float32)
+
+    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+    v_total = human._compose_move_velocity(
+        current_xy=current_xy,
+        guide_xy=to_target_xy,
+        goal_v_xy=v_goal,
+        speed_limit=move_speed_limit,
+        repulsion_xy=ctx["repulsion"],
+        robot_xy=robot_xy,
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=human.hr_distance_max,
+    )
+    guide_norm = float(np.linalg.norm(to_target_xy))
+    if guide_norm > NORM_EPS:
+        guide_dir = to_target_xy / guide_norm
+        if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
+            fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
+            if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
+                v_total = np.asarray(fallback_v_xy, dtype=np.float32)
+            else:
+                v_total = np.zeros(2, dtype=np.float32)
+
+    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+
+
+def _step_nd_stop_and_go_following(human, ctx, pose):
+    human.distracted_timer += 1
+    pause_steps = max(1, int(human.nd_distracted_stop_and_go_stop_steps))
+    move_steps = max(1, int(human.nd_distracted_stop_and_go_move_steps))
+    cycle_steps = pause_steps + move_steps
+    cycle_step = (human.distracted_timer - 1) % cycle_steps
+
+    human.assign_target_from_context(ctx, mode=HumanMode.FOLLOWING)
+    current_xy = np.asarray(pose[:2], dtype=np.float32)
+    to_follow_xy = human.current_waypoint - current_xy
+    follow_dist = float(np.linalg.norm(to_follow_xy))
+    desired_yaw = float(np.arctan2(to_follow_xy[1], to_follow_xy[0])) if follow_dist > NORM_EPS else float(pose[2])
+    yaw_err = human._wrap_to_pi(desired_yaw - pose[2])
+
+    if cycle_step < pause_steps:
+        return human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
+    return _step_following(human, ctx, pose)
 
 def _step_following_distracted_stop(human, *, current_yaw: float, desired_yaw: float):
     human.distracted_timer += 1
@@ -622,6 +663,7 @@ def _initialize_distracted_target(
     *,
     fallback_reference_yaw: float,
     fallback_target_xy=None,
+    allow_random_fallback: bool = True,
 ):
     current_xy = np.asarray(current_xy, dtype=np.float32)
 
@@ -645,7 +687,7 @@ def _initialize_distracted_target(
         else:
             target_xy = current_xy.copy()
         human._set_distracted_target_state(target_yaw=target_yaw, target_xy=target_xy)
-        return
+        return True
 
     focus_target_xy = _select_nearest_candidate(
         current_xy,
@@ -659,7 +701,10 @@ def _initialize_distracted_target(
             focus_target_xy[0] - current_xy[0],
         )
         human._set_distracted_target_state(target_yaw=target_yaw, target_xy=focus_target_xy)
-        return
+        return True
+
+    if not allow_random_fallback:
+        return False
 
     # No valid focus target, so pick a random fallback yaw and corresponding target point.
     deviation_deg = np.random.uniform(
@@ -677,6 +722,7 @@ def _initialize_distracted_target(
         target_yaw=float(fallback_yaw),
         target_xy=np.asarray(fallback_target_xy, dtype=np.float32),
     )
+    return True
 
 
 def _compute_listening_sector_target_point(

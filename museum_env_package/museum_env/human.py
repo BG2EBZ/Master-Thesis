@@ -27,6 +27,8 @@ DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
 DISTRACTED_HUMAN_LOOK_RADIUS = 2.0
 DISTRACTED_FALLBACK_DISTANCE = 1.0
 DISTRACTED_CONVERSATION_STOP_DISTANCE = 0.8
+ND_DISTRACTED_STOP_AND_GO_STOP_SECONDS = 0.6
+ND_DISTRACTED_STOP_AND_GO_MOVE_SECONDS = 0.4
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
@@ -55,6 +57,7 @@ WALL_DETOUR_ROTATIONS = tuple(
 )
 DISTRACTED_BEHAVIOR_FOCUS = "focus"
 DISTRACTED_BEHAVIOR_CONVERSATION = "conversation"
+DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING = "stop_and_go_following"
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 
@@ -116,6 +119,14 @@ class Human:
         self.distracted_recovery_mode = HumanMode.FOLLOWING
         self.distracted_source = None
         self.speaking_active = False
+        self.nd_distracted_stop_and_go_stop_seconds = float(ND_DISTRACTED_STOP_AND_GO_STOP_SECONDS)
+        self.nd_distracted_stop_and_go_stop_steps = round(
+            self.nd_distracted_stop_and_go_stop_seconds / DEFAULT_SIM_TIMESTEP_SECONDS
+        )
+        self.nd_distracted_stop_and_go_move_seconds = float(ND_DISTRACTED_STOP_AND_GO_MOVE_SECONDS)
+        self.nd_distracted_stop_and_go_move_steps = round(
+            self.nd_distracted_stop_and_go_move_seconds / DEFAULT_SIM_TIMESTEP_SECONDS
+        )
 
         self.impatient_duration = 800
         self.impatient_timer = 0

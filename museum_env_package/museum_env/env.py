@@ -269,6 +269,12 @@ class MuseumEnv(gym.Env):
             human.max_distracted_duration_seconds = self.max_distracted_duration_seconds
             human.distracted_duration = round(human.max_distracted_duration_seconds / self.dt)
             human.distracted_stop_duration = round(human.distracted_stop_duration_seconds / self.dt)
+            human.nd_distracted_stop_and_go_stop_steps = round(
+                human.nd_distracted_stop_and_go_stop_seconds / self.dt
+            )
+            human.nd_distracted_stop_and_go_move_steps = round(
+                human.nd_distracted_stop_and_go_move_seconds / self.dt
+            )
             human.impatient_duration = round(6.0 / self.dt)
             human.impatient_speed_multiplier = 1.6
             human.impatient_front_offset = 1.0

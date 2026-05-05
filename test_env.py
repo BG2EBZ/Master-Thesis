@@ -69,7 +69,6 @@ def _summarize_info(step, info):
         f"listen_phase={state['listen_phase']} "
         f"dist_to_goal={robot['dist_to_goal']:.2f} "
         f"speaker={state['speaker_active']} "
-        f"perceived_distracted={perceived_str}"
     )
 
 
@@ -144,7 +143,7 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
 
         _, _, terminated, truncated, info = env.step(None)
         if print_every and step % print_every == 0:
-            print(_summarize_info(step, info))
+            # print(_summarize_info(step, info))
             _print_rtf("loop", step + 1, sim_dt, wall_start)
 
         rendered_this_step = False
