@@ -24,6 +24,7 @@ Usage:
     print(result["dominant_state"])
 """
 
+from networkx import density
 import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
@@ -88,9 +89,44 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density) -> None:
     density["medium"] = fuzz.trapmf(density.universe, [3, 3, 7, 7])
     density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
+def _define_nd_input_mfs(context: str, ft, hhd, hrd, density) -> None:
+    if context == "following":
+        ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 8, 15])
+        ft["medium"] = fuzz.trapmf(ft.universe, [8, 15, 25, 35])
+        ft["long"] = fuzz.trapmf(ft.universe, [25, 35, 60, 60])
+
+        hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.7, 1.0])
+        hhd["medium"] = fuzz.trapmf(hhd.universe, [0.7, 1.0, 1.3, 1.6])
+        hhd["far"] = fuzz.trapmf(hhd.universe, [1.3, 1.6, 4.0, 4.0])
+
+        hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 1.0, 1.3])
+        hrd["medium"] = fuzz.trapmf(hrd.universe, [1.0, 1.3, 2.3, 2.5])
+        hrd["far"] = fuzz.trapmf(hrd.universe, [2.3, 2.5, 5.0, 5.0])
+
+        density["low"] = fuzz.trapmf(density.universe, [0, 0, 1, 1])
+        density["medium"] = fuzz.trapmf(density.universe, [2, 2, 4, 4])
+        density["crowded"] = fuzz.trapmf(density.universe, [5, 5, 10, 10])
+        return
+
+    ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 4, 8])
+    ft["medium"] = fuzz.trapmf(ft.universe, [8, 12, 18, 22])
+    ft["long"] = fuzz.trapmf(ft.universe, [18, 22, 60, 60])
+
+    hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.8, 1.0])
+    hhd["medium"] = fuzz.trapmf(hhd.universe, [0.8, 1.0, 1.2, 1.4])
+    hhd["far"] = fuzz.trapmf(hhd.universe, [1.2, 1.4, 4.0, 4.0])
+
+    hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.9, 1.1])
+    hrd["medium"] = fuzz.trapmf(hrd.universe, [0.9, 1.1, 2.2, 2.4])
+    hrd["far"] = fuzz.trapmf(hrd.universe, [2.2, 2.4, 5.0, 5.0])
+
+    density["low"] = fuzz.trapmf(density.universe, [0, 0, 1, 1])
+    density["medium"] = fuzz.trapmf(density.universe, [2, 2, 5, 5])
+    density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
+
 def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density) -> None:
     if profile == HumanProfile.NEURODIVERGENT:
-        _define_normal_input_mfs(context, ft, hhd, hrd, density)
+        _define_nd_input_mfs(context, ft, hhd, hrd, density)
         return
     _define_normal_input_mfs(context, ft, hhd, hrd, density)
 
