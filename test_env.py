@@ -72,12 +72,33 @@ def _summarize_info(step, info):
     )
 
 
-def _report_step(step, terminated, truncated, info, wall_start=None, sim_dt=None):
+def _report_step(step, terminated, truncated, info, base_env=None, wall_start=None, sim_dt=None):
     suffix = ""
     if wall_start is not None and sim_dt is not None:
         real_time = time.perf_counter() - wall_start
         sim_time = step * sim_dt
         suffix = f", sim_time={sim_time:.3f}s, real_time={real_time:.3f}s"
+
+    if info["events"]["question_started"]:
+        active_idx = (
+            getattr(base_env.listening_state, "question_human_idx", None)
+            if base_env is not None
+            else None
+        )
+        timing_mode = (
+            getattr(base_env.listening_state, "question_timing_mode", None)
+            if base_env is not None
+            else None
+        )
+        person_label = "none" if active_idx is None else str(int(active_idx) + 1)
+        print(
+            f"[step {step}] question started: timing={timing_mode}, person={person_label}{suffix}"
+        )
+
+    if info["events"]["question_completed"]:
+        print(
+            f"[step {step}] question completed: listen_phase={info['state']['listen_phase']}{suffix}"
+        )
 
     if info["events"]["final_listen_ready"]:
         print(f"[step {step}] final listen completed{suffix}")
@@ -155,7 +176,7 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
             if not rendered_this_step and (terminated or truncated):
                 env.render()
 
-        if _report_step(step, terminated, truncated, info, wall_start, sim_dt):
+        if _report_step(step, terminated, truncated, info, base_env, wall_start, sim_dt):
             break
 
         step += 1

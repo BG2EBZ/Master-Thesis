@@ -15,6 +15,9 @@ LISTEN_PHASE_INTRO = "intro"
 LISTEN_PHASE_WAIT = "wait"
 LISTEN_PHASE_PAUSED = "paused"
 
+LISTEN_QUESTION_TIMING_MID_RANDOM = "mid_random"
+LISTEN_QUESTION_TIMING_POST_WAIT = "post_wait"
+
 POST_EXPLANATION_ROLE_WAIT = "wait"
 POST_EXPLANATION_ROLE_YIELD = "yield"
 
@@ -53,18 +56,24 @@ class ListeningState:
     paused_phase: str = LISTEN_PHASE_IDLE
     paused_counter: int = 0
     paused_is_final: bool = False
-    question_sampling_done: bool = False
+    session_has_question: bool = False
+    question_timing_mode: Optional[str] = None
+    question_trigger_step: Optional[int] = None
+    question_fired: bool = False
     question_pause_steps_remaining: int = 0
-    question_human_indices: list[int] = field(default_factory=list)
+    question_human_idx: Optional[int] = None
 
     def _reset_question_state(self) -> None:
-        self.question_sampling_done = False
+        self.session_has_question = False
+        self.question_timing_mode = None
+        self.question_trigger_step = None
+        self.question_fired = False
         self.question_pause_steps_remaining = 0
-        self.question_human_indices.clear()
+        self.question_human_idx = None
 
     def clear_active_question(self) -> None:
         self.question_pause_steps_remaining = 0
-        self.question_human_indices.clear()
+        self.question_human_idx = None
 
     def reset(self) -> None:
         self.phase = LISTEN_PHASE_IDLE

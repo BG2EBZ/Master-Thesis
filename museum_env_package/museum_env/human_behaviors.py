@@ -187,7 +187,7 @@ def _step_distracted(human, ctx, pose):
             if nd_following_distracted and (not target_found):
                 human.distracted_behavior_kind = DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING
                 human.distracted_partner_index = None
-                human.speaking_active = False
+                human.speaking_active = True
 
             if nd_following_distracted and human.distracted_elapsed_steps == 1:
                 action = np.zeros(3, dtype=np.float32)
@@ -259,6 +259,7 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
 
 def _step_nd_stop_and_go_following(human, ctx, pose):
     human.distracted_timer += 1
+    human.speaking_active = True
     pause_steps = max(1, int(human.nd_distracted_stop_and_go_stop_steps))
     move_steps = max(1, int(human.nd_distracted_stop_and_go_move_steps))
     cycle_steps = pause_steps + move_steps
