@@ -205,6 +205,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listen_question_probability = 0.0
             env.listen_question_after_explanation_probability = 0.0
             env.listen_question_pause_steps = 2
+            env._prepare_listening_question_plan()
 
             _, _, _, _, info = env.step(None)
             self.assertEqual(info["state"]["listen_phase"], "wait")
@@ -232,7 +233,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 env.listen_wait_steps = 10
                 env.listen_question_probability = 1.0
                 env.listen_question_after_explanation_probability = 0.0
-                env.step(None)
+                env._prepare_listening_question_plan()
 
             self.assertEqual(env1.listening_state.question_timing_mode, LISTEN_QUESTION_TIMING_MID_RANDOM)
             self.assertEqual(env2.listening_state.question_timing_mode, LISTEN_QUESTION_TIMING_MID_RANDOM)
@@ -332,7 +333,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env_post.listen_wait_steps = 8
             env_post.listen_question_probability = 1.0
             env_post.listen_question_after_explanation_probability = 1.0
-            env_post.step(None)
+            env_post._prepare_listening_question_plan()
 
             env_mid.reset(seed=27)
             env_mid.listening_state.enter_wait(False)
@@ -340,7 +341,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env_mid.listen_wait_steps = 8
             env_mid.listen_question_probability = 1.0
             env_mid.listen_question_after_explanation_probability = 0.0
-            env_mid.step(None)
+            env_mid._prepare_listening_question_plan()
 
             self.assertEqual(
                 env_post.listening_state.question_timing_mode,

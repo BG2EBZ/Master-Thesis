@@ -629,11 +629,7 @@ class MuseumEnv(gym.Env):
             return
 
         state = self.listening_state
-        if (state.session_has_question
-            or state.question_fired
-            or state.question_timing_mode is not None
-            or state.question_trigger_step is not None
-        ):
+        if state.session_has_question or state.question_timing_mode is not None or state.question_fired:
             return
 
         state.session_has_question = (float(self.np_random.random()) < float(self.listen_question_probability))
@@ -932,7 +928,6 @@ class MuseumEnv(gym.Env):
         if self.listening_state.phase != LISTEN_PHASE_WAIT:
             return
 
-        self._prepare_listening_question_plan()
         self.listening_state.counter += 1
         if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_MID_RANDOM):
             return
