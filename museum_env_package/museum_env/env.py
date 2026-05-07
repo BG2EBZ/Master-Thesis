@@ -29,6 +29,12 @@ from .env_state import (
     LISTEN_PHASE_INTRO,
     LISTEN_PHASE_PAUSED,
     LISTEN_PHASE_WAIT,
+    LISTEN_QUESTION_COMPLETION_FINISH_WAIT,
+    LISTEN_QUESTION_COMPLETION_RESUME_WAIT,
+    LISTEN_QUESTION_PHASE_ANSWER,
+    LISTEN_QUESTION_PHASE_NONE,
+    LISTEN_QUESTION_PHASE_TURN_BACK,
+    LISTEN_QUESTION_PHASE_TURN_TO_HUMAN,
     LISTEN_QUESTION_TIMING_MID_RANDOM,
     LISTEN_QUESTION_TIMING_POST_WAIT,
     POST_EXPLANATION_ROLE_WAIT,
@@ -53,6 +59,7 @@ from .metrics import VectorizedRollingWindow
 from .robot import (
     Robot,
     RobotMode,
+    RobotSpeechMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,7 +85,9 @@ LISTEN_INTRO_DELAY_SECONDS_DEFAULT = 3.0
 LISTEN_WAIT_SECONDS_DEFAULT = 25.0
 LISTEN_QUESTION_PROBABILITY_DEFAULT = 1.0
 LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT = 0.50
-LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT = 3.0
+LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT = 5.0
+LISTEN_QUESTION_TURN_YAW_RATE = 1.0
+LISTEN_QUESTION_TURN_DONE_YAW_ERR = 0.02
 HUMAN_MAX_SPEED_DEFAULT = 1.0
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.1
@@ -331,7 +340,60 @@ class MuseumEnv(gym.Env):
             self.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
 
     def _sync_robot_speaker_state(self) -> None:
-        self.robot.set_speaker_active(bool(self.listening_state.phase == LISTEN_PHASE_WAIT))
+        if self.listening_state.phase == LISTEN_PHASE_WAIT:
+            self.robot.set_speech_mode(RobotSpeechMode.EXPLANATION)
+            return
+        if (
+            self.listening_state.phase == LISTEN_PHASE_PAUSED
+            and self.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER
+        ):
+            self.robot.set_speech_mode(RobotSpeechMode.ANSWER)
+            return
+        self.robot.set_speech_mode(RobotSpeechMode.NONE)
+
+    def _build_question_turn_action(self, current_yaw: float, target_yaw: float) -> np.ndarray:
+        yaw_err = self.robot._wrap_to_pi(float(target_yaw) - float(current_yaw))
+        action = np.zeros(3, dtype=np.float32)
+        if abs(yaw_err) < float(LISTEN_QUESTION_TURN_DONE_YAW_ERR):
+            return action
+
+        max_yaw_delta = float(LISTEN_QUESTION_TURN_YAW_RATE) * float(self.dt)
+        if abs(yaw_err) <= max_yaw_delta:
+            action[2] = float(yaw_err / float(self.dt))
+        else:
+            action[2] = float(np.sign(yaw_err) * float(LISTEN_QUESTION_TURN_YAW_RATE))
+        return action
+
+    def _set_listening_question_human_speaking(self, active: bool) -> None:
+        idx = self.listening_state.question_human_idx
+        if idx is None:
+            return
+        if 0 <= int(idx) < len(self.humans):
+            self.humans[int(idx)].speaking_active = bool(active)
+
+    def _get_listening_hold_robot_action(self, world_frame) -> np.ndarray:
+        action = np.zeros(3, dtype=np.float32)
+        self.robot.mode = RobotMode.STOP
+        if self.listening_state.phase != LISTEN_PHASE_PAUSED:
+            return action
+
+        question_phase = self.listening_state.question_phase
+        if question_phase == LISTEN_QUESTION_PHASE_TURN_TO_HUMAN:
+            idx = self.listening_state.question_human_idx
+            if idx is None or not (0 <= int(idx) < len(self.humans)):
+                return action
+            target_xy = np.asarray(world_frame.human_xy[int(idx)], dtype=np.float32)
+            robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+            desired_yaw = float(np.arctan2(target_xy[1] - robot_xy[1], target_xy[0] - robot_xy[0]))
+            return self._build_question_turn_action(world_frame.robot_pose[2], desired_yaw)
+
+        if question_phase == LISTEN_QUESTION_PHASE_TURN_BACK:
+            target_yaw = self.listening_state.question_return_yaw
+            if target_yaw is None:
+                return action
+            return self._build_question_turn_action(world_frame.robot_pose[2], float(target_yaw))
+
+        return action
 
     def _sync_robot_visual_state(self, force: bool = False) -> None:
         visual_state = resolve_robot_visual_state(
@@ -652,13 +714,11 @@ class MuseumEnv(gym.Env):
 
     # Recover speaking human to normal listening behavior
     def _clear_listening_question_humans(self) -> None:
-        idx = self.listening_state.question_human_idx
-        if idx is not None and 0 <= int(idx) < len(self.humans):
-            self.humans[int(idx)].speaking_active = False
+        self._set_listening_question_human_speaking(False)
         self.listening_state.clear_active_question()
 
     # Attempt to start a listening question
-    def _maybe_start_listening_question(self, events: StepEvents, timing_mode: str) -> bool:
+    def _maybe_start_listening_question(self, events: StepEvents, timing_mode: str, world_frame) -> bool:
         if self.listening_state.phase != LISTEN_PHASE_WAIT:
             return False
         if not self.listening_state.session_has_question or self.listening_state.question_fired:
@@ -683,10 +743,17 @@ class MuseumEnv(gym.Env):
             candidate_indices[int(self.np_random.integers(0, len(candidate_indices)))]
         )
         self.listening_state.pause()
-        self.listening_state.question_pause_steps_remaining = int(self.listen_question_pause_steps)
         self.listening_state.question_human_idx = question_human_idx
+        self.listening_state.question_phase = LISTEN_QUESTION_PHASE_TURN_TO_HUMAN
+        self.listening_state.question_ask_steps_remaining = int(self.listen_question_pause_steps)
+        self.listening_state.question_return_yaw = float(world_frame.robot_pose[2])
+        self.listening_state.question_completion_mode = (
+            LISTEN_QUESTION_COMPLETION_FINISH_WAIT
+            if timing_mode == LISTEN_QUESTION_TIMING_POST_WAIT
+            else LISTEN_QUESTION_COMPLETION_RESUME_WAIT
+        )
         self.listening_state.question_fired = True
-        self.humans[question_human_idx].speaking_active = True
+        self._set_listening_question_human_speaking(True)
         events.question_started = True
         self._log_event(
             f">>> Listening question started ({timing_mode}) by person{question_human_idx + 1}."
@@ -721,25 +788,86 @@ class MuseumEnv(gym.Env):
     def _progress_listening_question_pause(self, events: StepEvents, world_frame) -> bool:
         if self.listening_state.phase != LISTEN_PHASE_PAUSED:
             return False
-        if self.listening_state.question_pause_steps_remaining <= 0:
+        if not self.listening_state.question_active:
             return False
 
-        self.listening_state.question_pause_steps_remaining = max(
-            0,
-            int(self.listening_state.question_pause_steps_remaining) - 1,
-        )
-        if self.listening_state.question_pause_steps_remaining > 0:
+        question_phase = self.listening_state.question_phase
+        if question_phase == LISTEN_QUESTION_PHASE_TURN_TO_HUMAN:
+            idx = self.listening_state.question_human_idx
+            if idx is None or not (0 <= int(idx) < len(self.humans)):
+                self._clear_listening_question_humans()
+                self.listening_state.resume()
+                return True
+
+            self.listening_state.question_ask_steps_remaining = max(
+                0,
+                int(self.listening_state.question_ask_steps_remaining) - 1,
+            )
+            target_xy = np.asarray(world_frame.human_xy[int(idx)], dtype=np.float32)
+            robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+            desired_yaw = float(np.arctan2(target_xy[1] - robot_xy[1], target_xy[0] - robot_xy[0]))
+            yaw_err = self.robot._wrap_to_pi(desired_yaw - float(world_frame.robot_pose[2]))
+            if (
+                self.listening_state.question_ask_steps_remaining > 0
+                or abs(yaw_err) >= float(LISTEN_QUESTION_TURN_DONE_YAW_ERR)
+            ):
+                return True
+
+            self._set_listening_question_human_speaking(False)
+            self.listening_state.question_phase = LISTEN_QUESTION_PHASE_ANSWER
+            self.listening_state.question_answer_steps_remaining = int(self.listen_question_pause_steps)
+            return True
+
+        if question_phase == LISTEN_QUESTION_PHASE_ANSWER:
+            self.listening_state.question_answer_steps_remaining = max(
+                0,
+                int(self.listening_state.question_answer_steps_remaining) - 1,
+            )
+            if self.listening_state.question_answer_steps_remaining > 0:
+                return True
+
+            if (
+                self.listening_state.question_completion_mode
+                == LISTEN_QUESTION_COMPLETION_FINISH_WAIT
+            ):
+                self._clear_listening_question_humans()
+                self.listening_state.is_final = bool(self.listening_state.paused_is_final)
+                self.listening_state.counter = int(self.listening_state.paused_counter)
+                events.question_completed = True
+                self._log_event(">>> Listening question completed.")
+                self._finish_listening_wait(events, world_frame)
+                return True
+
+            self.listening_state.question_phase = LISTEN_QUESTION_PHASE_TURN_BACK
+            return True
+
+        if question_phase == LISTEN_QUESTION_PHASE_TURN_BACK:
+            target_yaw = self.listening_state.question_return_yaw
+            if target_yaw is None:
+                self._clear_listening_question_humans()
+                self.listening_state.resume()
+                events.question_completed = True
+                self._log_event(">>> Listening question completed.")
+                return True
+
+            yaw_err = self.robot._wrap_to_pi(float(target_yaw) - float(world_frame.robot_pose[2]))
+            if abs(yaw_err) >= float(LISTEN_QUESTION_TURN_DONE_YAW_ERR):
+                return True
+
+            self._clear_listening_question_humans()
+            self.listening_state.resume()
+            events.question_completed = True
+            self._log_event(">>> Listening question completed.")
+            if (
+                self.listening_state.phase == LISTEN_PHASE_WAIT
+                and self.listening_state.counter >= int(self.listen_wait_steps)
+            ):
+                self._finish_listening_wait(events, world_frame)
+            return True
+
+        if question_phase == LISTEN_QUESTION_PHASE_NONE:
             return False
 
-        self._clear_listening_question_humans()
-        self.listening_state.resume()
-        events.question_completed = True
-        self._log_event(">>> Listening question completed.")
-        if (
-            self.listening_state.phase == LISTEN_PHASE_WAIT
-            and self.listening_state.counter >= int(self.listen_wait_steps)
-        ):
-            self._finish_listening_wait(events, world_frame)
         return True
 
     def _apply_general_phase_strategy(self, human, idx: int, world_frame) -> np.ndarray:
@@ -790,6 +918,9 @@ class MuseumEnv(gym.Env):
         if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
             human.set_mode(HumanMode.LISTENING)
         current_human_modes = self._get_current_human_modes()
+        effective_robot_yaw = float(world_frame.robot_pose[2])
+        if self.listening_state.question_active and self.listening_state.question_return_yaw is not None:
+            effective_robot_yaw = float(self.listening_state.question_return_yaw)
 
         if human.mode == HumanMode.LISTENING and self._should_evaluate_fuzzy(idx, context="listening"):
             fuzzy_debug = self._compute_human_fuzzy_debug(
@@ -813,7 +944,7 @@ class MuseumEnv(gym.Env):
             "n_humans": len(self.humans),
             "robot_pose": world_frame.robot_pose,
             "robot_xy": world_frame.robot_xy,
-            "robot_yaw": world_frame.robot_pose[2],
+            "robot_yaw": effective_robot_yaw,
             "human_xy": world_frame.human_xy,
             "human_modes": current_human_modes,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
@@ -929,13 +1060,13 @@ class MuseumEnv(gym.Env):
             return
 
         self.listening_state.counter += 1
-        if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_MID_RANDOM):
+        if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_MID_RANDOM, world_frame):
             return
 
         if self.listening_state.counter < self.listen_wait_steps:
             return
 
-        if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_POST_WAIT):
+        if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_POST_WAIT, world_frame):
             return
 
         self._finish_listening_wait(events, world_frame)
@@ -1013,7 +1144,7 @@ class MuseumEnv(gym.Env):
         waiting_listen_hold = self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED)
         robot_action = np.zeros(3, dtype=np.float32)
         if waiting_listen_hold:
-            self.robot.mode = RobotMode.STOP
+            robot_action = self._get_listening_hold_robot_action(pre_frame)
         else:
             robot_out = self.robot.step(
                 robot_pose=pre_frame.robot_pose,

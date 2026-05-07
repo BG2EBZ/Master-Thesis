@@ -5,11 +5,12 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .robot import RobotEmotion
+from .robot import RobotEmotion, RobotSpeechMode
 
 HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
+ROBOT_ANSWER_LABEL_GROUP = 1
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
@@ -27,8 +28,9 @@ class RobotVisualState:
     halo_rgba: np.ndarray
     show_follow_me: bool
     show_explanation: bool
+    show_answer: bool
     text_label: str
-    signature: tuple[str, bool, bool]
+    signature: tuple[str, str, bool]
 
 
 def build_label_scene_option():
@@ -38,6 +40,7 @@ def build_label_scene_option():
     opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
     opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
     opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
+    opt.sitegroup[ROBOT_ANSWER_LABEL_GROUP] = 0
     return opt
 
 
@@ -50,11 +53,14 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
         base_rgba = ROBOT_COLOR_NATURAL
 
     show_follow_me = bool(callback_visual_active)
-    show_explanation = (not show_follow_me) and bool(robot.speaker_active)
+    show_explanation = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.EXPLANATION)
+    show_answer = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.ANSWER)
     if show_follow_me:
         text_label = "Please_follow_me"
     elif show_explanation:
         text_label = "explanation"
+    elif show_answer:
+        text_label = "answer question"
     else:
         text_label = "none"
 
@@ -64,8 +70,9 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
         halo_rgba=np.array(halo_rgba, dtype=np.float32),
         show_follow_me=show_follow_me,
         show_explanation=show_explanation,
+        show_answer=show_answer,
         text_label=text_label,
-        signature=(str(robot.emotion), bool(robot.speaker_active), bool(callback_visual_active)),
+        signature=(str(robot.emotion), str(robot.speech_mode), bool(callback_visual_active)),
     )
 
 
@@ -83,6 +90,7 @@ def apply_robot_visual_state(
     label_scene_option.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = (
         1 if visual_state.show_explanation else 0
     )
+    label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP] = 1 if visual_state.show_answer else 0
 
 
 def apply_label_scene_option_to_viewer(*, viewer, label_scene_option) -> None:

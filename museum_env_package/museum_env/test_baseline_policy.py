@@ -10,8 +10,12 @@ from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
     HUMAN_SPEAKING_HALO_RGBA_ON,
     ROBOT_COLOR_SAD,
+    ROBOT_ANSWER_LABEL_GROUP,
 )
 from museum_env.env_state import (
+    LISTEN_QUESTION_PHASE_ANSWER,
+    LISTEN_QUESTION_PHASE_TURN_BACK,
+    LISTEN_QUESTION_PHASE_TURN_TO_HUMAN,
     LISTEN_QUESTION_TIMING_MID_RANDOM,
     LISTEN_QUESTION_TIMING_POST_WAIT,
 )
@@ -73,6 +77,20 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         env.listening_state.question_fired = False
         env.listening_state.question_human_idx = None
 
+    def _set_robot_and_human_poses(self, env, robot_pose, human_poses):
+        robot_origin_xy = np.array(env.model.body("robot").pos[:2], dtype=np.float32)
+        robot_pose = np.array(robot_pose, dtype=np.float32)
+        env.data.qpos[0:2] = robot_pose[:2] - robot_origin_xy
+        env.data.qpos[2] = robot_pose[2]
+        env.data.qvel[0:3] = 0.0
+        for human, pose in zip(env.humans, human_poses):
+            env.data.qpos[human.qpos_idx : human.qpos_idx + 3] = np.array(
+                pose,
+                dtype=np.float32,
+            )
+            env.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
+        mujoco.mj_forward(env.model, env.data)
+
     def test_reset_contract_and_default_profile(self):
         env = self._make_env(n_humans=5)
         try:
@@ -130,6 +148,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.reset(seed=21)
             env.listen_wait_steps = 6
             env.listen_question_pause_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            )
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
@@ -142,6 +165,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(info["state"]["listen_phase"], "paused")
             self.assertTrue(info["events"]["question_started"])
             self.assertFalse(info["state"]["speaker_active"])
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
             active_idx = env.listening_state.question_human_idx
             self.assertIn(active_idx, (0, 1))
             self.assertEqual(
@@ -166,7 +190,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=22)
             env.listen_wait_steps = 6
-            env.listen_question_pause_steps = 2
+            env.listen_question_pause_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
@@ -177,18 +206,35 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.step(None)
             paused_counter = env.listening_state.paused_counter
 
-            _, _, _, _, info = env.step(None)
+            _, info = self._run_until(
+                env,
+                lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
+                200,
+            )
             self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
             self.assertFalse(info["events"]["question_completed"])
             self.assertEqual(env.listening_state.paused_counter, paused_counter)
-            self.assertEqual(env.listening_state.question_pause_steps_remaining, 1)
-            self.assertTrue(env.humans[0].speaking_active)
+            self.assertEqual(env.listening_state.question_answer_steps_remaining, 1)
+            self.assertFalse(env.humans[0].speaking_active)
+            self.assertTrue(info["state"]["speaker_active"])
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP], 1)
 
-            _, _, _, _, info = env.step(None)
+            _, info = self._run_until(
+                env,
+                lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_TURN_BACK,
+                200,
+            )
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_BACK)
+            self.assertFalse(info["events"]["question_completed"])
+            self.assertFalse(info["state"]["speaker_active"])
+
+            _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
             self.assertEqual(info["state"]["listen_phase"], "wait")
             self.assertTrue(info["events"]["question_completed"])
             self.assertEqual(env.listening_state.counter, paused_counter)
-            self.assertEqual(env.listening_state.question_pause_steps_remaining, 0)
+            self.assertEqual(env.listening_state.question_answer_steps_remaining, 0)
             self.assertFalse(env.humans[0].speaking_active)
             self.assertTrue(info["state"]["speaker_active"])
             self.assertIsNone(env.listening_state.question_human_idx)
@@ -253,6 +299,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.reset(seed=24)
             env.listen_wait_steps = 6
             env.listen_question_pause_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            )
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
@@ -271,12 +322,133 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_final_listening_questions_resume_final_session(self):
+    def test_listening_question_turn_rate_is_capped_while_turning_to_human(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=25)
             env.listen_wait_steps = 6
             env.listen_question_pause_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 1.0, 0.0),),
+            )
+            self._prime_listening_question(
+                env,
+                timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
+                trigger_step=env.listen_wait_steps // 2,
+            )
+            env.listening_state.counter = (env.listen_wait_steps // 2) - 1
+
+            env.step(None)
+            _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
+            self.assertAlmostEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0, places=6)
+            self.assertLessEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0 + 1e-6)
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_listening_question_human_speaks_for_configured_duration(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=26)
+            env.listen_wait_steps = 6
+            env.listen_question_pause_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
+            self._prime_listening_question(
+                env,
+                timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
+                trigger_step=env.listen_wait_steps // 2,
+            )
+            env.listening_state.counter = (env.listen_wait_steps // 2) - 1
+
+            env.step(None)
+
+            _, _, _, _, info = env.step(None)
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
+            self.assertEqual(env.listening_state.question_ask_steps_remaining, 1)
+            self.assertTrue(env.humans[0].speaking_active)
+            self.assertFalse(info["state"]["speaker_active"])
+
+            _, _, _, _, info = env.step(None)
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
+            self.assertEqual(env.listening_state.question_ask_steps_remaining, 0)
+            self.assertFalse(env.humans[0].speaking_active)
+            self.assertTrue(info["state"]["speaker_active"])
+        finally:
+            env.close()
+
+    def test_listening_question_freezes_listener_robot_yaw_during_turn(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=27)
+            env.listen_wait_steps = 6
+            env.listen_question_pause_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 1.0, 0.0), (0.0, -1.0, 0.0)),
+            )
+            self._prime_listening_question(
+                env,
+                timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
+                trigger_step=env.listen_wait_steps // 2,
+            )
+            env.listening_state.counter = (env.listen_wait_steps // 2) - 1
+
+            env.step(None)
+            asking_idx = int(env.listening_state.question_human_idx)
+            listener_idx = 1 - asking_idx
+
+            for _ in range(10):
+                env.step(None)
+
+            captured = {}
+            original_step = env.humans[listener_idx].step
+
+            def capture_step(model, data, ctx):
+                captured["robot_yaw"] = float(ctx["robot_yaw"])
+                captured["live_robot_yaw"] = float(ctx["robot_pose"][2])
+                return original_step(model, data, ctx)
+
+            with patch.object(env.humans[listener_idx], "step", side_effect=capture_step):
+                env.step(None)
+
+            self.assertIn("robot_yaw", captured)
+            self.assertIn("live_robot_yaw", captured)
+            self.assertAlmostEqual(
+                captured["robot_yaw"],
+                float(env.listening_state.question_return_yaw),
+                places=6,
+            )
+            self.assertGreater(
+                abs(captured["live_robot_yaw"] - captured["robot_yaw"]),
+                1e-4,
+            )
+        finally:
+            env.close()
+
+    def test_final_listening_questions_resume_final_session(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=28)
+            env.listen_wait_steps = 6
+            env.listen_question_pause_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
@@ -289,7 +461,23 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(info["state"]["listen_phase"], "paused")
             self.assertTrue(env.listening_state.paused_is_final)
 
-            _, _, _, _, info = env.step(None)
+            _, info = self._run_until(
+                env,
+                lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
+                200,
+            )
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
+
+            _, info = self._run_until(
+                env,
+                lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_TURN_BACK,
+                200,
+            )
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_BACK)
+
+            _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
             self.assertEqual(info["state"]["listen_phase"], "wait")
             self.assertTrue(info["events"]["question_completed"])
             self.assertTrue(env.listening_state.is_final)
@@ -299,9 +487,14 @@ class MuseumEnvRefactorTests(unittest.TestCase):
     def test_listening_question_post_wait_pauses_before_completion_and_then_finishes(self):
         env = self._make_env(n_humans=1)
         try:
-            env.reset(seed=26)
+            env.reset(seed=29)
             env.listen_wait_steps = 6
             env.listen_question_pause_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_POST_WAIT,
@@ -315,11 +508,23 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertFalse(info["events"]["completed_listen_wait"])
             self.assertEqual(env.listening_state.question_human_idx, 0)
 
-            _, _, _, _, info = env.step(None)
+            _, info = self._run_until(
+                env,
+                lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
+                200,
+            )
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
+            self.assertTrue(info["state"]["speaker_active"])
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP], 1)
+            self.assertFalse(env.humans[0].speaking_active)
+
+            _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
             self.assertTrue(info["events"]["question_completed"])
             self.assertTrue(info["events"]["completed_listen_wait"])
             self.assertEqual(info["state"]["listen_phase"], "idle")
             self.assertTrue(env.post_explanation_state.active)
+            self.assertFalse(env.humans[0].speaking_active)
         finally:
             env.close()
 
@@ -327,7 +532,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         env_post = self._make_env(n_humans=1)
         env_mid = self._make_env(n_humans=1)
         try:
-            env_post.reset(seed=27)
+            env_post.reset(seed=30)
             env_post.listening_state.enter_wait(False)
             env_post.robot.listen_mode = True
             env_post.listen_wait_steps = 8
@@ -335,7 +540,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env_post.listen_question_after_explanation_probability = 1.0
             env_post._prepare_listening_question_plan()
 
-            env_mid.reset(seed=27)
+            env_mid.reset(seed=30)
             env_mid.listening_state.enter_wait(False)
             env_mid.robot.listen_mode = True
             env_mid.listen_wait_steps = 8

@@ -28,6 +28,12 @@ class RobotCallbackPhase:
     CUE = "cue"
 
 
+class RobotSpeechMode:
+    NONE = "none"
+    EXPLANATION = "explanation"
+    ANSWER = "answer"
+
+
 class Robot:
     """
     Robot policy/state wrapper:
@@ -65,6 +71,7 @@ class Robot:
         self.emotion = RobotEmotion.NATURAL
         self.happy_hold_steps_remaining = 0
         self.speaker_active = False
+        self.speech_mode = RobotSpeechMode.NONE
 
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
@@ -83,6 +90,7 @@ class Robot:
         self.emotion = RobotEmotion.NATURAL
         self.happy_hold_steps_remaining = 0
         self.speaker_active = False
+        self.speech_mode = RobotSpeechMode.NONE
 
     def _reset_callback_state(self):
         """Clear callback-related transient state."""
@@ -268,9 +276,11 @@ class Robot:
         """Start/refresh HAPPY emotion timer."""
         self.happy_hold_steps_remaining = max(1, int(hold_steps))
 
-    def set_speaker_active(self, active: bool) -> None:
-        """Set whether robot speaker visual/text should be active."""
-        self.speaker_active = bool(active)
+    def set_speech_mode(self, mode: str) -> None:
+        """Set whether robot is speaking and which speech label should be shown."""
+        normalized_mode = str(mode)
+        self.speech_mode = normalized_mode
+        self.speaker_active = normalized_mode != RobotSpeechMode.NONE
 
     def step(self, robot_pose, human_xyz):
         """

@@ -17,6 +17,12 @@ LISTEN_PHASE_PAUSED = "paused"
 
 LISTEN_QUESTION_TIMING_MID_RANDOM = "mid_random"
 LISTEN_QUESTION_TIMING_POST_WAIT = "post_wait"
+LISTEN_QUESTION_PHASE_NONE = "none"
+LISTEN_QUESTION_PHASE_TURN_TO_HUMAN = "turn_to_human"
+LISTEN_QUESTION_PHASE_ANSWER = "answer"
+LISTEN_QUESTION_PHASE_TURN_BACK = "turn_back"
+LISTEN_QUESTION_COMPLETION_RESUME_WAIT = "resume_wait"
+LISTEN_QUESTION_COMPLETION_FINISH_WAIT = "finish_wait"
 
 POST_EXPLANATION_ROLE_WAIT = "wait"
 POST_EXPLANATION_ROLE_YIELD = "yield"
@@ -60,20 +66,32 @@ class ListeningState:
     question_timing_mode: Optional[str] = None
     question_trigger_step: Optional[int] = None
     question_fired: bool = False
-    question_pause_steps_remaining: int = 0
     question_human_idx: Optional[int] = None
+    question_phase: str = LISTEN_QUESTION_PHASE_NONE
+    question_ask_steps_remaining: int = 0
+    question_answer_steps_remaining: int = 0
+    question_return_yaw: Optional[float] = None
+    question_completion_mode: Optional[str] = None
 
     def _reset_question_state(self) -> None:
         self.session_has_question = False
         self.question_timing_mode = None
         self.question_trigger_step = None
         self.question_fired = False
-        self.question_pause_steps_remaining = 0
         self.question_human_idx = None
+        self.question_phase = LISTEN_QUESTION_PHASE_NONE
+        self.question_ask_steps_remaining = 0
+        self.question_answer_steps_remaining = 0
+        self.question_return_yaw = None
+        self.question_completion_mode = None
 
     def clear_active_question(self) -> None:
-        self.question_pause_steps_remaining = 0
         self.question_human_idx = None
+        self.question_phase = LISTEN_QUESTION_PHASE_NONE
+        self.question_ask_steps_remaining = 0
+        self.question_answer_steps_remaining = 0
+        self.question_return_yaw = None
+        self.question_completion_mode = None
 
     def reset(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
@@ -133,6 +151,10 @@ class ListeningState:
     @property
     def fuzzy_active(self) -> bool:
         return self.phase in (LISTEN_PHASE_INTRO, LISTEN_PHASE_WAIT)
+
+    @property
+    def question_active(self) -> bool:
+        return self.question_phase != LISTEN_QUESTION_PHASE_NONE
 
 
 @dataclass
