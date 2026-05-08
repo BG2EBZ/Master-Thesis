@@ -91,6 +91,10 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.data.qvel[human.qpos_idx : human.qpos_idx + 3] = 0.0
         mujoco.mj_forward(env.model, env.data)
 
+    def _invalidate_observation_cache(self, env):
+        env.runtime_cache.observations = None
+        env.runtime_cache.sample_age_steps = 0
+
     def test_reset_contract_and_default_profile(self):
         env = self._make_env(n_humans=5)
         try:
@@ -2005,6 +2009,134 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             env._apply_general_phase_strategy(human, 0, world_frame)
             self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
+    def test_transit_follow_slowdown_applies_when_any_human_exceeds_distance_threshold(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=29)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(
+                info["robot"]["action"]["vx"],
+                0.7 * float(baseline_action[0]),
+                places=6,
+            )
+            self.assertAlmostEqual(
+                info["robot"]["action"]["vy"],
+                0.7 * float(baseline_action[1]),
+                places=6,
+            )
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_does_not_slow_when_all_humans_are_within_threshold(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=30)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0), (2.4, 0.0, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+        finally:
+            env.close()
+
+    def test_pre_listen_follow_does_not_slow_when_human_exceeds_distance_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=31)
+            env.follow_phase = "pre_listen_engage"
+            env.robot.listen_done = False
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_slowdown_recovers_immediately_when_distance_returns_within_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=32)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            slowed_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, slowed_info = env.step(None)
+            self.assertAlmostEqual(
+                slowed_info["robot"]["action"]["vx"],
+                0.7 * float(slowed_baseline_action[0]),
+                places=6,
+            )
+            self.assertAlmostEqual(
+                slowed_info["robot"]["action"]["vy"],
+                0.7 * float(slowed_baseline_action[1]),
+                places=6,
+            )
+            self.assertAlmostEqual(
+                slowed_info["robot"]["action"]["yaw_rate"],
+                float(slowed_baseline_action[2]),
+                places=6,
+            )
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((2.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            recovered_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, recovered_info = env.step(None)
+            self.assertAlmostEqual(recovered_info["robot"]["action"]["vx"], float(recovered_baseline_action[0]), places=6)
+            self.assertAlmostEqual(recovered_info["robot"]["action"]["vy"], float(recovered_baseline_action[1]), places=6)
+            self.assertAlmostEqual(
+                recovered_info["robot"]["action"]["yaw_rate"],
+                float(recovered_baseline_action[2]),
+                places=6,
+            )
         finally:
             env.close()
 

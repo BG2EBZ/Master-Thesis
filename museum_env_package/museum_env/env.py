@@ -98,6 +98,8 @@ POST_EXPLANATION_YIELD_CLOSE_DISTANCE = 1.1
 POST_EXPLANATION_YIELD_DISTANCE = 0.5
 HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS = 1.0
 MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
+FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS = 2.5
+FOLLOWING_SLOWDOWN_SPEED_SCALE = 0.7
 
 MAX_HUMANS_CAPACITY = 15
 HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
@@ -202,6 +204,8 @@ class MuseumEnv(gym.Env):
         self.runtime_cache = RuntimeCache()
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
+        self._last_following_slowdown_active = False
+        self._last_following_slowdown_max_hr_distance = 0.0
         self.callback_response_profile_probs = {
             HumanProfile.NORMAL: {
                 "rejoin": float(callback_rejoin_prob_normal),
@@ -680,6 +684,26 @@ class MuseumEnv(gym.Env):
         next_phase = FOLLOW_PHASE_TRANSIT if self.robot.listen_done else FOLLOW_PHASE_PRE_LISTEN_ENGAGE
         self.follow_phase = next_phase
 
+    def _apply_following_slowdown_if_needed(self, robot_action, robot_mode: str, world_frame) -> np.ndarray:
+        adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
+        self._last_following_slowdown_active = False
+        self._last_following_slowdown_max_hr_distance = 0.0
+        distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
+        if distances.size != 0:
+            self._last_following_slowdown_max_hr_distance = float(np.max(distances))
+        if self.follow_phase != FOLLOW_PHASE_TRANSIT:
+            return adjusted_action
+        if str(robot_mode) != RobotMode.MOVE:
+            return adjusted_action
+        if distances.size == 0:
+            return adjusted_action
+        if float(np.max(distances)) <= float(FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS):
+            return adjusted_action
+
+        self._last_following_slowdown_active = True
+        adjusted_action[:2] *= float(FOLLOWING_SLOWDOWN_SPEED_SCALE)
+        return adjusted_action
+
     def _update_human_listening_session_progress(self) -> None:
         if not self.listening_state.fuzzy_active:
             return
@@ -1088,6 +1112,8 @@ class MuseumEnv(gym.Env):
         self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
+        self._last_following_slowdown_active = False
+        self._last_following_slowdown_max_hr_distance = 0.0
 
         for human in self.humans:
             human.reset_episode_state()
@@ -1151,6 +1177,11 @@ class MuseumEnv(gym.Env):
                 human_xyz=pre_frame.human_xyz,
             )
             robot_action = np.array(robot_out["action"], dtype=np.float32)
+            robot_action = self._apply_following_slowdown_if_needed(
+                robot_action,
+                robot_mode=robot_out["mode"],
+                world_frame=pre_frame,
+            )
 
             if robot_out["enter_listen"]:
                 events.entered_listen = True

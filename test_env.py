@@ -124,6 +124,15 @@ def _print_human_robot_distance(step, info):
     print(f"[step {step}] hr_distance {' '.join(parts)}")
 
 
+def _print_following_slowdown_status(step, base_env):
+    slowdown_active = bool(getattr(base_env, "_last_following_slowdown_active", False))
+    max_hr_distance = float(getattr(base_env, "_last_following_slowdown_max_hr_distance", 0.0))
+    print(
+        f"[step {step}] slowdown={'on' if slowdown_active else 'off'} "
+        f"max_hr_distance={max_hr_distance:.2f}"
+    )
+
+
 def _print_rtf(tag, steps_done, sim_dt, wall_start):
     real_time = max(1e-9, time.perf_counter() - wall_start)
     sim_time = steps_done * sim_dt
@@ -184,6 +193,7 @@ def _run_loop(
         periodic_print = bool(print_every) and ((step + 1) % print_every == 0)
         if periodic_print and print_human_robot_distance_periodically:
             _print_human_robot_distance(step + 1, info)
+            _print_following_slowdown_status(step + 1, base_env)
         if periodic_print:
             # print(_summarize_info(step, info))
             _print_rtf("loop", step + 1, sim_dt, wall_start)
