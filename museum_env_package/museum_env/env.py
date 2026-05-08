@@ -76,6 +76,7 @@ HUMAN_FOLLOW_DISTANCE_DEFAULT = 1.0
 SOCIAL_DISTANCE_DEFAULT = 0.8
 REPULSION_GAIN_DEFAULT = 4.0
 FOLLOW_FAN_HALF_ANGLE_DEG = 80.0
+IMPATIENT_FAN_HALF_ANGLE_DEG = 30.0
 LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG = 70.0
 LISTEN_FAN_RADIUS_DEFAULT = 1.0
 LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
@@ -186,6 +187,7 @@ class MuseumEnv(gym.Env):
         self.social_distance = SOCIAL_DISTANCE_DEFAULT
         self.repulsion_gain = REPULSION_GAIN_DEFAULT
         self.follow_fan_half_angle = np.deg2rad(FOLLOW_FAN_HALF_ANGLE_DEG)
+        self.impatient_fan_half_angle = np.deg2rad(IMPATIENT_FAN_HALF_ANGLE_DEG)
         self.listen_front_sector_half_angle = np.deg2rad(LISTENING_FRONT_SECTOR_HALF_ANGLE_DEG)
         self.listen_fan_radius = LISTEN_FAN_RADIUS_DEFAULT
         self.listen_stand_threshold = LISTEN_STAND_THRESHOLD_DEFAULT
@@ -930,6 +932,7 @@ class MuseumEnv(gym.Env):
             "repulsion": repulsion_vec,
             "follow_radius": FOLLOW_RADIUS_DEFAULT,
             "fan_half_angle": self.follow_fan_half_angle,
+            "impatient_fan_half_angle": self.impatient_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
             "impatient_recovery_mode": (
                 HumanMode.FOLLOWING if self.follow_phase is not None else HumanMode.WANDERING
@@ -973,6 +976,7 @@ class MuseumEnv(gym.Env):
             "human_modes": current_human_modes,
             "repulsion": LISTENING_REPULSION_SCALE * repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
+            "impatient_fan_half_angle": self.impatient_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
             "impatient_recovery_mode": HumanMode.LISTENING,
             "listen_radius": self.listen_fan_radius,
@@ -1009,6 +1013,7 @@ class MuseumEnv(gym.Env):
             "human_modes": current_human_modes,
             "repulsion": repulsion_vec,
             "fan_half_angle": self.follow_fan_half_angle,
+            "impatient_fan_half_angle": self.impatient_fan_half_angle,
             "impatient_front_offset": human.impatient_front_offset,
             "impatient_recovery_mode": (
                 HumanMode.FOLLOWING if role == POST_EXPLANATION_ROLE_YIELD else HumanMode.LISTENING

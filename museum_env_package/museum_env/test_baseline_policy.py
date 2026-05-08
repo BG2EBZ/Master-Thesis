@@ -1828,6 +1828,36 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
         self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (-np.pi / 4.0), places=5)
 
+    def test_following_impatient_uses_dedicated_narrower_fan_half_angle(self):
+        robot_pose = (5.0, 5.0, 0.0)
+        impatient_fan_half_angle = np.deg2rad(30.0)
+        for index, expected_angle_deg in ((0, -30.0), (1, 30.0)):
+            with self.subTest(index=index):
+                human = Human(f"person{index + 1}", f"person{index + 1}", index, max_speed=1.0)
+                human.start_impatient(recovery_mode=HumanMode.FOLLOWING)
+                ctx = {
+                    "index": index,
+                    "n_humans": 2,
+                    "robot_pose": robot_pose,
+                    "robot_xy": np.array(robot_pose[:2], dtype=np.float32),
+                    "human_xy": np.zeros((2, 2), dtype=np.float32),
+                    "repulsion": np.zeros(2, dtype=np.float32),
+                    "fan_half_angle": np.deg2rad(80.0),
+                    "impatient_fan_half_angle": impatient_fan_half_angle,
+                    "impatient_front_offset": human.impatient_front_offset,
+                }
+
+                human.assign_target_from_context(ctx)
+
+                expected_waypoint = np.array(
+                    [
+                        robot_pose[0] + human.impatient_front_offset * np.cos(np.deg2rad(expected_angle_deg)),
+                        robot_pose[1] + human.impatient_front_offset * np.sin(np.deg2rad(expected_angle_deg)),
+                    ],
+                    dtype=np.float32,
+                )
+                np.testing.assert_allclose(human.current_waypoint, expected_waypoint, atol=1e-6)
+
     def test_listening_impatient_moves_toward_next_exhibit_after_look_phase(self):
         cases = (
             ((1.0, 5.0, 0.0), np.array([5.0, 5.0], dtype=np.float32), "room_a"),

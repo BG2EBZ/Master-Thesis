@@ -321,21 +321,23 @@ class Human:
     def assign_target_from_context(self, ctx: dict, mode: Optional[str] = None):
         index = ctx["index"]
         n_humans = ctx["n_humans"]
-        fan_half_angle = ctx["fan_half_angle"]
         target_mode = self.mode if mode is None else mode
-        if n_humans > 1:
-            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
-        else:
-            relative_angle = 0.0
 
         if target_mode == HumanMode.FOLLOWING:
+            fan_half_angle = ctx["fan_half_angle"]
             radius = float(ctx.get("follow_radius", DEFAULT_FOLLOW_RADIUS))
             base_angle_offset = np.pi
         elif target_mode == HumanMode.IMPATIENT:
+            fan_half_angle = float(ctx.get("impatient_fan_half_angle", ctx["fan_half_angle"]))
             radius = ctx["impatient_front_offset"]
             base_angle_offset = 0.0
         else:
             return
+
+        if n_humans > 1:
+            relative_angle = (index / (n_humans - 1)) * (2 * fan_half_angle) - fan_half_angle
+        else:
+            relative_angle = 0.0
 
         rx, ry, ryaw = ctx["robot_pose"]
         angle = ryaw + base_angle_offset + relative_angle
