@@ -114,6 +114,16 @@ def _report_step(step, terminated, truncated, info, base_env=None, wall_start=No
     return False
 
 
+def _print_human_robot_distance(step, info):
+    distances = info["humans"]["human_robot_distance"]
+    if len(distances) == 0:
+        print(f"[step {step}] hr_distance none")
+        return
+
+    parts = [f"person{idx + 1}={float(distance):.2f}" for idx, distance in enumerate(distances)]
+    print(f"[step {step}] hr_distance {' '.join(parts)}")
+
+
 def _print_rtf(tag, steps_done, sim_dt, wall_start):
     real_time = max(1e-9, time.perf_counter() - wall_start)
     sim_time = steps_done * sim_dt
@@ -133,7 +143,15 @@ def _make_env(mode):
     return gym.make("MuseumEnv-v0", render_mode=render_mode)
 
 
-def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
+def _run_loop(
+    env,
+    *,
+    max_steps,
+    print_every,
+    realtime=False,
+    sleep_scale=1.0,
+    print_human_robot_distance_periodically=False,
+):
     base_env = env.unwrapped
     obs, info = env.reset()
     del obs, info
@@ -163,7 +181,10 @@ def _run_loop(env, *, max_steps, print_every, realtime=False, sleep_scale=1.0):
             continue
 
         _, _, terminated, truncated, info = env.step(None)
-        if print_every and step % print_every == 0:
+        periodic_print = bool(print_every) and ((step + 1) % print_every == 0)
+        if periodic_print and print_human_robot_distance_periodically:
+            _print_human_robot_distance(step + 1, info)
+        if periodic_print:
             # print(_summarize_info(step, info))
             _print_rtf("loop", step + 1, sim_dt, wall_start)
 
@@ -191,6 +212,7 @@ def run_demo(args):
             print_every=args.print_every,
             realtime=True,
             sleep_scale=args.sleep_scale,
+            print_human_robot_distance_periodically=True,
         )
     finally:
         env.close()
@@ -204,6 +226,7 @@ def run_train(args):
             max_steps=args.max_steps,
             print_every=args.print_every,
             realtime=False,
+            print_human_robot_distance_periodically=False,
         )
     finally:
         env.close()
@@ -229,6 +252,7 @@ def run_record(args):
             max_steps=args.max_steps,
             print_every=args.print_every,
             realtime=False,
+            print_human_robot_distance_periodically=False,
         )
         print(f"Video saved to {video_folder}")
     finally:

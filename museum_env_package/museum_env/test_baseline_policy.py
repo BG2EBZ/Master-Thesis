@@ -126,6 +126,36 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     "terminated_reason",
                 ],
             )
+            self.assertEqual(
+                sorted(info["humans"].keys()),
+                [
+                    "goal_xy",
+                    "human_robot_distance",
+                    "mode",
+                    "perceived_distracted_indices",
+                    "pose_xy",
+                    "profile",
+                    "reached_goal_indices",
+                ],
+            )
+        finally:
+            env.close()
+
+    def test_step_info_exposes_human_robot_distance_consistent_with_pose_xy(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=13)
+            _, _, _, _, info = env.step(None)
+
+            human_xy = np.asarray(info["humans"]["pose_xy"], dtype=np.float32)
+            robot_xy = np.asarray(info["robot"]["pose_xy"], dtype=np.float32)
+            expected = np.linalg.norm(human_xy - robot_xy[None, :], axis=1)
+
+            np.testing.assert_allclose(
+                info["humans"]["human_robot_distance"],
+                expected,
+                atol=1e-6,
+            )
         finally:
             env.close()
 

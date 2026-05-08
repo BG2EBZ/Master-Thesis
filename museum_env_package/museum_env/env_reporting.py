@@ -148,6 +148,10 @@ def build_step_info(
         "humans": {
             "pose_xy": np.array(world_frame.human_xy, dtype=np.float32),
             "goal_xy": np.array(human_goals, dtype=np.float32),
+            "human_robot_distance": np.array(
+                world_frame.observations.human_robot_distance,
+                dtype=np.float32,
+            ),
             "mode": [human.mode for human in humans],
             "profile": [human.profile for human in humans],
             "reached_goal_indices": [int(idx) for idx in reached_goal_indices],
