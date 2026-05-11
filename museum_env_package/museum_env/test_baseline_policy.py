@@ -188,6 +188,150 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_listening_wait_shortens_once_per_person_and_accumulates(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=31)
+            env.listen_wait_steps = 10
+            env.listen_distance_shorten_steps = 2
+            env.listening_state.enter_wait(False)
+            env.robot.listen_mode = True
+
+            env._maybe_shorten_listening_wait(
+                SimpleNamespace(
+                    observations=SimpleNamespace(
+                        human_robot_distance=np.array([2.5, 1.5], dtype=np.float32),
+                    )
+                )
+            )
+            self.assertEqual(env.listening_state.wait_target_steps, 8)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
+
+            env._maybe_shorten_listening_wait(
+                SimpleNamespace(
+                    observations=SimpleNamespace(
+                        human_robot_distance=np.array([2.8, 1.4], dtype=np.float32),
+                    )
+                )
+            )
+            self.assertEqual(env.listening_state.wait_target_steps, 8)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
+
+            env._maybe_shorten_listening_wait(
+                SimpleNamespace(
+                    observations=SimpleNamespace(
+                        human_robot_distance=np.array([2.8, 2.3], dtype=np.float32),
+                    )
+                )
+            )
+            self.assertEqual(env.listening_state.wait_target_steps, 6)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0, 1})
+        finally:
+            env.close()
+
+    def test_listening_wait_shorten_tracking_resets_each_session(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=32)
+            env.listen_wait_steps = 10
+            env.listen_distance_shorten_steps = 2
+            env.listening_state.enter_wait(False)
+            env.robot.listen_mode = True
+
+            env._maybe_shorten_listening_wait(
+                SimpleNamespace(
+                    observations=SimpleNamespace(
+                        human_robot_distance=np.array([2.5], dtype=np.float32),
+                    )
+                )
+            )
+            self.assertEqual(env.listening_state.wait_target_steps, 8)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
+
+            env.listening_state.enter_idle()
+            env.listening_state.enter_wait(False)
+            env.robot.listen_mode = True
+
+            self.assertEqual(env.listening_state.wait_target_steps, 0)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, set())
+
+            env._maybe_shorten_listening_wait(
+                SimpleNamespace(
+                    observations=SimpleNamespace(
+                        human_robot_distance=np.array([2.6], dtype=np.float32),
+                    )
+                )
+            )
+            self.assertEqual(env.listening_state.wait_target_steps, 8)
+            self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
+        finally:
+            env.close()
+
+    def test_listening_wait_shortening_can_skip_post_wait_question(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=33)
+            env.listen_wait_steps = 6
+            env.listen_distance_shorten_steps = 6
+            env.listen_question_pause_steps = 1
+            env.humans[0].set_profile(HumanProfile.NORMAL)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._prime_listening_question(
+                env,
+                timing_mode=LISTEN_QUESTION_TIMING_POST_WAIT,
+                is_final=False,
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertFalse(info["events"]["question_started"])
+            self.assertTrue(info["events"]["completed_listen_wait"])
+            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertTrue(env.post_explanation_state.active)
+        finally:
+            env.close()
+
+    def test_listening_question_completion_finishes_shortened_wait(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=34)
+            env.listen_wait_steps = 6
+            env.listen_distance_shorten_steps = 3
+            env.listen_question_pause_steps = 1
+            env.humans[0].set_profile(HumanProfile.NORMAL)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._prime_listening_question(
+                env,
+                timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,
+                trigger_step=env.listen_wait_steps // 2,
+            )
+            self._invalidate_observation_cache(env)
+
+            env.step(None)
+            self.assertEqual(env.listening_state.wait_target_steps, 3)
+
+            env.step(None)
+            _, _, _, _, info = env.step(None)
+            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertTrue(info["events"]["question_started"])
+
+            _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
+            self.assertTrue(info["events"]["question_completed"])
+            self.assertTrue(info["events"]["completed_listen_wait"])
+            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertTrue(env.post_explanation_state.active)
+        finally:
+            env.close()
+
     def test_listening_questions_pause_and_highlight_single_human(self):
         env = self._make_env(n_humans=2)
         try:
@@ -294,6 +438,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.enter_wait(False)
             env.robot.listen_mode = True
             env.listen_wait_steps = 6
+            env.listen_distance_shorten_steps = 0
             env.listen_question_probability = 0.0
             env.listen_question_after_explanation_probability = 0.0
             env.listen_question_pause_steps = 2
@@ -613,6 +758,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=28)
             env.listen_wait_steps = 6
+            env.listen_distance_shorten_steps = 0
             self._prime_listening_question(
                 env,
                 timing_mode=LISTEN_QUESTION_TIMING_MID_RANDOM,

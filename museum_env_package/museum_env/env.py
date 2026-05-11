@@ -83,12 +83,14 @@ LISTEN_STAND_THRESHOLD_DEFAULT = 0.05
 LISTENING_REPULSION_SCALE = 1.0
 LISTEN_REACHED_MIN_DISTANCE = 0.8
 LISTEN_INTRO_DELAY_SECONDS_DEFAULT = 3.0
-LISTEN_WAIT_SECONDS_DEFAULT = 25.0
+LISTEN_WAIT_SECONDS_DEFAULT = 30.0
 LISTEN_QUESTION_PROBABILITY_DEFAULT = 1.0
 LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT = 0.50
 LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT = 5.0
 LISTEN_QUESTION_TURN_YAW_RATE = 1.0
 LISTEN_QUESTION_TURN_DONE_YAW_ERR = 0.02
+LISTEN_DISTANCE_SHORTEN_THRESHOLD_METERS = 2.0
+LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN = 3.0
 HUMAN_MAX_SPEED_DEFAULT = 1.0
 FOLLOW_RADIUS_DEFAULT = 1.0
 HUMAN_GOAL_THRESHOLD = 0.1
@@ -202,6 +204,10 @@ class MuseumEnv(gym.Env):
         self.listen_question_after_explanation_probability = float(listen_question_after_explanation_probability)
         self.listen_question_pause_seconds = float(LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT)
         self.listen_question_pause_steps = max(1, int(round(self.listen_question_pause_seconds / self.dt)))
+        self.listen_distance_shorten_steps = max(
+            1,
+            int(round(LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN / self.dt)),
+        )
         self.following_callback_wait_steps = max(
             1,
             int(round(FOLLOWING_CALLBACK_WAIT_SECONDS / self.dt)),
@@ -757,6 +763,60 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.update_listening_session_progress(active=(human.mode == HumanMode.LISTENING))
 
+    def _get_listening_wait_target_steps(self) -> int:
+        target_steps = int(self.listening_state.wait_target_steps)
+        if target_steps <= 0:
+            target_steps = max(1, int(self.listen_wait_steps))
+            self.listening_state.wait_target_steps = target_steps
+        return target_steps
+
+    def _reset_listening_wait_runtime(self) -> None:
+        self.listening_state.reset_wait_runtime()
+        self.listening_state.wait_target_steps = max(1, int(self.listen_wait_steps))
+
+    def _maybe_shorten_listening_wait(self, world_frame) -> None:
+        if self.listening_state.phase != LISTEN_PHASE_WAIT:
+            return
+
+        target_steps = self._get_listening_wait_target_steps()
+        human_xy = getattr(world_frame, "human_xy", None)
+        robot_xy = getattr(world_frame, "robot_xy", None)
+        if human_xy is not None and robot_xy is not None:
+            human_xy = np.asarray(human_xy, dtype=np.float32)
+            if human_xy.size == 0:
+                return
+            robot_xy = np.asarray(robot_xy, dtype=np.float32)
+            distances = np.linalg.norm(human_xy - robot_xy[None, :], axis=1).astype(np.float32)
+        else:
+            distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
+        if distances.size == 0:
+            return
+
+        state = self.listening_state
+        newly_triggered_indices = [
+            idx
+            for idx, distance in enumerate(distances)
+            if float(distance) > float(LISTEN_DISTANCE_SHORTEN_THRESHOLD_METERS)
+            and idx not in state.distance_shorten_triggered_indices
+        ]
+        if not newly_triggered_indices:
+            return
+
+        state.distance_shorten_triggered_indices.update(int(idx) for idx in newly_triggered_indices)
+        new_target_steps = max(
+            1,
+            target_steps - (len(newly_triggered_indices) * int(self.listen_distance_shorten_steps)),
+        )
+        applied_reduction_steps = target_steps - new_target_steps
+        state.wait_target_steps = int(new_target_steps)
+
+        people = ", ".join(f"person{int(idx) + 1}" for idx in newly_triggered_indices)
+        self._log_event(
+            f">>> Listening wait shortened by {applied_reduction_steps * self.dt:.1f}s "
+            f"after {people} exceeded {LISTEN_DISTANCE_SHORTEN_THRESHOLD_METERS:.1f}m; "
+            f"target now {state.wait_target_steps * self.dt:.1f}s."
+        )
+
     def _prepare_listening_question_plan(self) -> None:
         if self.listening_state.phase != LISTEN_PHASE_WAIT:
             return
@@ -931,7 +991,7 @@ class MuseumEnv(gym.Env):
             self._log_event(">>> Listening question completed.")
             if (
                 self.listening_state.phase == LISTEN_PHASE_WAIT
-                and self.listening_state.counter >= int(self.listen_wait_steps)
+                and self.listening_state.counter >= int(self._get_listening_wait_target_steps())
             ):
                 self._finish_listening_wait(events, world_frame)
             return True
@@ -1120,6 +1180,7 @@ class MuseumEnv(gym.Env):
             if self.listening_state.counter >= self.listen_intro_delay_steps:
                 is_final = self.listening_state.is_final
                 self.listening_state.enter_wait(is_final=is_final)
+                self._reset_listening_wait_runtime()
                 self._prepare_listening_question_plan()
                 events.started_listen_wait = True
                 self._log_event(
@@ -1134,14 +1195,20 @@ class MuseumEnv(gym.Env):
             return
 
         self.listening_state.counter += 1
+        self._maybe_shorten_listening_wait(world_frame)
         if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_MID_RANDOM, world_frame):
             return
 
-        if self.listening_state.counter < self.listen_wait_steps:
+        if self.listening_state.counter < self._get_listening_wait_target_steps():
             return
 
-        if self._maybe_start_listening_question(events, LISTEN_QUESTION_TIMING_POST_WAIT, world_frame):
-            return
+        if self.listening_state.counter >= int(self.listen_wait_steps):
+            if self._maybe_start_listening_question(
+                events,
+                LISTEN_QUESTION_TIMING_POST_WAIT,
+                world_frame,
+            ):
+                return
 
         self._finish_listening_wait(events, world_frame)
 

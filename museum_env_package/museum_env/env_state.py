@@ -59,6 +59,8 @@ class ListeningState:
     phase: str = LISTEN_PHASE_IDLE
     counter: int = 0
     is_final: bool = False
+    wait_target_steps: int = 0
+    distance_shorten_triggered_indices: set[int] = field(default_factory=set)
     paused_phase: str = LISTEN_PHASE_IDLE
     paused_counter: int = 0
     paused_is_final: bool = False
@@ -93,10 +95,15 @@ class ListeningState:
         self.question_return_yaw = None
         self.question_completion_mode = None
 
+    def reset_wait_runtime(self) -> None:
+        self.wait_target_steps = 0
+        self.distance_shorten_triggered_indices.clear()
+
     def reset(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
         self.counter = 0
         self.is_final = False
+        self.reset_wait_runtime()
         self.paused_phase = LISTEN_PHASE_IDLE
         self.paused_counter = 0
         self.paused_is_final = False
@@ -106,18 +113,21 @@ class ListeningState:
         self.phase = LISTEN_PHASE_INTRO
         self.counter = 0
         self.is_final = bool(is_final)
+        self.reset_wait_runtime()
         self._reset_question_state()
 
     def enter_wait(self, is_final: bool) -> None:
         self.phase = LISTEN_PHASE_WAIT
         self.counter = 0
         self.is_final = bool(is_final)
+        self.reset_wait_runtime()
         self._reset_question_state()
 
     def enter_idle(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
         self.counter = 0
         self.is_final = False
+        self.reset_wait_runtime()
         self._reset_question_state()
 
     def pause(self) -> None:
