@@ -2431,6 +2431,332 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_transit_follow_personal_space_backoff_moves_away_from_close_human(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=138)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((4.6, 5.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+        finally:
+            env.close()
+
+    def test_transit_follow_personal_space_backoff_targets_nearest_close_human(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=139)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((4.6, 5.0, 0.0), (5.0, 4.5, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_personal_space_backoff_uses_left_detour_when_away_and_right_are_unsafe(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=140)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((5.0, 5.55, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            def raycast_side_effect(direction_xy):
+                direction_xy = np.asarray(direction_xy, dtype=np.float32)
+                direction_xy = direction_xy / np.linalg.norm(direction_xy)
+                if direction_xy[1] < -0.99:
+                    return 0.1
+                if direction_xy[0] < -0.99:
+                    return 0.1
+                return 1.0
+
+            with patch.object(env, "_raycast_robot_hit_distance", side_effect=raycast_side_effect):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_personal_space_backoff_prefers_detour_with_larger_target_gain(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=141)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((5.0, 5.55, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            def safety_side_effect(world_frame, target_idx, direction_xy):
+                direction_xy = np.asarray(direction_xy, dtype=np.float32)
+                direction_xy = direction_xy / np.linalg.norm(direction_xy)
+                if direction_xy[1] < -0.99:
+                    return False, float("-inf"), float("-inf"), float("-inf")
+                if direction_xy[0] > 0.99:
+                    return True, 0.30, 0.60, 0.80
+                return True, 0.10, 0.95, 10.0
+
+            with patch.object(env, "_is_robot_backoff_direction_safe", side_effect=safety_side_effect):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_personal_space_backoff_freezes_translation_when_all_directions_are_unsafe(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=142)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((4.6, 5.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
+
+            with patch.object(
+                env,
+                "_is_robot_backoff_direction_safe",
+                return_value=(False, float("-inf"), float("-inf"), float("-inf")),
+            ):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+        finally:
+            env.close()
+
+    def test_listening_wait_personal_space_backoff_overrides_stop(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=143)
+            env.listening_state.enter_wait(False)
+            env.robot.listen_mode = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((5.4, 5.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+        finally:
+            env.close()
+
+    def test_listening_paused_personal_space_backoff_preserves_turn_yaw_rate(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=144)
+            env.robot.listen_mode = True
+            env.listening_state.enter_wait(False)
+            env.listening_state.pause()
+            env.listening_state.question_phase = LISTEN_QUESTION_PHASE_TURN_TO_HUMAN
+            env.listening_state.question_human_idx = 0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((5.0, 5.55, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], -0.5, places=6)
+            self.assertAlmostEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0, places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+        finally:
+            env.close()
+
+    def test_active_callback_personal_space_backoff_does_not_interrupt_callback(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=145)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((5.4, 5.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            env.robot.start_callback(
+                target_idx=0,
+                target_xy=np.array([5.4, 5.0], dtype=np.float32),
+                cue_steps=2,
+            )
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_non_listening_stop_personal_space_backoff_does_not_override_protected_stop(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=146)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0, 5.0, 0.0),
+                human_poses=((4.6, 5.0, 0.0), (5.0, 9.1, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["state"]["robot_mode"], "stop")
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_sector_rejoin_is_suppressed_when_nearest_front_human_is_too_close(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=147)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0), (1.0, 0.2, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+                _, _, _, _, info = env.step(None)
+
+            self.assertFalse(info["events"]["callback_triggered"])
+            self.assertIsNone(env._following_callback_override_target_idx)
+            self.assertFalse(env.robot.callback_active)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_sector_rejoin_is_suppressed_at_personal_space_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=148)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.6, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertFalse(info["events"]["callback_triggered"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertIsNone(info["state"]["callback_phase"])
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_sector_rejoin_still_triggers_above_personal_space_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=149)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            env.following_callback_cue_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.61, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertTrue(info["events"]["callback_triggered"])
+            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(env.robot.callback_target_idx, 0)
+        finally:
+            env.close()
+
+    def test_transit_follow_far_callback_still_works_when_nearest_front_human_is_too_close(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=150)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0), (0.0, 4.1, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertTrue(info["events"]["callback_triggered"])
+            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(env.robot.callback_target_idx, 1)
+        finally:
+            env.close()
+
     def test_transit_follow_front_sector_triggers_immediate_callback_for_nearest_human(self):
         env = self._make_env(n_humans=3)
         try:

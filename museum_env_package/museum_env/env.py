@@ -105,8 +105,13 @@ FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS = 2.5
 FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS = 3.5
 FOLLOWING_CALLBACK_WAIT_SECONDS = 3.0
 FOLLOWING_CALLBACK_CUE_SECONDS = 2.0
-FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG = 60.0
+FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG = 45.0
 FOLLOWING_SLOWDOWN_SPEED_SCALE = 0.7
+ROBOT_PERSONAL_SPACE_TRIGGER_METERS = 0.6
+ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS = 0.5
+ROBOT_FOOTPRINT_RADIUS_METERS = 0.20
+ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS = 0.25
+ROBOT_PERSONAL_SPACE_MARGIN_METERS = 0.05
 
 MAX_HUMANS_CAPACITY = 15
 HUMAN_SPAWN_MIN_DISTANCE = (2.0 * HUMAN_WALL_FOOTPRINT_RADIUS) + 0.10
@@ -713,6 +718,186 @@ class MuseumEnv(gym.Env):
         self._following_wait_callback_triggered = False
         self._following_callback_override_target_idx = None
 
+    def _get_nearest_close_human_idx(self, world_frame) -> Optional[int]:
+        distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
+        if distances.size == 0:
+            return None
+        nearest_idx = int(np.argmin(distances))
+        if float(distances[nearest_idx]) >= float(ROBOT_PERSONAL_SPACE_TRIGGER_METERS):
+            return None
+        return nearest_idx
+
+    def _raycast_robot_hit_distance(self, direction_xy) -> Optional[float]:
+        direction_xy = np.asarray(direction_xy, dtype=np.float32)
+        direction_norm = float(np.linalg.norm(direction_xy))
+        if direction_norm <= 1e-6:
+            return None
+
+        ray_direction = np.zeros(3, dtype=np.float64)
+        ray_direction[:2] = direction_xy[:2] / direction_norm
+        ray_origin = np.array(self.data.xpos[self.robot_body_id], dtype=np.float64)
+        geomid = np.array([-1], dtype=np.int32)
+        hit_distance = float(
+            mujoco.mj_ray(
+                self.model,
+                self.data,
+                ray_origin,
+                ray_direction,
+                None,
+                1,
+                int(self.robot_body_id),
+                geomid,
+            )
+        )
+        return hit_distance if hit_distance >= 0.0 else None
+
+    def _is_robot_backoff_direction_safe(
+        self,
+        world_frame,
+        target_idx: int,
+        direction_xy,
+    ) -> tuple[bool, float, float, float]:
+        direction_xy = np.asarray(direction_xy, dtype=np.float32)
+        direction_norm = float(np.linalg.norm(direction_xy))
+        if direction_norm <= 1e-6:
+            return False, float("-inf"), float("-inf"), float("-inf")
+
+        direction_unit = direction_xy / direction_norm
+        robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+        human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
+        if human_xy.ndim == 1:
+            if human_xy.size == 0:
+                return False, float("-inf"), float("-inf"), float("-inf")
+            human_xy = human_xy.reshape(1, -1)
+        if not (0 <= int(target_idx) < human_xy.shape[0]):
+            return False, float("-inf"), float("-inf"), float("-inf")
+
+        probe_xy = robot_xy + (
+            float(ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS) * np.asarray(direction_unit, dtype=np.float32)
+        )
+        current_target_distance = float(world_frame.observations.human_robot_distance[int(target_idx)])
+        candidate_target_distance = float(
+            np.linalg.norm(np.asarray(human_xy[int(target_idx)], dtype=np.float32) - probe_xy)
+        )
+        if candidate_target_distance <= current_target_distance + 1e-6:
+            return False, float("-inf"), float("-inf"), float("-inf")
+
+        required_wall_clearance = float(
+            ROBOT_FOOTPRINT_RADIUS_METERS + ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS
+        )
+        hit_distance = self._raycast_robot_hit_distance(direction_unit)
+        raycast_clearance = float("inf") if hit_distance is None else float(hit_distance)
+        if raycast_clearance < required_wall_clearance:
+            return False, float("-inf"), float("-inf"), raycast_clearance
+
+        required_human_clearance = float(
+            ROBOT_FOOTPRINT_RADIUS_METERS
+            + HUMAN_WALL_FOOTPRINT_RADIUS
+            + ROBOT_PERSONAL_SPACE_MARGIN_METERS
+        )
+        human_clearances = np.linalg.norm(human_xy - probe_xy[None, :], axis=1).astype(np.float32)
+        if human_clearances.size == 0:
+            min_human_clearance = float("inf")
+        else:
+            min_human_clearance = float(np.min(human_clearances))
+            if np.any(human_clearances < required_human_clearance):
+                return False, float("-inf"), min_human_clearance, raycast_clearance
+
+        target_distance_gain = candidate_target_distance - current_target_distance
+        return True, float(target_distance_gain), min_human_clearance, raycast_clearance
+
+    def _apply_robot_personal_space_backoff_if_needed(self, robot_action, world_frame) -> np.ndarray:
+        adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
+        target_idx = self._get_nearest_close_human_idx(world_frame)
+        if target_idx is None:
+            return adjusted_action
+
+        listening_phase = str(self.listening_state.phase)
+        listening_override_allowed = listening_phase in (
+            LISTEN_PHASE_INTRO,
+            LISTEN_PHASE_WAIT,
+            LISTEN_PHASE_PAUSED,
+        )
+        if bool(self.robot.callback_active) or str(self.robot.mode) == RobotMode.CALLBACK:
+            return adjusted_action
+        if (not listening_override_allowed) and str(self.robot.mode) == RobotMode.STOP:
+            return adjusted_action
+
+        robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+        human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
+        target_xy = np.asarray(human_xy[int(target_idx)], dtype=np.float32)
+        away_dir = np.asarray(robot_xy - target_xy, dtype=np.float32)
+        away_norm = float(np.linalg.norm(away_dir))
+        if away_norm <= 1e-6:
+            planar_action = np.asarray(adjusted_action[:2], dtype=np.float32)
+            planar_norm = float(np.linalg.norm(planar_action))
+            if planar_norm > 1e-6:
+                away_dir = -planar_action
+            else:
+                robot_yaw = float(world_frame.robot_pose[2])
+                away_dir = np.array(
+                    [-np.cos(robot_yaw), -np.sin(robot_yaw)],
+                    dtype=np.float32,
+                )
+                if float(np.linalg.norm(away_dir)) <= 1e-6:
+                    away_dir = np.array([-1.0, 0.0], dtype=np.float32)
+        away_dir = np.asarray(away_dir, dtype=np.float32)
+        away_norm = float(np.linalg.norm(away_dir))
+        if away_norm <= 1e-6:
+            return adjusted_action
+        away_dir = away_dir / away_norm
+
+        chosen_label = "blocked"
+        chosen_direction = None
+        away_safe, _, _, _ = self._is_robot_backoff_direction_safe(
+            world_frame,
+            target_idx=int(target_idx),
+            direction_xy=away_dir,
+        )
+        if away_safe:
+            chosen_label = "away"
+            chosen_direction = np.asarray(away_dir, dtype=np.float32)
+        else:
+            left_perp = np.array([-away_dir[1], away_dir[0]], dtype=np.float32)
+            right_perp = -left_perp
+            best_candidate = None
+            for label, candidate_dir in (("left", left_perp), ("right", right_perp)):
+                is_safe, target_distance_gain, min_human_clearance, raycast_clearance = (
+                    self._is_robot_backoff_direction_safe(
+                        world_frame,
+                        target_idx=int(target_idx),
+                        direction_xy=candidate_dir,
+                    )
+                )
+                if not is_safe:
+                    continue
+                score = (
+                    float(target_distance_gain),
+                    float(min_human_clearance),
+                    float(raycast_clearance),
+                )
+                if best_candidate is None or score > best_candidate[1]:
+                    best_candidate = (label, score, np.asarray(candidate_dir, dtype=np.float32))
+            if best_candidate is not None:
+                chosen_label = str(best_candidate[0])
+                chosen_direction = np.asarray(best_candidate[2], dtype=np.float32)
+
+        if chosen_direction is None:
+            adjusted_action[:2] = 0.0
+        else:
+            adjusted_action[:2] = (
+                float(ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS) * np.asarray(chosen_direction, dtype=np.float32)
+            )
+            self.robot.mode = RobotMode.MOVE
+
+        person_label = f"person{int(target_idx) + 1}"
+        distance_now = float(world_frame.observations.human_robot_distance[int(target_idx)])
+        self._log_event(
+            f">>> Robot personal-space backoff near {person_label} "
+            f"(distance={distance_now:.2f}m) direction={chosen_label}."
+        )
+        return adjusted_action
+
     def _get_following_front_sector_target_idx(self, world_frame) -> Optional[int]:
         human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
         if human_xy.ndim == 1:
@@ -787,12 +972,15 @@ class MuseumEnv(gym.Env):
 
         front_sector_target_idx = self._get_following_front_sector_target_idx(world_frame)
         if front_sector_target_idx is not None:
-            self._following_callback_override_target_idx = int(front_sector_target_idx)
-            if not self._following_wait_callback_triggered:
-                self.robot.mode = RobotMode.STOP
-                should_start_callback = True
-                return np.zeros(3, dtype=np.float32), should_start_callback
-            return adjusted_action, should_start_callback
+            front_sector_target_distance = float(distances[int(front_sector_target_idx)])
+            if front_sector_target_distance > float(ROBOT_PERSONAL_SPACE_TRIGGER_METERS) + 1e-6:
+                self._following_callback_override_target_idx = int(front_sector_target_idx)
+                if not self._following_wait_callback_triggered:
+                    self.robot.mode = RobotMode.STOP
+                    should_start_callback = True
+                    return np.zeros(3, dtype=np.float32), should_start_callback
+                return adjusted_action, should_start_callback
+            self._following_callback_override_target_idx = None
 
         self._following_callback_override_target_idx = None
         if distances.size == 0:
@@ -1343,6 +1531,7 @@ class MuseumEnv(gym.Env):
         )
         waiting_listen_hold = self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED)
         robot_action = np.zeros(3, dtype=np.float32)
+        callback_mode_this_step = False
         if waiting_listen_hold:
             robot_action = self._get_listening_hold_robot_action(pre_frame)
         else:
@@ -1354,6 +1543,7 @@ class MuseumEnv(gym.Env):
                 ),
                 dtype=np.float32,
             )
+            callback_mode_this_step = str(self.robot.mode) == RobotMode.CALLBACK
             if str(self.robot.mode) == RobotMode.CALLBACK:
                 if bool(self.robot.callback_cue_completed_this_step):
                     events.callback_completed = True
@@ -1382,6 +1572,7 @@ class MuseumEnv(gym.Env):
                         ),
                         dtype=np.float32,
                     )
+                    callback_mode_this_step = True
 
             if (not was_listening) and bool(self.robot.listen_mode):
                 events.entered_listen = True
@@ -1405,6 +1596,12 @@ class MuseumEnv(gym.Env):
             float(np.hypot(robot_action[0], robot_action[1])),
         )
         self._maybe_activate_follow_phase_from_robot_progress(pre_frame.robot_xy)
+
+        if not callback_mode_this_step:
+            robot_action = self._apply_robot_personal_space_backoff_if_needed(
+                robot_action,
+                pre_frame,
+            )
 
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
