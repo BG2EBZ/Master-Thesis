@@ -147,7 +147,7 @@ class Human:
         self.max_overwhelmed_leave_duration_seconds = 2.0
         self.overwhelmed_leave_duration = round(self.max_overwhelmed_leave_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.overwhelmed_leave_timer = 0
-        self.max_overwhelmed_pause_duration_seconds = 3.0
+        self.max_overwhelmed_pause_duration_seconds = 5.0
         self.overwhelmed_pause_duration = round(self.max_overwhelmed_pause_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.overwhelmed_pause_timer = 0
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)

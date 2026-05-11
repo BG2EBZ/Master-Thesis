@@ -56,7 +56,7 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
     show_explanation = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.EXPLANATION)
     show_answer = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.ANSWER)
     if show_follow_me:
-        text_label = "Please_follow_me"
+        text_label = "please rejoin"
     elif show_explanation:
         text_label = "explanation"
     elif show_answer:

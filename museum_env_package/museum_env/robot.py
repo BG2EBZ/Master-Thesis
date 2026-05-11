@@ -223,6 +223,10 @@ class Robot:
         self._reset_callback_state()
         self.mode = RobotMode.MOVE
 
+    def finish_callback(self):
+        """Public env-facing callback cleanup entrypoint."""
+        self._finish_callback()
+
     def _callback_action(self, robot_pose):
         """Generate control while callback mode is active."""
         rx, ry, ryaw = robot_pose
@@ -285,27 +289,14 @@ class Robot:
     def step(self, robot_pose, human_xyz):
         """
         Main robot decision step.
-        Returns a dict so env can stay clean.
-
-        Outputs:
-            {
-              "action": np.array(3,),
-              "dist": float,
-              "desired_yaw": float,
-              "actual_yaw": float,
-              "mode": str,
-              "enter_listen": bool
-            }
+        Mutates internal robot state and returns the action for this step.
         """
-        # Distracted humans no longer trigger callback behavior, so any stale
-        # callback state should be discarded before the standard controller runs.
         if self.callback_active:
-            self._finish_callback()
+            self.mode = RobotMode.CALLBACK
+            return self._callback_action(robot_pose)
 
         # base waypoint action
-        base_action, dist, desired_yaw, actual_yaw = self._waypoint_action(robot_pose)
-
-        enter_listen = False
+        base_action, dist, _, _ = self._waypoint_action(robot_pose)
         self.mode = RobotMode.MOVE
 
         # Stop after reaching the display and turn to face people
@@ -317,26 +308,7 @@ class Robot:
         # Enter listening mode after turning is done at the display
         if dist < ROBOT_WAYPOINT_REACHED_DIST and self.turn_done and not self.listen_mode:
             self.listen_mode = True
-            enter_listen = True
-
-        return {
-            "action": base_action,
-            "dist": float(dist),
-            "desired_yaw": float(desired_yaw),
-            "actual_yaw": float(actual_yaw),
-            "mode": str(self.mode),
-            "enter_listen": bool(enter_listen),
-            "emotion": str(self.emotion),
-            "speaker_active": bool(self.speaker_active),
-            "callback_attempt_index": int(self.callback_attempt_index),
-            "callback_phase": (
-                str(self.callback_phase) if self.callback_phase is not None else None
-            ),
-            "callback_cue_elapsed_steps": int(self.callback_cue_elapsed_steps),
-            "callback_cue_total_steps": int(self.callback_cue_total_steps),
-            "callback_response_sampled": bool(self.callback_response_sampled),
-            "callback_cue_completed_this_step": bool(self.callback_cue_completed_this_step),
-        }
+        return base_action
 
     def on_listening_complete(self):
         """
@@ -353,8 +325,9 @@ class Robot:
         self.mode = RobotMode.MOVE
         self._reset_callback_state()
 
-    def is_final_reached(self, dist: float):
-        """Return True when robot reached last waypoint within threshold."""
+    def is_final_reached(self, robot_pose):
+        """Return True when robot reached the last waypoint within threshold."""
+        dist, _, _ = self._compute_waypoint_metrics(robot_pose)
         return (
             dist < ROBOT_WAYPOINT_REACHED_DIST
             and self.current_waypoint_idx == len(self.waypoints) - 1

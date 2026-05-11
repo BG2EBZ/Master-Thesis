@@ -161,8 +161,8 @@
                   <!-- Question-answer label site (shown while robot answers a question). -->
                   <site name="answer question" pos="0 0 0.75" size="0.005" rgba="1 1 1 1" group="1"/>
 
-                  <!-- Sad-state follow-me label site (shown when robot emotion is sad). -->
-                  <site name="Please_follow_me" pos="0 0 0.78" size="0.005" rgba="1 1 1 1" group="4"/>
+                  <!-- Callback label site (shown while robot asks a lagging human to rejoin). -->
+                  <site name="please rejoin" pos="0 0 0.78" size="0.005" rgba="1 1 1 1" group="4"/>
 
                   <!-- Fear-state keep-distance label site (shown when robot emotion is fear). -->
                   <site name="I_need_more_space" pos="0 0 0.84" size="0.005" rgba="1 1 1 1" group="5"/>

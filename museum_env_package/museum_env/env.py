@@ -100,6 +100,9 @@ POST_EXPLANATION_YIELD_DISTANCE = 0.5
 HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS = 1.0
 MAX_DISTRACTED_DURATION_SECONDS_DEFAULT = 15.0
 FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS = 2.5
+FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS = 3.5
+FOLLOWING_CALLBACK_WAIT_SECONDS = 3.0
+FOLLOWING_CALLBACK_CUE_SECONDS = 2.0
 FOLLOWING_SLOWDOWN_SPEED_SCALE = 0.7
 
 MAX_HUMANS_CAPACITY = 15
@@ -199,6 +202,14 @@ class MuseumEnv(gym.Env):
         self.listen_question_after_explanation_probability = float(listen_question_after_explanation_probability)
         self.listen_question_pause_seconds = float(LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT)
         self.listen_question_pause_steps = max(1, int(round(self.listen_question_pause_seconds / self.dt)))
+        self.following_callback_wait_steps = max(
+            1,
+            int(round(FOLLOWING_CALLBACK_WAIT_SECONDS / self.dt)),
+        )
+        self.following_callback_cue_steps = max(
+            1,
+            int(round(FOLLOWING_CALLBACK_CUE_SECONDS / self.dt)),
+        )
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
@@ -207,7 +218,12 @@ class MuseumEnv(gym.Env):
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         self._last_following_slowdown_active = False
-        self._last_following_slowdown_max_hr_distance = 0.0
+        self._last_following_wait_active = False
+        self._last_following_callback_active = False
+        self._last_following_max_hr_distance = 0.0
+        self._following_wait_elapsed_steps = 0
+        self._following_wait_callback_triggered = False
+        self._following_wait_callback_target_idx = None
         self.callback_response_profile_probs = {
             HumanProfile.NORMAL: {
                 "rejoin": float(callback_rejoin_prob_normal),
@@ -404,7 +420,7 @@ class MuseumEnv(gym.Env):
     def _sync_robot_visual_state(self, force: bool = False) -> None:
         visual_state = resolve_robot_visual_state(
             robot=self.robot,
-            callback_visual_active=False,
+            callback_visual_active=bool(self._last_following_callback_active),
         )
         if (not force) and visual_state.signature == self._last_robot_visual_signature:
             return
@@ -686,25 +702,88 @@ class MuseumEnv(gym.Env):
         next_phase = FOLLOW_PHASE_TRANSIT if self.robot.listen_done else FOLLOW_PHASE_PRE_LISTEN_ENGAGE
         self.follow_phase = next_phase
 
-    def _apply_following_slowdown_if_needed(self, robot_action, robot_mode: str, world_frame) -> np.ndarray:
-        adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
+    def _reset_following_crowd_regulation_debug_state(self) -> None:
         self._last_following_slowdown_active = False
-        self._last_following_slowdown_max_hr_distance = 0.0
+        self._last_following_wait_active = False
+        self._last_following_callback_active = False
+        self._last_following_max_hr_distance = 0.0
+
+    def _reset_following_wait_episode(self) -> None:
+        self._following_wait_elapsed_steps = 0
+        self._following_wait_callback_triggered = False
+        self._following_wait_callback_target_idx = None
+
+    def _reset_following_crowd_regulation_runtime_state(self) -> None:
+        self._reset_following_wait_episode()
+
+    def _record_following_max_hr_distance(self, world_frame) -> np.ndarray:
         distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
-        if distances.size != 0:
-            self._last_following_slowdown_max_hr_distance = float(np.max(distances))
+        self._last_following_max_hr_distance = float(np.max(distances)) if distances.size != 0 else 0.0
+        return distances
+
+    def _select_following_callback_target(self, world_frame, distances) -> tuple[int | None, np.ndarray | None]:
+        distances = np.asarray(distances, dtype=np.float32)
+        human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
+        if distances.size == 0 or human_xy.shape[0] == 0:
+            return None, None
+        target_idx = int(np.argmax(distances))
+        if not (0 <= target_idx < human_xy.shape[0]):
+            return None, None
+        return target_idx, np.asarray(human_xy[target_idx, :2], dtype=np.float32)
+
+    def _start_following_callback(self, world_frame) -> bool:
+        distances = self._record_following_max_hr_distance(world_frame)
+        target_idx, target_xy = self._select_following_callback_target(world_frame, distances)
+        if target_idx is None or target_xy is None:
+            return False
+        self.robot.start_callback(
+            target_idx=target_idx,
+            target_xy=target_xy,
+            cue_steps=int(self.following_callback_cue_steps),
+        )
+        self._following_wait_callback_triggered = True
+        self._following_wait_callback_target_idx = int(target_idx)
+        return True
+
+    def _finish_following_callback(self) -> None:
+        self.robot.finish_callback()
+        self._following_wait_callback_target_idx = None
+
+    def _apply_following_crowd_regulation_if_needed(
+        self,
+        robot_action,
+        robot_mode: str,
+        world_frame,
+    ) -> tuple[np.ndarray, bool]:
+        adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
+        distances = self._record_following_max_hr_distance(world_frame)
+        max_hr_distance = self._last_following_max_hr_distance
+        should_start_callback = False
         if self.follow_phase != FOLLOW_PHASE_TRANSIT:
-            return adjusted_action
+            self._reset_following_wait_episode()
+            return adjusted_action, should_start_callback
         if str(robot_mode) != RobotMode.MOVE:
-            return adjusted_action
+            return adjusted_action, should_start_callback
         if distances.size == 0:
-            return adjusted_action
-        if float(np.max(distances)) <= float(FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS):
-            return adjusted_action
+            self._reset_following_wait_episode()
+            return adjusted_action, should_start_callback
+        if max_hr_distance > float(FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS):
+            self._last_following_wait_active = True
+            self.robot.mode = RobotMode.STOP
+            self._following_wait_elapsed_steps += 1
+            if (
+                (not self._following_wait_callback_triggered)
+                and self._following_wait_elapsed_steps >= int(self.following_callback_wait_steps)
+            ):
+                should_start_callback = True
+            return np.zeros(3, dtype=np.float32), should_start_callback
+        self._reset_following_wait_episode()
+        if max_hr_distance <= float(FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS):
+            return adjusted_action, should_start_callback
 
         self._last_following_slowdown_active = True
         adjusted_action[:2] *= float(FOLLOWING_SLOWDOWN_SPEED_SCALE)
-        return adjusted_action
+        return adjusted_action, should_start_callback
 
     def _update_human_listening_session_progress(self) -> None:
         if not self.listening_state.fuzzy_active:
@@ -1117,8 +1196,8 @@ class MuseumEnv(gym.Env):
         self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
-        self._last_following_slowdown_active = False
-        self._last_following_slowdown_max_hr_distance = 0.0
+        self._reset_following_crowd_regulation_debug_state()
+        self._reset_following_crowd_regulation_runtime_state()
 
         for human in self.humans:
             human.reset_episode_state()
@@ -1173,27 +1252,58 @@ class MuseumEnv(gym.Env):
             repulsion_gain=self.repulsion_gain,
         )
         waiting_listen_hold = self.listening_state.phase in (LISTEN_PHASE_WAIT, LISTEN_PHASE_PAUSED)
+        self._reset_following_crowd_regulation_debug_state()
         robot_action = np.zeros(3, dtype=np.float32)
         if waiting_listen_hold:
             robot_action = self._get_listening_hold_robot_action(pre_frame)
         else:
-            robot_out = self.robot.step(
-                robot_pose=pre_frame.robot_pose,
-                human_xyz=pre_frame.human_xyz,
+            was_listening = bool(self.robot.listen_mode)
+            robot_action = np.array(
+                self.robot.step(
+                    robot_pose=pre_frame.robot_pose,
+                    human_xyz=pre_frame.human_xyz,
+                ),
+                dtype=np.float32,
             )
-            robot_action = np.array(robot_out["action"], dtype=np.float32)
-            robot_action = self._apply_following_slowdown_if_needed(
-                robot_action,
-                robot_mode=robot_out["mode"],
-                world_frame=pre_frame,
-            )
+            if str(self.robot.mode) == RobotMode.CALLBACK:
+                self._record_following_max_hr_distance(pre_frame)
+                self._last_following_callback_active = True
+                if bool(self.robot.callback_cue_completed_this_step):
+                    events.callback_completed = True
+                    target_idx = self.robot.callback_target_idx
+                    person_label = "none" if target_idx is None else f"person{int(target_idx) + 1}"
+                    self._log_event(f">>> Robot callback completed for {person_label}.")
+                    self._finish_following_callback()
+            else:
+                robot_action, should_start_callback = self._apply_following_crowd_regulation_if_needed(
+                    robot_action,
+                    robot_mode=self.robot.mode,
+                    world_frame=pre_frame,
+                )
+                if should_start_callback and self._start_following_callback(pre_frame):
+                    events.callback_triggered = True
+                    self._last_following_callback_active = True
+                    target_idx = self.robot.callback_target_idx
+                    person_label = "none" if target_idx is None else f"person{int(target_idx) + 1}"
+                    self._log_event(
+                        f">>> Robot callback triggered for {person_label} after "
+                        f"{self.following_callback_wait_steps * self.dt:.1f}s wait."
+                    )
+                    robot_action = np.array(
+                        self.robot.step(
+                            robot_pose=pre_frame.robot_pose,
+                            human_xyz=pre_frame.human_xyz,
+                        ),
+                        dtype=np.float32,
+                    )
+                    self._last_following_callback_active = (str(self.robot.mode) == RobotMode.CALLBACK)
 
-            if robot_out["enter_listen"]:
+            if (not was_listening) and bool(self.robot.listen_mode):
                 events.entered_listen = True
                 self.follow_phase = None
                 self._clear_listening_question_humans()
                 self.listening_state.enter_intro(
-                    is_final=self.robot.is_final_reached(float(robot_out["dist"]))
+                    is_final=self.robot.is_final_reached(pre_frame.robot_pose)
                 )
                 for human in self.humans:
                     human.reset_listening_session_state()

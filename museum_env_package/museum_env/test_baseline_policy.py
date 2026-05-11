@@ -10,7 +10,9 @@ from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
     HUMAN_SPEAKING_HALO_RGBA_ON,
     ROBOT_COLOR_SAD,
+    ROBOT_FOLLOWME_LABEL_GROUP,
     ROBOT_ANSWER_LABEL_GROUP,
+    resolve_robot_visual_state,
 )
 from museum_env.env_state import (
     LISTEN_QUESTION_PHASE_ANSWER,
@@ -160,6 +162,16 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 expected,
                 atol=1e-6,
             )
+        finally:
+            env.close()
+
+    def test_callback_visual_state_uses_please_rejoin_label(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=113)
+            visual_state = resolve_robot_visual_state(robot=env.robot, callback_visual_active=True)
+            self.assertTrue(visual_state.show_follow_me)
+            self.assertEqual(visual_state.text_label, "please rejoin")
         finally:
             env.close()
 
@@ -689,7 +701,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_stale_callback_state_is_cleared_without_robot_response(self):
+    def test_active_callback_state_drives_callback_mode_and_visual_label(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=16)
@@ -697,13 +709,16 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.robot.callback_phase = "cue"
             env.robot.callback_target_idx = 0
             env.robot.callback_target_xy = np.array(env.humans[0].get_pose(env.data)[:2], dtype=np.float32)
+            env.robot.callback_cue_total_steps = 3
+            env.robot.callback_cue_elapsed_steps = 0
             env.robot.mode = "callback"
 
             _, _, _, _, info = env.step(None)
 
-            self.assertFalse(env.robot.callback_active)
-            self.assertIsNone(env.robot.callback_phase)
-            self.assertNotEqual(info["state"]["robot_mode"], "callback")
+            self.assertTrue(env.robot.callback_active)
+            self.assertEqual(env.robot.callback_phase, "cue")
+            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
         finally:
             env.close()
 
@@ -2070,6 +2085,30 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 places=6,
             )
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+        finally:
+            env.close()
+
+    def test_transit_follow_waits_when_any_human_exceeds_wait_distance_threshold(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=129)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0), (4.1, 0.0, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], 0.0, places=6)
+            self.assertEqual(info["state"]["robot_mode"], "stop")
         finally:
             env.close()
 
@@ -2093,6 +2132,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
         finally:
             env.close()
 
@@ -2116,6 +2156,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
         finally:
             env.close()
 
@@ -2167,6 +2208,198 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 float(recovered_baseline_action[2]),
                 places=6,
             )
+        finally:
+            env.close()
+
+    def test_pre_listen_follow_does_not_wait_when_human_exceeds_wait_distance_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=131)
+            env.follow_phase = "pre_listen_engage"
+            env.robot.listen_done = False
+            env.robot.v_max = 3.0
+            env.following_callback_wait_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((4.1, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertFalse(info["events"]["callback_triggered"])
+        finally:
+            env.close()
+
+    def test_transit_follow_wait_recovers_to_slowdown_when_distance_returns_within_wait_threshold(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=132)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot.v_max = 3.0
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((4.1, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, waiting_info = env.step(None)
+            self.assertAlmostEqual(waiting_info["robot"]["action"]["vx"], 0.0, places=6)
+            self.assertAlmostEqual(waiting_info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertAlmostEqual(waiting_info["robot"]["action"]["yaw_rate"], 0.0, places=6)
+            self.assertEqual(waiting_info["state"]["robot_mode"], "stop")
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            slowed_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
+
+            _, _, _, _, recovered_info = env.step(None)
+            self.assertAlmostEqual(
+                recovered_info["robot"]["action"]["vx"],
+                0.7 * float(slowed_baseline_action[0]),
+                places=6,
+            )
+            self.assertAlmostEqual(
+                recovered_info["robot"]["action"]["vy"],
+                0.7 * float(slowed_baseline_action[1]),
+                places=6,
+            )
+            self.assertAlmostEqual(
+                recovered_info["robot"]["action"]["yaw_rate"],
+                float(slowed_baseline_action[2]),
+                places=6,
+            )
+            self.assertEqual(recovered_info["state"]["robot_mode"], "move")
+        finally:
+            env.close()
+
+    def test_transit_follow_callback_triggers_for_farthest_human_after_wait_threshold(self):
+        env = self._make_env(n_humans=2)
+        try:
+            env.reset(seed=133)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 3
+            env.following_callback_cue_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.6, 0.0, 0.0), (4.2, 0.0, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_info = env.step(None)
+            self.assertEqual(first_info["state"]["robot_mode"], "stop")
+            self.assertFalse(first_info["events"]["callback_triggered"])
+
+            _, _, _, _, second_info = env.step(None)
+            self.assertEqual(second_info["state"]["robot_mode"], "stop")
+            self.assertFalse(second_info["events"]["callback_triggered"])
+
+            _, _, _, _, third_info = env.step(None)
+            self.assertTrue(third_info["events"]["callback_triggered"])
+            self.assertEqual(third_info["state"]["robot_mode"], "callback")
+            self.assertEqual(env.robot.callback_target_idx, 1)
+            self.assertEqual(third_info["state"]["callback_phase"], "cue")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
+        finally:
+            env.close()
+
+    def test_transit_follow_callback_completes_and_does_not_repeat_in_same_wait_episode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=134)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((4.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+            self.assertEqual(triggered_info["state"]["robot_mode"], "callback")
+            self.assertTrue(env.robot.callback_active)
+
+            _, _, _, _, cue_info = env.step(None)
+            self.assertFalse(cue_info["events"]["callback_completed"])
+            self.assertEqual(cue_info["state"]["robot_mode"], "callback")
+            self.assertTrue(env.robot.callback_active)
+
+            _, _, _, _, completed_info = env.step(None)
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertFalse(env.robot.callback_active)
+            self.assertEqual(completed_info["state"]["robot_mode"], "move")
+
+            _, _, _, _, waiting_again_info = env.step(None)
+            self.assertEqual(waiting_again_info["state"]["robot_mode"], "stop")
+            self.assertFalse(waiting_again_info["events"]["callback_triggered"])
+            self.assertFalse(env.robot.callback_active)
+        finally:
+            env.close()
+
+    def test_transit_follow_callback_can_trigger_again_after_distance_recovers(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=135)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((4.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_trigger_info = env.step(None)
+            self.assertTrue(first_trigger_info["events"]["callback_triggered"])
+
+            _, _, _, _, first_complete_info = env.step(None)
+            self.assertTrue(first_complete_info["events"]["callback_completed"])
+
+            _, _, _, _, same_episode_wait_info = env.step(None)
+            self.assertFalse(same_episode_wait_info["events"]["callback_triggered"])
+            self.assertEqual(same_episode_wait_info["state"]["robot_mode"], "stop")
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, recovered_info = env.step(None)
+            self.assertFalse(recovered_info["events"]["callback_triggered"])
+            self.assertEqual(recovered_info["state"]["robot_mode"], "move")
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((4.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, second_trigger_info = env.step(None)
+            self.assertTrue(second_trigger_info["events"]["callback_triggered"])
+            self.assertEqual(second_trigger_info["state"]["robot_mode"], "callback")
         finally:
             env.close()
 
