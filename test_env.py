@@ -121,8 +121,10 @@ def _print_human_robot_distance(step, info):
         print(f"[step {step}] hr_distance none")
         return
 
+    listen_phase = info["state"]["listen_phase"]
+    listen_phase_prefix = f"listen_phase={listen_phase} " if listen_phase != "idle" else ""
     parts = [f"person{idx + 1}={float(distance):.2f}" for idx, distance in enumerate(distances)]
-    print(f"[step {step}] hr_distance {' '.join(parts)}")
+    print(f"[step {step}] hr_distance {listen_phase_prefix}{' '.join(parts)}")
 
 
 def _print_following_crowd_regulation_status(step, info):
