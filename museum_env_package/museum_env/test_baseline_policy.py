@@ -2213,7 +2213,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((1.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+                human_poses=((0.0, 1.0, 0.0), (0.0, 3.0, 0.0)),
             )
             self._invalidate_observation_cache(env)
             baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
@@ -2245,7 +2245,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((1.0, 0.0, 0.0), (4.1, 0.0, 0.0)),
+                human_poses=((0.0, 1.0, 0.0), (0.0, 4.1, 0.0)),
             )
             self._invalidate_observation_cache(env)
 
@@ -2268,7 +2268,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((1.0, 0.0, 0.0), (2.4, 0.0, 0.0)),
+                human_poses=((0.0, 1.0, 0.0), (0.0, 2.4, 0.0)),
             )
             self._invalidate_observation_cache(env)
             baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
@@ -2316,7 +2316,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((3.0, 0.0, 0.0),),
+                human_poses=((0.0, 3.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
             slowed_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
@@ -2341,7 +2341,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((2.0, 0.0, 0.0),),
+                human_poses=((0.0, 2.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
             recovered_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
@@ -2393,7 +2393,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((4.1, 0.0, 0.0),),
+                human_poses=((0.0, 4.1, 0.0),),
             )
             self._invalidate_observation_cache(env)
 
@@ -2406,7 +2406,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((3.0, 0.0, 0.0),),
+                human_poses=((0.0, 3.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
             slowed_baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
@@ -2431,6 +2431,82 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_transit_follow_front_sector_triggers_immediate_callback_for_nearest_human(self):
+        env = self._make_env(n_humans=3)
+        try:
+            env.reset(seed=136)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            env.following_callback_cue_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((2.0, 0.4, 0.0), (1.0, 0.0, 0.0), (0.0, 4.5, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertTrue(info["events"]["callback_triggered"])
+            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(info["state"]["callback_phase"], "cue")
+            self.assertEqual(env.robot.callback_target_idx, 1)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_sector_callback_wait_episode_resets_after_sector_clears(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=137)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 3
+            env.following_callback_cue_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_trigger_info = env.step(None)
+            self.assertTrue(first_trigger_info["events"]["callback_triggered"])
+            self.assertEqual(first_trigger_info["state"]["robot_mode"], "callback")
+
+            _, _, _, _, completed_info = env.step(None)
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertFalse(env.robot.callback_active)
+
+            _, _, _, _, blocked_info = env.step(None)
+            self.assertFalse(blocked_info["events"]["callback_triggered"])
+            self.assertEqual(blocked_info["state"]["robot_mode"], "move")
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 1.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, cleared_info = env.step(None)
+            self.assertFalse(cleared_info["events"]["callback_triggered"])
+            self.assertEqual(cleared_info["state"]["robot_mode"], "move")
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.0, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, second_trigger_info = env.step(None)
+            self.assertTrue(second_trigger_info["events"]["callback_triggered"])
+            self.assertEqual(second_trigger_info["state"]["robot_mode"], "callback")
+        finally:
+            env.close()
+
     def test_transit_follow_callback_triggers_for_farthest_human_after_wait_threshold(self):
         env = self._make_env(n_humans=2)
         try:
@@ -2442,7 +2518,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((3.6, 0.0, 0.0), (4.2, 0.0, 0.0)),
+                human_poses=((0.0, 3.6, 0.0), (0.0, 4.2, 0.0)),
             )
             self._invalidate_observation_cache(env)
 
@@ -2458,7 +2534,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertTrue(third_info["events"]["callback_triggered"])
             self.assertEqual(third_info["state"]["robot_mode"], "callback")
             self.assertEqual(env.robot.callback_target_idx, 1)
-            self.assertEqual(third_info["state"]["callback_phase"], "cue")
+            self.assertEqual(third_info["state"]["callback_phase"], "turn")
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
         finally:
             env.close()
@@ -2474,7 +2550,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((4.0, 0.0, 0.0),),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
             )
             self._invalidate_observation_cache(env)
 
@@ -2483,18 +2559,16 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(triggered_info["state"]["robot_mode"], "callback")
             self.assertTrue(env.robot.callback_active)
 
-            _, _, _, _, cue_info = env.step(None)
-            self.assertFalse(cue_info["events"]["callback_completed"])
-            self.assertEqual(cue_info["state"]["robot_mode"], "callback")
-            self.assertTrue(env.robot.callback_active)
-
-            _, _, _, _, completed_info = env.step(None)
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
             self.assertTrue(completed_info["events"]["callback_completed"])
             self.assertFalse(env.robot.callback_active)
             self.assertEqual(completed_info["state"]["robot_mode"], "move")
 
             _, _, _, _, waiting_again_info = env.step(None)
-            self.assertEqual(waiting_again_info["state"]["robot_mode"], "stop")
             self.assertFalse(waiting_again_info["events"]["callback_triggered"])
             self.assertFalse(env.robot.callback_active)
         finally:
@@ -2511,24 +2585,28 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((4.0, 0.0, 0.0),),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
             )
             self._invalidate_observation_cache(env)
 
             _, _, _, _, first_trigger_info = env.step(None)
             self.assertTrue(first_trigger_info["events"]["callback_triggered"])
 
-            _, _, _, _, first_complete_info = env.step(None)
+            _, first_complete_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
             self.assertTrue(first_complete_info["events"]["callback_completed"])
 
             _, _, _, _, same_episode_wait_info = env.step(None)
             self.assertFalse(same_episode_wait_info["events"]["callback_triggered"])
-            self.assertEqual(same_episode_wait_info["state"]["robot_mode"], "stop")
+            self.assertFalse(env.robot.callback_active)
 
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((3.0, 0.0, 0.0),),
+                human_poses=((1.0260605, 2.8190778, 0.0),),
             )
             self._invalidate_observation_cache(env)
 
@@ -2539,7 +2617,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((4.0, 0.0, 0.0),),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
             )
             self._invalidate_observation_cache(env)
 

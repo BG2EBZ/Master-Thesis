@@ -105,6 +105,7 @@ FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS = 2.5
 FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS = 3.5
 FOLLOWING_CALLBACK_WAIT_SECONDS = 3.0
 FOLLOWING_CALLBACK_CUE_SECONDS = 2.0
+FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG = 60.0
 FOLLOWING_SLOWDOWN_SPEED_SCALE = 0.7
 
 MAX_HUMANS_CAPACITY = 15
@@ -216,6 +217,9 @@ class MuseumEnv(gym.Env):
             1,
             int(round(FOLLOWING_CALLBACK_CUE_SECONDS / self.dt)),
         )
+        self.following_callback_front_sector_half_angle = np.deg2rad(
+            FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG
+        )
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
@@ -225,6 +229,7 @@ class MuseumEnv(gym.Env):
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         self._following_wait_elapsed_steps = 0
         self._following_wait_callback_triggered = False
+        self._following_callback_override_target_idx = None
         self.callback_response_profile_probs = {
             HumanProfile.NORMAL: {
                 "rejoin": float(callback_rejoin_prob_normal),
@@ -706,13 +711,55 @@ class MuseumEnv(gym.Env):
     def _reset_following_wait_episode(self) -> None:
         self._following_wait_elapsed_steps = 0
         self._following_wait_callback_triggered = False
+        self._following_callback_override_target_idx = None
+
+    def _get_following_front_sector_target_idx(self, world_frame) -> Optional[int]:
+        human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
+        if human_xy.ndim == 1:
+            if human_xy.size == 0:
+                return None
+            human_xy = human_xy.reshape(1, -1)
+        if human_xy.shape[0] == 0:
+            return None
+
+        robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+        robot_yaw = float(world_frame.robot_pose[2])
+        relative_xy = human_xy[:, :2] - robot_xy[None, :]
+        distances = np.linalg.norm(relative_xy, axis=1).astype(np.float32)
+
+        candidate_indices: list[int] = []
+        candidate_distances: list[float] = []
+        for idx, diff_xy in enumerate(relative_xy):
+            if self.humans[idx].mode in (
+                HumanMode.DISTRACTED,
+                HumanMode.OVERWHELMED,
+                HumanMode.IMPATIENT,
+            ):
+                continue
+            if float(np.dot(diff_xy, diff_xy)) <= 1e-12:
+                rel_angle = 0.0
+            else:
+                rel_angle = self.robot._wrap_to_pi(
+                    float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw
+                )
+            if abs(rel_angle) > float(self.following_callback_front_sector_half_angle):
+                continue
+            candidate_indices.append(int(idx))
+            candidate_distances.append(float(distances[idx]))
+
+        if not candidate_indices:
+            return None
+        nearest_idx = int(np.argmin(np.asarray(candidate_distances, dtype=np.float32)))
+        return int(candidate_indices[nearest_idx])
 
     def _start_following_callback(self, world_frame) -> bool:
         distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
         human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
         if distances.size == 0 or human_xy.shape[0] == 0:
             return False
-        target_idx = int(np.argmax(distances))
+        target_idx = self._following_callback_override_target_idx
+        if target_idx is None or not (0 <= int(target_idx) < human_xy.shape[0]):
+            target_idx = int(np.argmax(distances))
         if not (0 <= target_idx < human_xy.shape[0]):
             return False
         self.robot.start_callback(
@@ -737,6 +784,17 @@ class MuseumEnv(gym.Env):
             return adjusted_action, should_start_callback
         if str(robot_mode) != RobotMode.MOVE:
             return adjusted_action, should_start_callback
+
+        front_sector_target_idx = self._get_following_front_sector_target_idx(world_frame)
+        if front_sector_target_idx is not None:
+            self._following_callback_override_target_idx = int(front_sector_target_idx)
+            if not self._following_wait_callback_triggered:
+                self.robot.mode = RobotMode.STOP
+                should_start_callback = True
+                return np.zeros(3, dtype=np.float32), should_start_callback
+            return adjusted_action, should_start_callback
+
+        self._following_callback_override_target_idx = None
         if distances.size == 0:
             self._reset_following_wait_episode()
             return adjusted_action, should_start_callback
