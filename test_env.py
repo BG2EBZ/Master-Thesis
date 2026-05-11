@@ -7,6 +7,7 @@ import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
 import mujoco.viewer
 import museum_env.register_env
+import numpy as np
 
 DEFAULT_MAX_STEPS = 300000
 DEFAULT_RENDER_FPS = 60
@@ -124,15 +125,11 @@ def _print_human_robot_distance(step, info):
     print(f"[step {step}] hr_distance {' '.join(parts)}")
 
 
-def _print_following_crowd_regulation_status(step, base_env):
-    slowdown_active = bool(getattr(base_env, "_last_following_slowdown_active", False))
-    wait_active = bool(getattr(base_env, "_last_following_wait_active", False))
-    callback_active = bool(getattr(base_env, "_last_following_callback_active", False))
-    max_hr_distance = float(getattr(base_env, "_last_following_max_hr_distance", 0.0))
+def _print_following_crowd_regulation_status(step, info):
+    distances = np.asarray(info["humans"]["human_robot_distance"], dtype=np.float32)
+    max_hr_distance = float(np.max(distances)) if distances.size != 0 else 0.0
     print(
-        f"[step {step}] wait={'on' if wait_active else 'off'} "
-        f"slowdown={'on' if slowdown_active else 'off'} "
-        f"callback={'on' if callback_active else 'off'} "
+        f"[step {step}] robot_mode={info['state']['robot_mode']} "
         f"max_hr_distance={max_hr_distance:.2f}"
     )
 
@@ -197,7 +194,7 @@ def _run_loop(
         periodic_print = bool(print_every) and ((step + 1) % print_every == 0)
         if periodic_print and print_human_robot_distance_periodically:
             _print_human_robot_distance(step + 1, info)
-            _print_following_crowd_regulation_status(step + 1, base_env)
+            _print_following_crowd_regulation_status(step + 1, info)
         if periodic_print:
             # print(_summarize_info(step, info))
             _print_rtf("loop", step + 1, sim_dt, wall_start)
