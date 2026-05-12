@@ -33,6 +33,7 @@ from .env_state import (
 )
 from .human import HumanMode
 from .robot import RobotMode, RobotSpeechMode
+from .spatial_utils import wrap_to_pi
 
 
 def sync_robot_speaker_state(env) -> None:
@@ -49,7 +50,7 @@ def sync_robot_speaker_state(env) -> None:
 
 
 def build_question_turn_action(env, current_yaw: float, target_yaw: float) -> np.ndarray:
-    yaw_err = env.robot._wrap_to_pi(float(target_yaw) - float(current_yaw))
+    yaw_err = wrap_to_pi(float(target_yaw) - float(current_yaw))
     action = np.zeros(3, dtype=np.float32)
     if abs(yaw_err) < float(LISTEN_QUESTION_TURN_DONE_YAW_ERR):
         return action
@@ -416,7 +417,7 @@ def progress_listening_question_pause(env, events, world_frame) -> bool:
         target_xy = np.asarray(world_frame.human_xy[int(idx)], dtype=np.float32)
         robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
         desired_yaw = float(np.arctan2(target_xy[1] - robot_xy[1], target_xy[0] - robot_xy[0]))
-        yaw_err = env.robot._wrap_to_pi(desired_yaw - float(world_frame.robot_pose[2]))
+        yaw_err = wrap_to_pi(desired_yaw - float(world_frame.robot_pose[2]))
         if (
             env.listening_state.question_ask_steps_remaining > 0
             or abs(yaw_err) >= float(LISTEN_QUESTION_TURN_DONE_YAW_ERR)
@@ -444,13 +445,15 @@ def progress_listening_question_pause(env, events, world_frame) -> bool:
     if question_phase == LISTEN_QUESTION_PHASE_TURN_BACK:
         target_yaw = env.listening_state.question_return_yaw
         if target_yaw is None:
-            clear_listening_question_humans(env)
-            env.listening_state.resume()
-            events.question_completed = True
-            env._log_event(">>> Listening question completed.")
+            _complete_listening_question(
+                env,
+                events,
+                world_frame,
+                finish_if_wait_elapsed=True,
+            )
             return True
 
-        yaw_err = env.robot._wrap_to_pi(float(target_yaw) - float(world_frame.robot_pose[2]))
+        yaw_err = wrap_to_pi(float(target_yaw) - float(world_frame.robot_pose[2]))
         if abs(yaw_err) >= float(LISTEN_QUESTION_TURN_DONE_YAW_ERR):
             return True
 

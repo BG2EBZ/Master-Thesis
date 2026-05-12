@@ -5,6 +5,7 @@ from unittest.mock import patch
 import mujoco
 import numpy as np
 
+from museum_env import env_control, env_flow
 from museum_env.env import MuseumEnv
 from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
@@ -38,6 +39,7 @@ from museum_env.human import (
     HumanProfile,
 )
 from museum_env.map_layouts import AxisAlignedRect, MapLayout
+from museum_env.spatial_utils import raycast_hit_distance, wrap_to_pi
 
 
 class MuseumEnvRefactorTests(unittest.TestCase):
@@ -212,7 +214,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.enter_wait(False)
             env.robot.listen_mode = True
 
-            env._maybe_shorten_listening_wait(
+            env_flow.maybe_shorten_listening_wait(
+                env,
                 SimpleNamespace(
                     observations=SimpleNamespace(
                         human_robot_distance=np.array([2.5, 1.5], dtype=np.float32),
@@ -222,7 +225,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(env.listening_state.wait_target_steps, 8)
             self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
 
-            env._maybe_shorten_listening_wait(
+            env_flow.maybe_shorten_listening_wait(
+                env,
                 SimpleNamespace(
                     observations=SimpleNamespace(
                         human_robot_distance=np.array([2.8, 1.4], dtype=np.float32),
@@ -232,7 +236,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(env.listening_state.wait_target_steps, 8)
             self.assertEqual(env.listening_state.distance_shorten_triggered_indices, {0})
 
-            env._maybe_shorten_listening_wait(
+            env_flow.maybe_shorten_listening_wait(
+                env,
                 SimpleNamespace(
                     observations=SimpleNamespace(
                         human_robot_distance=np.array([2.8, 2.3], dtype=np.float32),
@@ -253,7 +258,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.enter_wait(False)
             env.robot.listen_mode = True
 
-            env._maybe_shorten_listening_wait(
+            env_flow.maybe_shorten_listening_wait(
+                env,
                 SimpleNamespace(
                     observations=SimpleNamespace(
                         human_robot_distance=np.array([2.5], dtype=np.float32),
@@ -270,7 +276,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(env.listening_state.wait_target_steps, 0)
             self.assertEqual(env.listening_state.distance_shorten_triggered_indices, set())
 
-            env._maybe_shorten_listening_wait(
+            env_flow.maybe_shorten_listening_wait(
+                env,
                 SimpleNamespace(
                     observations=SimpleNamespace(
                         human_robot_distance=np.array([2.6], dtype=np.float32),
@@ -457,7 +464,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listen_question_probability = 0.0
             env.listen_question_after_explanation_probability = 0.0
             env.listen_question_pause_steps = 2
-            env._prepare_listening_question_plan()
+            env_flow.prepare_listening_question_plan(env)
 
             _, _, _, _, info = env.step(None)
             self.assertEqual(info["phase"]["listen"], "wait")
@@ -485,7 +492,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 env.listen_wait_steps = 10
                 env.listen_question_probability = 1.0
                 env.listen_question_after_explanation_probability = 0.0
-                env._prepare_listening_question_plan()
+                env_flow.prepare_listening_question_plan(env)
 
             self.assertEqual(env1.listening_state.question_timing_mode, LISTEN_QUESTION_TIMING_MID_RANDOM)
             self.assertEqual(env2.listening_state.question_timing_mode, LISTEN_QUESTION_TIMING_MID_RANDOM)
@@ -744,7 +751,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env_post.listen_wait_steps = 8
             env_post.listen_question_probability = 1.0
             env_post.listen_question_after_explanation_probability = 1.0
-            env_post._prepare_listening_question_plan()
+            env_flow.prepare_listening_question_plan(env_post)
 
             env_mid.reset(seed=30)
             env_mid.listening_state.enter_wait(False)
@@ -752,7 +759,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env_mid.listen_wait_steps = 8
             env_mid.listen_question_probability = 1.0
             env_mid.listen_question_after_explanation_probability = 0.0
-            env_mid._prepare_listening_question_plan()
+            env_flow.prepare_listening_question_plan(env_mid)
 
             self.assertEqual(
                 env_post.listening_state.question_timing_mode,
@@ -1739,18 +1746,40 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
         np.testing.assert_allclose(adjusted_v_xy, np.zeros(2, dtype=np.float32), atol=1e-6)
 
-    def test_raycast_hit_distance_uses_single_height_probe(self):
-        human = Human("person1", "person1", 0, max_speed=1.0)
-        human._runtime_model = object()
-        human._runtime_data = SimpleNamespace(xpos=np.array([[1.0, 2.0, 0.125]], dtype=np.float64))
-        human.body_id = 0
+    def test_shared_wrap_to_pi_matches_previous_range(self):
+        self.assertAlmostEqual(wrap_to_pi(3.0 * np.pi), -np.pi, places=6)
+        self.assertAlmostEqual(wrap_to_pi(-1.5 * np.pi), 0.5 * np.pi, places=6)
+        self.assertAlmostEqual(wrap_to_pi(0.25 * np.pi), 0.25 * np.pi, places=6)
 
-        with patch("museum_env.human.mujoco.mj_ray", return_value=0.2) as ray_mock:
-            hit_distance = human._raycast_hit_distance(np.array([1.0, 0.0], dtype=np.float32))
+    def test_shared_raycast_hit_distance_uses_single_height_probe(self):
+        model = object()
+        data = SimpleNamespace(xpos=np.array([[1.0, 2.0, 0.125]], dtype=np.float64))
+
+        with patch("museum_env.spatial_utils.mujoco.mj_ray", return_value=0.2) as ray_mock:
+            hit_distance = raycast_hit_distance(
+                model,
+                data,
+                0,
+                np.array([1.0, 0.0], dtype=np.float32),
+            )
 
         self.assertEqual(ray_mock.call_count, 1)
         np.testing.assert_allclose(ray_mock.call_args.args[2], np.array([1.0, 2.0, 0.125]), atol=1e-6)
         self.assertAlmostEqual(hit_distance, 0.2, places=6)
+
+    def test_shared_raycast_hit_distance_handles_invalid_and_miss_cases(self):
+        data = SimpleNamespace(xpos=np.array([[1.0, 2.0, 0.125]], dtype=np.float64))
+        self.assertIsNone(raycast_hit_distance(object(), data, 0, np.zeros(2, dtype=np.float32)))
+        self.assertIsNone(raycast_hit_distance(None, data, 0, np.array([1.0, 0.0], dtype=np.float32)))
+        with patch("museum_env.spatial_utils.mujoco.mj_ray", return_value=-1.0):
+            self.assertIsNone(
+                raycast_hit_distance(
+                    object(),
+                    data,
+                    0,
+                    np.array([1.0, 0.0], dtype=np.float32),
+                )
+            )
 
     def test_wall_spacing_force_is_zero_when_side_probes_are_clear(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -2213,7 +2242,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 human_xy=current_xy.reshape(1, 2),
             )
 
-            env._apply_general_phase_strategy(human, 0, world_frame)
+            env_control.apply_general_phase_strategy(env, human, 0, world_frame)
             self.assertEqual(human.mode, HumanMode.FOLLOWING)
         finally:
             env.close()
@@ -2460,7 +2489,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._invalidate_observation_cache(env)
             baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
@@ -2483,7 +2512,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
@@ -2504,7 +2533,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            def raycast_side_effect(direction_xy):
+            def raycast_side_effect(_model, _data, _body_id, direction_xy):
                 direction_xy = np.asarray(direction_xy, dtype=np.float32)
                 direction_xy = direction_xy / np.linalg.norm(direction_xy)
                 if direction_xy[1] < -0.99:
@@ -2513,7 +2542,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     return 0.1
                 return 1.0
 
-            with patch.object(env, "_raycast_robot_hit_distance", side_effect=raycast_side_effect):
+            with patch("museum_env.env_control.raycast_hit_distance", side_effect=raycast_side_effect):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
@@ -2534,7 +2563,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            def safety_side_effect(world_frame, target_idx, direction_xy):
+            def safety_side_effect(_env, world_frame, target_idx, direction_xy):
                 direction_xy = np.asarray(direction_xy, dtype=np.float32)
                 direction_xy = direction_xy / np.linalg.norm(direction_xy)
                 if direction_xy[1] < -0.99:
@@ -2543,7 +2572,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     return True, 0.30, 0.60, 0.80
                 return True, 0.10, 0.95, 10.0
 
-            with patch.object(env, "_is_robot_backoff_direction_safe", side_effect=safety_side_effect):
+            with patch("museum_env.env_control.is_robot_backoff_direction_safe", side_effect=safety_side_effect):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
@@ -2565,9 +2594,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._invalidate_observation_cache(env)
             baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
 
-            with patch.object(
-                env,
-                "_is_robot_backoff_direction_safe",
+            with patch(
+                "museum_env.env_control.is_robot_backoff_direction_safe",
                 return_value=(False, float("-inf"), float("-inf"), float("-inf")),
             ):
                 _, _, _, _, info = env.step(None)
@@ -2591,7 +2619,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
@@ -2616,7 +2644,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
@@ -2642,7 +2670,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 cue_steps=2,
             )
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertEqual(info["robot"]["mode"], "callback")
@@ -2665,7 +2693,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertEqual(info["robot"]["mode"], "stop")
@@ -2688,7 +2716,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
+            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
             self.assertFalse(info["events"]["callback_triggered"])

@@ -22,6 +22,7 @@ from .env_constants import (
     FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG,
     FOLLOWING_CALLBACK_WAIT_SECONDS,
     FOLLOW_FAN_HALF_ANGLE_DEG,
+    HUMAN_WALL_FOOTPRINT_RADIUS,
     HUMAN_FOLLOW_DISTANCE_DEFAULT,
     HUMAN_GOAL_THRESHOLD,
     HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS,
@@ -67,7 +68,7 @@ from .env_state import (
     StepEvents,
     build_fuzzy_debug_states,
 )
-from .human import HUMAN_WALL_FOOTPRINT_RADIUS, Human, HumanMode, HumanProfile
+from .human import Human, HumanMode, HumanProfile
 from .map_layouts import MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
 from .robot import Robot
@@ -377,35 +378,6 @@ class MuseumEnv(gym.Env):
                 else HUMAN_SPEAKING_HALO_RGBA_OFF
             )
             self.model.geom_rgba[geom_id] = halo_rgba
-
-    def _build_question_turn_action(self, current_yaw: float, target_yaw: float) -> np.ndarray:
-        return env_flow.build_question_turn_action(self, current_yaw, target_yaw)
-
-    def _set_listening_question_human_speaking(self, active: bool) -> None:
-        env_flow.set_listening_question_human_speaking(self, active)
-
-    def _get_listening_hold_robot_action(self, world_frame) -> np.ndarray:
-        return env_flow.get_listening_hold_robot_action(self, world_frame)
-
-    def _maybe_shorten_listening_wait(self, world_frame) -> None:
-        env_flow.maybe_shorten_listening_wait(self, world_frame)
-
-    def _prepare_listening_question_plan(self) -> None:
-        env_flow.prepare_listening_question_plan(self)
-
-    def _apply_general_phase_strategy(self, human, idx: int, world_frame) -> np.ndarray:
-        return env_control.apply_general_phase_strategy(self, human, idx, world_frame)
-
-    def _raycast_robot_hit_distance(self, direction_xy):
-        return env_control.raycast_robot_hit_distance(self, direction_xy)
-
-    def _is_robot_backoff_direction_safe(self, world_frame, target_idx: int, direction_xy):
-        return env_control.is_robot_backoff_direction_safe(
-            self,
-            world_frame,
-            target_idx=target_idx,
-            direction_xy=direction_xy,
-        )
 
     def reset(self, seed=None, options=None):
         del options

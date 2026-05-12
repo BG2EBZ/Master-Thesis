@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-import mujoco
 import numpy as np
 
 from .env_constants import (
@@ -12,6 +11,7 @@ from .env_constants import (
     FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS,
     FOLLOWING_SLOWDOWN_SPEED_SCALE,
     FOLLOW_RADIUS_DEFAULT,
+    HUMAN_WALL_FOOTPRINT_RADIUS,
     LISTENING_REPULSION_SCALE,
     ROBOT_FOOTPRINT_RADIUS_METERS,
     ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS,
@@ -31,10 +31,10 @@ from .env_state import (
 from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
-    HUMAN_WALL_FOOTPRINT_RADIUS,
     HumanMode,
 )
 from .robot import RobotMode
+from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
 
 def reset_following_wait_episode(env) -> None:
@@ -370,32 +370,6 @@ def get_nearest_close_human_idx(world_frame) -> Optional[int]:
     return nearest_idx
 
 
-def raycast_robot_hit_distance(env, direction_xy) -> Optional[float]:
-    """Raycast from the robot body and return the wall hit distance if any."""
-    direction_xy = np.asarray(direction_xy, dtype=np.float32)
-    direction_norm = float(np.linalg.norm(direction_xy))
-    if direction_norm <= 1e-6:
-        return None
-
-    ray_direction = np.zeros(3, dtype=np.float64)
-    ray_direction[:2] = direction_xy[:2] / direction_norm
-    ray_origin = np.array(env.data.xpos[env.robot_body_id], dtype=np.float64)
-    geomid = np.array([-1], dtype=np.int32)
-    hit_distance = float(
-        mujoco.mj_ray(
-            env.model,
-            env.data,
-            ray_origin,
-            ray_direction,
-            None,
-            1,
-            int(env.robot_body_id),
-            geomid,
-        )
-    )
-    return hit_distance if hit_distance >= 0.0 else None
-
-
 def is_robot_backoff_direction_safe(
     env,
     world_frame,
@@ -423,7 +397,12 @@ def is_robot_backoff_direction_safe(
     required_wall_clearance = float(
         ROBOT_FOOTPRINT_RADIUS_METERS + ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS
     )
-    hit_distance = env._raycast_robot_hit_distance(direction_unit)
+    hit_distance = raycast_hit_distance(
+        env.model,
+        env.data,
+        env.robot_body_id,
+        direction_unit,
+    )
     raycast_clearance = float("inf") if hit_distance is None else float(hit_distance)
     if raycast_clearance < required_wall_clearance:
         return False, float("-inf"), float("-inf"), raycast_clearance
@@ -480,7 +459,8 @@ def apply_robot_personal_space_backoff_if_needed(env, robot_action, world_frame)
 
     chosen_label = "blocked"
     chosen_direction = None
-    away_safe, _, _, _ = env._is_robot_backoff_direction_safe(
+    away_safe, _, _, _ = is_robot_backoff_direction_safe(
+        env,
         world_frame,
         target_idx=int(target_idx),
         direction_xy=away_dir,
@@ -497,7 +477,8 @@ def apply_robot_personal_space_backoff_if_needed(env, robot_action, world_frame)
         # clearance for the probe position.
         for label, candidate_dir in (("left", left_perp), ("right", right_perp)):
             is_safe, target_distance_gain, min_human_clearance, raycast_clearance = (
-                env._is_robot_backoff_direction_safe(
+                is_robot_backoff_direction_safe(
+                    env,
                     world_frame,
                     target_idx=int(target_idx),
                     direction_xy=candidate_dir,
@@ -559,7 +540,7 @@ def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:
         rel_angle = (
             0.0
             if float(np.dot(diff_xy, diff_xy)) <= 1e-12
-            else env.robot._wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw)
+            else wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw)
         )
         if abs(rel_angle) > float(env.following_callback_front_sector_half_angle):
             continue

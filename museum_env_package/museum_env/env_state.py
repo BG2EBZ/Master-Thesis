@@ -73,11 +73,12 @@ class ListeningState:
     question_return_yaw: Optional[float] = None
     question_completion_mode: Optional[str] = None
 
-    def _reset_question_state(self) -> None:
-        self.session_has_question = False
-        self.question_timing_mode = None
-        self.question_trigger_step = None
-        self.question_fired = False
+    def _clear_paused_state(self) -> None:
+        self.paused_phase = LISTEN_PHASE_IDLE
+        self.paused_counter = 0
+        self.paused_is_final = False
+
+    def _clear_active_question_fields(self) -> None:
         self.question_human_idx = None
         self.question_phase = LISTEN_QUESTION_PHASE_NONE
         self.question_ask_steps_remaining = 0
@@ -85,13 +86,15 @@ class ListeningState:
         self.question_return_yaw = None
         self.question_completion_mode = None
 
+    def _reset_question_state(self) -> None:
+        self.session_has_question = False
+        self.question_timing_mode = None
+        self.question_trigger_step = None
+        self.question_fired = False
+        self._clear_active_question_fields()
+
     def clear_active_question(self) -> None:
-        self.question_human_idx = None
-        self.question_phase = LISTEN_QUESTION_PHASE_NONE
-        self.question_ask_steps_remaining = 0
-        self.question_answer_steps_remaining = 0
-        self.question_return_yaw = None
-        self.question_completion_mode = None
+        self._clear_active_question_fields()
 
     def reset_wait_runtime(self) -> None:
         self.wait_target_steps = 0
@@ -107,36 +110,25 @@ class ListeningState:
             self.wait_target_steps = max(1, int(default_wait_steps))
         return int(self.wait_target_steps)
 
-    def reset(self) -> None:
-        self.phase = LISTEN_PHASE_IDLE
+    def _enter_phase(self, phase: str, *, is_final: bool) -> None:
+        self.phase = phase
         self.counter = 0
-        self.is_final = False
+        self.is_final = bool(is_final)
         self.reset_wait_runtime()
-        self.paused_phase = LISTEN_PHASE_IDLE
-        self.paused_counter = 0
-        self.paused_is_final = False
         self._reset_question_state()
+
+    def reset(self) -> None:
+        self._enter_phase(LISTEN_PHASE_IDLE, is_final=False)
+        self._clear_paused_state()
 
     def enter_intro(self, is_final: bool) -> None:
-        self.phase = LISTEN_PHASE_INTRO
-        self.counter = 0
-        self.is_final = bool(is_final)
-        self.reset_wait_runtime()
-        self._reset_question_state()
+        self._enter_phase(LISTEN_PHASE_INTRO, is_final=is_final)
 
     def enter_wait(self, is_final: bool) -> None:
-        self.phase = LISTEN_PHASE_WAIT
-        self.counter = 0
-        self.is_final = bool(is_final)
-        self.reset_wait_runtime()
-        self._reset_question_state()
+        self._enter_phase(LISTEN_PHASE_WAIT, is_final=is_final)
 
     def enter_idle(self) -> None:
-        self.phase = LISTEN_PHASE_IDLE
-        self.counter = 0
-        self.is_final = False
-        self.reset_wait_runtime()
-        self._reset_question_state()
+        self._enter_phase(LISTEN_PHASE_IDLE, is_final=False)
 
     def pause(self) -> None:
         self.paused_phase = self.phase
@@ -150,9 +142,7 @@ class ListeningState:
         self.phase = self.paused_phase
         self.counter = int(self.paused_counter)
         self.is_final = bool(self.paused_is_final)
-        self.paused_phase = LISTEN_PHASE_IDLE
-        self.paused_counter = 0
-        self.paused_is_final = False
+        self._clear_paused_state()
 
     @property
     def active(self) -> bool:

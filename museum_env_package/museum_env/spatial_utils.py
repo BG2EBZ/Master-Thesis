@@ -1,3 +1,5 @@
+"""Shared geometry helpers for angle wrapping and MuJoCo raycasts."""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -6,7 +8,13 @@ import mujoco
 import numpy as np
 
 
+def wrap_to_pi(ang: float) -> float:
+    """Normalize an angle to the ``[-pi, pi)`` range."""
+    return float((float(ang) + np.pi) % (2.0 * np.pi) - np.pi)
+
+
 def raycast_hit_distance(model, data, body_id, direction_xy) -> Optional[float]:
+    """Return the hit distance for a planar ray cast from one MuJoCo body."""
     direction_xy = np.asarray(direction_xy, dtype=np.float32)
     direction_norm = float(np.linalg.norm(direction_xy))
     if direction_norm <= 1e-6:

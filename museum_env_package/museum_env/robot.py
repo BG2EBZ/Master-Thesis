@@ -1,6 +1,7 @@
 import numpy as np
 
 from .human import HumanMode
+from .spatial_utils import wrap_to_pi
 
 # Robot-side finite-state controller used by MuseumEnv.
 ROBOT_WAYPOINT_REACHED_DIST = 0.2
@@ -76,7 +77,7 @@ class Robot:
     @staticmethod
     def _wrap_to_pi(ang: float) -> float:
         """Normalize angle to [-pi, pi)."""
-        return (ang + np.pi) % (2 * np.pi) - np.pi
+        return wrap_to_pi(ang)
 
     def reset(self):
         """Reset full robot runtime state at episode start."""

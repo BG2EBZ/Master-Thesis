@@ -31,6 +31,7 @@ from .human import (
     HumanProfile,
     logger,
 )
+from .spatial_utils import wrap_to_pi
 
 
 def step_behavior(human, ctx, pose):
@@ -43,7 +44,14 @@ def step_behavior(human, ctx, pose):
     if behavior_kind == "post_explanation_yield":
         return _step_post_explanation_yield(human, ctx, pose)
     if behavior_kind == "post_explanation_listening_anchor":
-        return _step_post_explanation_listening_anchor(human, ctx, pose)
+        return _step_listening_like(
+            human,
+            ctx,
+            pose,
+            anchor_robot_xy=ctx["anchor_robot_xy"],
+            anchor_robot_yaw=float(ctx["anchor_robot_yaw"]),
+            live_robot_xy=ctx["live_robot_xy"],
+        )
     if behavior_kind is not None:
         raise ValueError(f"Unknown human behavior kind {behavior_kind!r}")
 
@@ -53,7 +61,14 @@ def step_behavior(human, ctx, pose):
         human.assign_target_from_context(ctx)
         return _step_following(human, ctx, pose)
     if human.mode == HumanMode.LISTENING:
-        return _step_listening(human, ctx, pose)
+        return _step_listening_like(
+            human,
+            ctx,
+            pose,
+            anchor_robot_xy=ctx["robot_xy"],
+            anchor_robot_yaw=float(ctx["robot_yaw"]),
+            live_robot_xy=ctx["robot_xy"],
+        )
     if human.mode == HumanMode.DISTRACTED:
         return _step_distracted(human, ctx, pose)
     if human.mode == HumanMode.OVERWHELMED:
@@ -78,48 +93,11 @@ def _step_following(human, ctx, pose):
     return human._move(human.current_waypoint - current_xy, pose[2], ctx, current_xy)
 
 
-def _step_listening(human, ctx, pose):
-    yaw = pose[2]
+def _step_listening_like(human, ctx, pose, *, anchor_robot_xy, anchor_robot_yaw: float, live_robot_xy):
     current_xy = np.asarray(pose[:2], dtype=np.float32)
-    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-    robot_yaw = ctx["robot_yaw"]
-    to_robot = robot_xy - current_xy
-    dist_to_robot = np.linalg.norm(to_robot)
-    desired_yaw = np.arctan2(to_robot[1], to_robot[0]) if dist_to_robot > NORM_EPS else robot_yaw
-    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
-
-    target_xy = _compute_listening_sector_target_point(
-        human,
-        current_xy=current_xy,
-        robot_xy=robot_xy,
-        robot_yaw=robot_yaw,
-        listen_radius=ctx["listen_radius"],
-        sector_half_angle=ctx["listening_sector_half_angle"],
-    )
-    guide_xy = target_xy - current_xy
-    v_goal = LISTENING_RING_GAIN * guide_xy
-    v_total = human._compose_move_velocity(
-        current_xy=current_xy,
-        guide_xy=guide_xy,
-        goal_v_xy=v_goal,
-        speed_limit=human.max_speed,
-        repulsion_xy=ctx["repulsion"],
-        robot_xy=robot_xy,
-        hr_distance_min=human.hr_distance_min,
-        hr_distance_max=None,
-    )
-
-    action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
-    return action
-
-
-def _step_post_explanation_listening_anchor(human, ctx, pose):
-    """Listen around a frozen anchor pose while still reacting to live repulsion."""
     yaw = pose[2]
-    current_xy = np.asarray(pose[:2], dtype=np.float32)
-    anchor_robot_xy = np.asarray(ctx["anchor_robot_xy"], dtype=np.float32)
-    live_robot_xy = np.asarray(ctx["live_robot_xy"], dtype=np.float32)
-    anchor_robot_yaw = float(ctx["anchor_robot_yaw"])
+    anchor_robot_xy = np.asarray(anchor_robot_xy, dtype=np.float32)
+    live_robot_xy = np.asarray(live_robot_xy, dtype=np.float32)
 
     to_anchor_robot = anchor_robot_xy - current_xy
     dist_to_anchor_robot = np.linalg.norm(to_anchor_robot)
@@ -128,7 +106,7 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
         if dist_to_anchor_robot > NORM_EPS
         else anchor_robot_yaw
     )
-    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    yaw_err = wrap_to_pi(desired_yaw - yaw)
 
     target_xy = _compute_listening_sector_target_point(
         human,
@@ -151,10 +129,7 @@ def _step_post_explanation_listening_anchor(human, ctx, pose):
         hr_distance_max=None,
     )
 
-    action = human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
-    return action
-
-
+    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 def _step_distracted(human, ctx, pose):
     human.distracted_elapsed_steps += 1
     yaw = pose[2]
@@ -253,7 +228,7 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
             else:
                 v_total = np.zeros(2, dtype=np.float32)
 
-    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    yaw_err = wrap_to_pi(desired_yaw - yaw)
     return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
@@ -270,7 +245,7 @@ def _step_nd_stop_and_go_following(human, ctx, pose):
     to_follow_xy = human.current_waypoint - current_xy
     follow_dist = float(np.linalg.norm(to_follow_xy))
     desired_yaw = float(np.arctan2(to_follow_xy[1], to_follow_xy[0])) if follow_dist > NORM_EPS else float(pose[2])
-    yaw_err = human._wrap_to_pi(desired_yaw - pose[2])
+    yaw_err = wrap_to_pi(desired_yaw - pose[2])
 
     if cycle_step < pause_steps:
         return human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -278,7 +253,7 @@ def _step_nd_stop_and_go_following(human, ctx, pose):
 
 def _step_following_distracted_stop(human, *, current_yaw: float, desired_yaw: float):
     human.distracted_timer += 1
-    yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+    yaw_err = wrap_to_pi(desired_yaw - current_yaw)
     if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
         action = human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
     else:
@@ -310,7 +285,7 @@ def _step_listening_distracted(human, ctx, pose):
             fallback_target_xy=current_xy,
         )
         desired_yaw = human.distracted_target_yaw
-    yaw_err = human._wrap_to_pi(desired_yaw - pose[2])
+    yaw_err = wrap_to_pi(desired_yaw - pose[2])
 
     if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
         return human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -350,7 +325,7 @@ def _step_overwhelmed(human, ctx, pose):
             speed_limit=move_speed_limit,
         )
 
-        action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
+        action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - pose[2]))
         return action
 
     human.overwhelmed_leave_timer += 1
@@ -366,21 +341,21 @@ def _step_overwhelmed(human, ctx, pose):
         human.overwhelmed_stage = "pause"
         human.overwhelmed_pause_timer = 0
 
-    action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - pose[2]))
+    action = human._compose_action(v_xy, HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - pose[2]))
     return action
 
 
 def _step_listening_impatient_glance(human, *, base_yaw: float, yaw: float):
-    desired_yaw = human._wrap_to_pi(
+    desired_yaw = wrap_to_pi(
         base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
     )
-    yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+    yaw_err = wrap_to_pi(desired_yaw - yaw)
     if abs(yaw_err) <= np.deg2rad(LISTENING_IMPATIENT_TARGET_REACHED_DEG):
         human.listening_impatient_turn_sign *= -1.0
-        desired_yaw = human._wrap_to_pi(
+        desired_yaw = wrap_to_pi(
             base_yaw + human.listening_impatient_turn_sign * human.listening_impatient_yaw_deviation
         )
-        yaw_err = human._wrap_to_pi(desired_yaw - yaw)
+        yaw_err = wrap_to_pi(desired_yaw - yaw)
     return human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
@@ -441,7 +416,7 @@ def _step_impatient(human, ctx, pose):
                 if dist_to_target <= human.waypoint_threshold:
                     action = human._compose_action(
                         np.zeros(2, dtype=np.float32),
-                        HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - yaw),
+                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
                     )
                 else:
                     v_goal = human.max_speed * (to_target_xy / dist_to_target)
@@ -457,7 +432,7 @@ def _step_impatient(human, ctx, pose):
                     )
                     action = human._compose_action(
                         v_total,
-                        HUMAN_YAW_RATE_GAIN * human._wrap_to_pi(desired_yaw - yaw),
+                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
                     )
     else:
         human.assign_target_from_context(ctx)
@@ -491,7 +466,7 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
     )
 
     if dist_to_partner <= DISTRACTED_CONVERSATION_STOP_DISTANCE + NORM_EPS:
-        yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+        yaw_err = wrap_to_pi(desired_yaw - current_yaw)
         if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
             return human._compose_action(
                 np.zeros(2, dtype=np.float32),
@@ -518,7 +493,7 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
         hr_distance_max=human.hr_distance_max,
     )
 
-    yaw_err = human._wrap_to_pi(desired_yaw - current_yaw)
+    yaw_err = wrap_to_pi(desired_yaw - current_yaw)
     return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
@@ -714,7 +689,7 @@ def _initialize_distracted_target(
     )
     deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
     deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
-    fallback_yaw = _wrap_to_pi(float(fallback_reference_yaw) + deviation_rad)
+    fallback_yaw = wrap_to_pi(float(fallback_reference_yaw) + deviation_rad)
     if fallback_target_xy is None:
         direction_xy = np.array([np.cos(fallback_yaw), np.sin(fallback_yaw)], dtype=np.float32)
         fallback_target_xy = current_xy + DISTRACTED_FALLBACK_DISTANCE * direction_xy
@@ -742,9 +717,9 @@ def _compute_listening_sector_target_point(
         absolute_angle = robot_yaw
     else:
         absolute_angle = np.arctan2(rel_xy[1], rel_xy[0])
-    relative_angle = human._wrap_to_pi(absolute_angle - robot_yaw)
+    relative_angle = wrap_to_pi(absolute_angle - robot_yaw)
     half_angle = max(0.0, sector_half_angle - LISTENING_SECTOR_PROJECTION_EPS)
-    clamped_angle = human._wrap_to_pi(robot_yaw + np.clip(relative_angle, -half_angle, half_angle))
+    clamped_angle = wrap_to_pi(robot_yaw + np.clip(relative_angle, -half_angle, half_angle))
     return np.array(
         [
             robot_xy[0] + listen_radius * np.cos(clamped_angle),
@@ -752,7 +727,3 @@ def _compute_listening_sector_target_point(
         ],
         dtype=np.float32,
     )
-
-
-def _wrap_to_pi(ang):
-    return (ang + np.pi) % (2 * np.pi) - np.pi

@@ -1,10 +1,11 @@
 import logging
 from typing import Optional
 
-import mujoco
 import numpy as np
 
+from .env_constants import FOLLOW_RADIUS_DEFAULT, HUMAN_WALL_FOOTPRINT_RADIUS
 from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout
+from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,6 @@ DISTRACTED_TARGET_DISTANCE_MAX = 1.5
 DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
 DISTRACTED_STOP_DURATION_SECONDS = 5.0
-DEFAULT_FOLLOW_RADIUS = 1.0
 DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
 DISTRACTED_HUMAN_LOOK_RADIUS = 2.0
 DISTRACTED_FALLBACK_DISTANCE = 1.0
@@ -44,7 +44,6 @@ HR_REPULSION_GAIN_NEAR_DISTANCE = 0.8
 HR_REPULSION_GAIN_MID_MULTIPLIER = 4.0
 HR_REPULSION_GAIN_NEAR_MULTIPLIER = 10.0
 NORM_EPS = 1e-3
-HUMAN_WALL_FOOTPRINT_RADIUS = 0.25
 MIN_SPEED_EPS = 1e-3
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
@@ -60,6 +59,7 @@ DISTRACTED_BEHAVIOR_CONVERSATION = "conversation"
 DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING = "stop_and_go_following"
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
+DEFAULT_FOLLOW_RADIUS = FOLLOW_RADIUS_DEFAULT
 
 
 class HumanMode:
@@ -486,36 +486,12 @@ class Human:
         return np.asarray(best_v_xy, dtype=np.float32)
 
     def _raycast_hit_distance(self, direction_xy):
-        direction_xy = np.asarray(direction_xy, dtype=np.float32)
-        desired_speed = np.linalg.norm(direction_xy)
-        if desired_speed <= MIN_SPEED_EPS:
-            return None
-        if (
-            self._runtime_model is None
-            or self._runtime_data is None
-            or self.body_id is None
-            or not hasattr(self._runtime_data, "xpos")
-        ):
-            return None
-
-        ray_direction = np.zeros(3, dtype=np.float64)
-        ray_direction[:2] = direction_xy / desired_speed
-        ray_origin = np.array(self._runtime_data.xpos[self.body_id], dtype=np.float64)
-        geomid = np.array([-1], dtype=np.int32)
-        geomid[0] = -1
-        hit_distance = float(
-            mujoco.mj_ray(
-                self._runtime_model,
-                self._runtime_data,
-                ray_origin,
-                ray_direction,
-                None,
-                1,
-                int(self.body_id),
-                geomid,
-            )
+        return raycast_hit_distance(
+            self._runtime_model,
+            self._runtime_data,
+            self.body_id,
+            direction_xy,
         )
-        return hit_distance if hit_distance >= 0.0 else None
 
     def is_within_listening_front_sector(self, point_xy, robot_xy, robot_yaw: float, sector_half_angle: float) -> bool:
         point_xy = np.asarray(point_xy, dtype=np.float32)
@@ -622,7 +598,7 @@ class Human:
         return self.map_layout.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
 
     def _wrap_to_pi(self, ang):
-        return (ang + np.pi) % (2 * np.pi) - np.pi
+        return wrap_to_pi(ang)
 
 
 # Imported after Human is defined so the behavior module can reuse Human
