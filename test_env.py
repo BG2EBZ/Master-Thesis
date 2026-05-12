@@ -192,7 +192,7 @@ def _run_loop(
         _, _, terminated, truncated, info = env.step(None)
         periodic_print = bool(print_every) and ((step + 1) % print_every == 0)
         if periodic_print and print_human_robot_distance_periodically:
-            _print_human_robot_distance(step + 1, info)
+            # _print_human_robot_distance(step + 1, info)
             _print_following_crowd_regulation_status(step + 1, info)
         if periodic_print:
             # print(_summarize_info(step, info))

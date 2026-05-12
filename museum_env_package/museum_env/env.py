@@ -14,6 +14,10 @@ from .env_constants import (
     ACTION_LOW,
     CALLBACK_IGNORE_PROB_ND_DEFAULT,
     CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
+    CALLBACK_OVERWHELMED_IGNORE_PROB_ND_DEFAULT,
+    CALLBACK_OVERWHELMED_IGNORE_PROB_NORMAL_DEFAULT,
+    CALLBACK_OVERWHELMED_REJOIN_PROB_ND_DEFAULT,
+    CALLBACK_OVERWHELMED_REJOIN_PROB_NORMAL_DEFAULT,
     CALLBACK_REJOIN_PROB_ND_DEFAULT,
     CALLBACK_REJOIN_PROB_NORMAL_DEFAULT,
     CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
@@ -96,6 +100,10 @@ class MuseumEnv(gym.Env):
         callback_ignore_prob_normal: float = CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
         callback_rejoin_prob_nd: float = CALLBACK_REJOIN_PROB_ND_DEFAULT,
         callback_ignore_prob_nd: float = CALLBACK_IGNORE_PROB_ND_DEFAULT,
+        callback_overwhelmed_rejoin_prob_normal: float = CALLBACK_OVERWHELMED_REJOIN_PROB_NORMAL_DEFAULT,
+        callback_overwhelmed_ignore_prob_normal: float = CALLBACK_OVERWHELMED_IGNORE_PROB_NORMAL_DEFAULT,
+        callback_overwhelmed_rejoin_prob_nd: float = CALLBACK_OVERWHELMED_REJOIN_PROB_ND_DEFAULT,
+        callback_overwhelmed_ignore_prob_nd: float = CALLBACK_OVERWHELMED_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
         observation_update_period_seconds: float = 0.1,
         listen_question_probability: float = LISTEN_QUESTION_PROBABILITY_DEFAULT,
@@ -187,6 +195,19 @@ class MuseumEnv(gym.Env):
             HumanProfile.NEURODIVERGENT: {
                 "rejoin": float(callback_rejoin_prob_nd),
                 "ignore": float(callback_ignore_prob_nd),
+            },
+        }
+        self.callback_response_profile_probs_by_mode = {
+            HumanMode.DISTRACTED: self.callback_response_profile_probs,
+            HumanMode.OVERWHELMED: {
+                HumanProfile.NORMAL: {
+                    "rejoin": float(callback_overwhelmed_rejoin_prob_normal),
+                    "ignore": float(callback_overwhelmed_ignore_prob_normal),
+                },
+                HumanProfile.NEURODIVERGENT: {
+                    "rejoin": float(callback_overwhelmed_rejoin_prob_nd),
+                    "ignore": float(callback_overwhelmed_ignore_prob_nd),
+                },
             },
         }
         from .fuzzy import FollowingFuzzyEngine

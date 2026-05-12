@@ -3027,6 +3027,22 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 env.callback_response_profile_probs[HumanProfile.NEURODIVERGENT]["ignore"],
                 0.50,
             )
+            self.assertEqual(
+                env.callback_response_profile_probs_by_mode[HumanMode.OVERWHELMED][HumanProfile.NORMAL]["rejoin"],
+                0.30,
+            )
+            self.assertEqual(
+                env.callback_response_profile_probs_by_mode[HumanMode.OVERWHELMED][HumanProfile.NORMAL]["ignore"],
+                0.70,
+            )
+            self.assertEqual(
+                env.callback_response_profile_probs_by_mode[HumanMode.OVERWHELMED][HumanProfile.NEURODIVERGENT]["rejoin"],
+                0.10,
+            )
+            self.assertEqual(
+                env.callback_response_profile_probs_by_mode[HumanMode.OVERWHELMED][HumanProfile.NEURODIVERGENT]["ignore"],
+                0.90,
+            )
         finally:
             env.close()
 
@@ -3153,6 +3169,103 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertFalse(events.callback_success)
             self.assertFalse(events.callback_ignored)
             self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
+    def test_callback_completion_rejoins_overwhelmed_normal_human_in_follow_stage(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_overwhelmed_rejoin_prob_normal=1.0,
+            callback_overwhelmed_ignore_prob_normal=0.0,
+        )
+        try:
+            env.reset(seed=141)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.OVERWHELMED)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertTrue(completed_info["events"]["callback_success"])
+            self.assertFalse(completed_info["events"]["callback_ignored"])
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
+    def test_callback_completion_can_be_ignored_by_overwhelmed_normal_human(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_overwhelmed_rejoin_prob_normal=0.0,
+            callback_overwhelmed_ignore_prob_normal=1.0,
+        )
+        try:
+            env.reset(seed=142)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.OVERWHELMED)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertFalse(completed_info["events"]["callback_success"])
+            self.assertTrue(completed_info["events"]["callback_ignored"])
+            self.assertEqual(human.mode, HumanMode.OVERWHELMED)
+        finally:
+            env.close()
+
+    def test_callback_response_rejoins_overwhelmed_human_to_listening_when_listening_stage_is_active(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_overwhelmed_rejoin_prob_normal=1.0,
+            callback_overwhelmed_ignore_prob_normal=0.0,
+        )
+        try:
+            env.reset(seed=143)
+            env.listening_state.enter_wait(False)
+            env.robot.callback_target_idx = 0
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.OVERWHELMED)
+            events = StepEvents()
+
+            env_control.apply_callback_response_if_needed(env, events)
+
+            self.assertTrue(events.callback_success)
+            self.assertFalse(events.callback_ignored)
+            self.assertEqual(human.mode, HumanMode.LISTENING)
         finally:
             env.close()
 
