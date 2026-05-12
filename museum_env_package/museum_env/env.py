@@ -468,7 +468,7 @@ class MuseumEnv(gym.Env):
         distracted_indices = [
             int(idx) for idx, mode in enumerate(human_modes) if mode == HumanMode.DISTRACTED
         ]
-        self.robot.update_emotion(human_modes)
+        self.robot.update_emotion()
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state()
 

@@ -10,6 +10,7 @@ from museum_env.env import MuseumEnv
 from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
     HUMAN_SPEAKING_HALO_RGBA_ON,
+    ROBOT_COLOR_NATURAL,
     ROBOT_COLOR_SAD,
     ROBOT_FOLLOWME_LABEL_GROUP,
     ROBOT_ANSWER_LABEL_GROUP,
@@ -843,7 +844,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_distracted_turns_robot_blue_without_other_response(self):
+    def test_distracted_does_not_turn_robot_blue_without_callback(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=15)
@@ -855,7 +856,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["robot"]["emotion"], "sad")
+            self.assertEqual(info["robot"]["emotion"], "natural")
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertFalse(info["events"]["callback_completed"])
             self.assertFalse(info["events"]["callback_success"])
@@ -863,7 +864,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertIsNone(info["robot"]["callback_phase"])
             np.testing.assert_allclose(
                 env.model.geom_rgba[env.robot_base_geom_id],
-                ROBOT_COLOR_SAD,
+                ROBOT_COLOR_NATURAL,
                 atol=1e-6,
             )
         finally:
@@ -884,9 +885,15 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             _, _, _, _, info = env.step(None)
 
             self.assertTrue(env.robot.callback_active)
+            self.assertEqual(info["robot"]["emotion"], "sad")
             self.assertEqual(env.robot.callback_phase, "cue")
             self.assertEqual(info["robot"]["mode"], "callback")
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
+            np.testing.assert_allclose(
+                env.model.geom_rgba[env.robot_base_geom_id],
+                ROBOT_COLOR_SAD,
+                atol=1e-6,
+            )
         finally:
             env.close()
 
@@ -2927,6 +2934,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertTrue(triggered_info["events"]["callback_triggered"])
             self.assertEqual(triggered_info["robot"]["mode"], "callback")
             self.assertTrue(env.robot.callback_active)
+            self.assertEqual(triggered_info["robot"]["emotion"], "sad")
 
             _, completed_info = self._run_until(
                 env,
@@ -2936,6 +2944,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertTrue(completed_info["events"]["callback_completed"])
             self.assertFalse(env.robot.callback_active)
             self.assertEqual(completed_info["robot"]["mode"], "move")
+            self.assertEqual(completed_info["robot"]["emotion"], "natural")
 
             _, _, _, _, waiting_again_info = env.step(None)
             self.assertFalse(waiting_again_info["events"]["callback_triggered"])

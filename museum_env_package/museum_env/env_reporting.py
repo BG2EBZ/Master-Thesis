@@ -47,7 +47,9 @@ def build_label_scene_option():
 
 
 def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotVisualState:
-    if robot.emotion == RobotEmotion.SAD:
+    if callback_visual_active:
+        base_rgba = ROBOT_COLOR_SAD
+    elif robot.emotion == RobotEmotion.SAD:
         base_rgba = ROBOT_COLOR_SAD
     elif robot.emotion == RobotEmotion.HAPPY:
         base_rgba = ROBOT_COLOR_HAPPY

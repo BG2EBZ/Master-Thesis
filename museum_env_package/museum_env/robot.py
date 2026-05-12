@@ -1,6 +1,5 @@
 import numpy as np
 
-from .human import HumanMode
 from .spatial_utils import wrap_to_pi
 
 # Robot-side finite-state controller used by MuseumEnv.
@@ -268,12 +267,11 @@ class Robot:
 
         return action
 
-    def update_emotion(self, human_modes):
-        """Update robot emotion from the current human crowd state."""
-        for mode in human_modes:
-            if mode in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
-                self.emotion = RobotEmotion.SAD
-                return self.emotion
+    def update_emotion(self):
+        """Update robot emotion from robot-local runtime state."""
+        if self.callback_active:
+            self.emotion = RobotEmotion.SAD
+            return self.emotion
         self.emotion = RobotEmotion.NATURAL
         return self.emotion
 

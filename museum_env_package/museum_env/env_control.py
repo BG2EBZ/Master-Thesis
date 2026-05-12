@@ -528,12 +528,6 @@ def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:
     candidate_indices: list[int] = []
     candidate_distances: list[float] = []
     for idx, diff_xy in enumerate(relative_xy):
-        if env.humans[idx].mode in (
-            HumanMode.DISTRACTED,
-            HumanMode.OVERWHELMED,
-            HumanMode.IMPATIENT,
-        ):
-            continue
         # Front-sector callbacks are intentionally stricter than the generic
         # "farthest human fell behind" rule: only people already ahead of the
         # robot's attention cone are considered here.
