@@ -116,31 +116,46 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=11)
             _, _, _, _, info = env.step(None)
-            self.assertEqual(sorted(info.keys()), ["events", "humans", "robot", "state"])
+            self.assertEqual(
+                sorted(info.keys()),
+                ["crowd", "episode", "events", "phase", "robot"],
+            )
             self.assertNotIn("metrics", info)
             self.assertNotIn("status", info)
             self.assertEqual(
-                sorted(info["state"].keys()),
+                sorted(info["episode"].keys()),
                 [
-                    "callback_phase",
-                    "follow_phase",
-                    "listen_phase",
-                    "robot_emotion",
-                    "robot_mode",
-                    "speaker_active",
-                    "step_count",
+                    "step",
                     "terminated_reason",
                 ],
             )
             self.assertEqual(
-                sorted(info["humans"].keys()),
+                sorted(info["phase"].keys()),
+                ["follow", "listen"],
+            )
+            self.assertEqual(
+                sorted(info["robot"].keys()),
                 [
+                    "action",
+                    "callback_phase",
+                    "dist_to_goal",
+                    "emotion",
+                    "goal_xy",
+                    "mode",
+                    "pose_xy",
+                    "speaker_active",
+                    "yaw",
+                ],
+            )
+            self.assertEqual(
+                sorted(info["crowd"].keys()),
+                [
+                    "distracted_indices",
                     "goal_xy",
                     "human_robot_distance",
-                    "mode",
-                    "perceived_distracted_indices",
+                    "modes",
                     "pose_xy",
-                    "profile",
+                    "profiles",
                     "reached_goal_indices",
                 ],
             )
@@ -153,12 +168,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.reset(seed=13)
             _, _, _, _, info = env.step(None)
 
-            human_xy = np.asarray(info["humans"]["pose_xy"], dtype=np.float32)
+            human_xy = np.asarray(info["crowd"]["pose_xy"], dtype=np.float32)
             robot_xy = np.asarray(info["robot"]["pose_xy"], dtype=np.float32)
             expected = np.linalg.norm(human_xy - robot_xy[None, :], axis=1)
 
             np.testing.assert_allclose(
-                info["humans"]["human_robot_distance"],
+                info["crowd"]["human_robot_distance"],
                 expected,
                 atol=1e-6,
             )
@@ -180,11 +195,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         try:
             env.reset(seed=12)
             _, info = self._run_until(env, lambda info: info["events"]["entered_listen"], 6000)
-            self.assertEqual(info["state"]["listen_phase"], "intro")
+            self.assertEqual(info["phase"]["listen"], "intro")
 
             _, info = self._run_until(env, lambda info: info["events"]["started_listen_wait"], 2500)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
-            self.assertTrue(info["state"]["speaker_active"])
+            self.assertEqual(info["phase"]["listen"], "wait")
+            self.assertTrue(info["robot"]["speaker_active"])
         finally:
             env.close()
 
@@ -291,7 +306,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             self.assertFalse(info["events"]["question_started"])
             self.assertTrue(info["events"]["completed_listen_wait"])
-            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertEqual(info["phase"]["listen"], "idle")
             self.assertTrue(env.post_explanation_state.active)
         finally:
             env.close()
@@ -321,13 +336,13 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             env.step(None)
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertTrue(info["events"]["question_started"])
 
             _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
             self.assertTrue(info["events"]["question_completed"])
             self.assertTrue(info["events"]["completed_listen_wait"])
-            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertEqual(info["phase"]["listen"], "idle")
             self.assertTrue(env.post_explanation_state.active)
         finally:
             env.close()
@@ -352,9 +367,9 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertTrue(info["events"]["question_started"])
-            self.assertFalse(info["state"]["speaker_active"])
+            self.assertFalse(info["robot"]["speaker_active"])
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
             active_idx = env.listening_state.question_human_idx
             self.assertIn(active_idx, (0, 1))
@@ -401,13 +416,13 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
                 200,
             )
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
             self.assertFalse(info["events"]["question_completed"])
             self.assertEqual(env.listening_state.paused_counter, paused_counter)
             self.assertEqual(env.listening_state.question_answer_steps_remaining, 1)
             self.assertFalse(env.humans[0].speaking_active)
-            self.assertTrue(info["state"]["speaker_active"])
+            self.assertTrue(info["robot"]["speaker_active"])
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP], 1)
 
             _, info = self._run_until(
@@ -415,18 +430,18 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_TURN_BACK,
                 200,
             )
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_BACK)
             self.assertFalse(info["events"]["question_completed"])
-            self.assertFalse(info["state"]["speaker_active"])
+            self.assertFalse(info["robot"]["speaker_active"])
 
             _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
+            self.assertEqual(info["phase"]["listen"], "wait")
             self.assertTrue(info["events"]["question_completed"])
             self.assertEqual(env.listening_state.counter, paused_counter)
             self.assertEqual(env.listening_state.question_answer_steps_remaining, 0)
             self.assertFalse(env.humans[0].speaking_active)
-            self.assertTrue(info["state"]["speaker_active"])
+            self.assertTrue(info["robot"]["speaker_active"])
             self.assertIsNone(env.listening_state.question_human_idx)
         finally:
             env.close()
@@ -445,7 +460,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env._prepare_listening_question_plan()
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
+            self.assertEqual(info["phase"]["listen"], "wait")
             self.assertFalse(info["events"]["question_started"])
             self.assertFalse(env.listening_state.session_has_question)
             self.assertIsNone(env.listening_state.question_timing_mode)
@@ -453,7 +468,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             env.listen_question_probability = 1.0
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
+            self.assertEqual(info["phase"]["listen"], "wait")
             self.assertFalse(info["events"]["question_started"])
             self.assertFalse(env.listening_state.session_has_question)
         finally:
@@ -506,7 +521,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_human_idx, 1)
             self.assertFalse(env.humans[0].speaking_active)
             self.assertTrue(env.humans[1].speaking_active)
@@ -534,7 +549,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.step(None)
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
             self.assertAlmostEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0, places=6)
             self.assertLessEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0 + 1e-6)
@@ -564,18 +579,18 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.step(None)
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_TO_HUMAN)
             self.assertEqual(env.listening_state.question_ask_steps_remaining, 1)
             self.assertTrue(env.humans[0].speaking_active)
-            self.assertFalse(info["state"]["speaker_active"])
+            self.assertFalse(info["robot"]["speaker_active"])
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
             self.assertEqual(env.listening_state.question_ask_steps_remaining, 0)
             self.assertFalse(env.humans[0].speaking_active)
-            self.assertTrue(info["state"]["speaker_active"])
+            self.assertTrue(info["robot"]["speaker_active"])
         finally:
             env.close()
 
@@ -649,7 +664,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.counter = (env.listen_wait_steps // 2) - 1
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertTrue(env.listening_state.paused_is_final)
 
             _, info = self._run_until(
@@ -657,7 +672,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
                 200,
             )
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
 
             _, info = self._run_until(
@@ -665,11 +680,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_TURN_BACK,
                 200,
             )
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_TURN_BACK)
 
             _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
+            self.assertEqual(info["phase"]["listen"], "wait")
             self.assertTrue(info["events"]["question_completed"])
             self.assertTrue(env.listening_state.is_final)
         finally:
@@ -694,7 +709,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.listening_state.counter = env.listen_wait_steps - 1
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertTrue(info["events"]["question_started"])
             self.assertFalse(info["events"]["completed_listen_wait"])
             self.assertEqual(env.listening_state.question_human_idx, 0)
@@ -704,16 +719,16 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda _info: env.listening_state.question_phase == LISTEN_QUESTION_PHASE_ANSWER,
                 200,
             )
-            self.assertEqual(info["state"]["listen_phase"], "paused")
+            self.assertEqual(info["phase"]["listen"], "paused")
             self.assertEqual(env.listening_state.question_phase, LISTEN_QUESTION_PHASE_ANSWER)
-            self.assertTrue(info["state"]["speaker_active"])
+            self.assertTrue(info["robot"]["speaker_active"])
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP], 1)
             self.assertFalse(env.humans[0].speaking_active)
 
             _, info = self._run_until(env, lambda _info: _info["events"]["question_completed"], 200)
             self.assertTrue(info["events"]["question_completed"])
             self.assertTrue(info["events"]["completed_listen_wait"])
-            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertEqual(info["phase"]["listen"], "idle")
             self.assertTrue(env.post_explanation_state.active)
             self.assertFalse(env.humans[0].speaking_active)
         finally:
@@ -769,7 +784,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.humans[0].impatient_duration = 100
 
             _, _, _, _, info = env.step(None)
-            self.assertEqual(info["state"]["listen_phase"], "wait")
+            self.assertEqual(info["phase"]["listen"], "wait")
             self.assertFalse(info["events"]["question_started"])
             self.assertTrue(env.listening_state.question_fired)
             self.assertIsNone(env.listening_state.question_human_idx)
@@ -789,14 +804,14 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 lambda info: info["events"]["completed_listen_wait"],
                 22000,
             )
-            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertEqual(info["phase"]["listen"], "idle")
 
             _, info = self._run_until(
                 env,
-                lambda info: info["state"]["follow_phase"] == "transit_follow",
+                lambda info: info["phase"]["follow"] == "transit_follow",
                 8000,
             )
-            self.assertEqual(info["state"]["listen_phase"], "idle")
+            self.assertEqual(info["phase"]["listen"], "idle")
         finally:
             env.close()
 
@@ -817,7 +832,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertTrue(env.robot.listen_mode)
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertFalse(env.robot.callback_active)
-            self.assertIsNone(info["state"]["callback_phase"])
+            self.assertIsNone(info["robot"]["callback_phase"])
         finally:
             env.close()
 
@@ -833,12 +848,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["robot_emotion"], "sad")
+            self.assertEqual(info["robot"]["emotion"], "sad")
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertFalse(info["events"]["callback_completed"])
             self.assertFalse(info["events"]["callback_success"])
             self.assertFalse(env.robot.callback_active)
-            self.assertIsNone(info["state"]["callback_phase"])
+            self.assertIsNone(info["robot"]["callback_phase"])
             np.testing.assert_allclose(
                 env.model.geom_rgba[env.robot_base_geom_id],
                 ROBOT_COLOR_SAD,
@@ -863,7 +878,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             self.assertTrue(env.robot.callback_active)
             self.assertEqual(env.robot.callback_phase, "cue")
-            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(info["robot"]["mode"], "callback")
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
         finally:
             env.close()
@@ -2231,7 +2246,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 places=6,
             )
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2254,7 +2269,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], 0.0, places=6)
-            self.assertEqual(info["state"]["robot_mode"], "stop")
+            self.assertEqual(info["robot"]["mode"], "stop")
         finally:
             env.close()
 
@@ -2278,7 +2293,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2302,7 +2317,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2378,7 +2393,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
             self.assertFalse(info["events"]["callback_triggered"])
         finally:
             env.close()
@@ -2401,7 +2416,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(waiting_info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(waiting_info["robot"]["action"]["vy"], 0.0, places=6)
             self.assertAlmostEqual(waiting_info["robot"]["action"]["yaw_rate"], 0.0, places=6)
-            self.assertEqual(waiting_info["state"]["robot_mode"], "stop")
+            self.assertEqual(waiting_info["robot"]["mode"], "stop")
 
             self._set_robot_and_human_poses(
                 env,
@@ -2427,7 +2442,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 float(slowed_baseline_action[2]),
                 places=6,
             )
-            self.assertEqual(recovered_info["state"]["robot_mode"], "move")
+            self.assertEqual(recovered_info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2451,7 +2466,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2581,7 +2596,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2607,7 +2622,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], -0.5, places=6)
             self.assertAlmostEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0, places=6)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
         finally:
             env.close()
 
@@ -2630,7 +2645,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(info["robot"]["mode"], "callback")
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
         finally:
@@ -2653,7 +2668,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             with patch.object(env, "_raycast_robot_hit_distance", return_value=1.0):
                 _, _, _, _, info = env.step(None)
 
-            self.assertEqual(info["state"]["robot_mode"], "stop")
+            self.assertEqual(info["robot"]["mode"], "stop")
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
         finally:
@@ -2679,7 +2694,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertIsNone(env._following_callback_override_target_idx)
             self.assertFalse(env.robot.callback_active)
-            self.assertEqual(info["state"]["robot_mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "move")
             self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
         finally:
@@ -2704,7 +2719,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertFalse(env.robot.callback_active)
-            self.assertIsNone(info["state"]["callback_phase"])
+            self.assertIsNone(info["robot"]["callback_phase"])
             self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
@@ -2729,7 +2744,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             _, _, _, _, info = env.step(None)
 
             self.assertTrue(info["events"]["callback_triggered"])
-            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(info["robot"]["mode"], "callback")
             self.assertEqual(env.robot.callback_target_idx, 0)
         finally:
             env.close()
@@ -2752,7 +2767,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             _, _, _, _, info = env.step(None)
 
             self.assertTrue(info["events"]["callback_triggered"])
-            self.assertEqual(info["state"]["robot_mode"], "callback")
+            self.assertEqual(info["robot"]["mode"], "callback")
             self.assertEqual(env.robot.callback_target_idx, 1)
         finally:
             env.close()
@@ -2775,8 +2790,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             _, _, _, _, info = env.step(None)
 
             self.assertTrue(info["events"]["callback_triggered"])
-            self.assertEqual(info["state"]["robot_mode"], "callback")
-            self.assertEqual(info["state"]["callback_phase"], "cue")
+            self.assertEqual(info["robot"]["mode"], "callback")
+            self.assertEqual(info["robot"]["callback_phase"], "cue")
             self.assertEqual(env.robot.callback_target_idx, 1)
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
         finally:
@@ -2799,7 +2814,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, first_trigger_info = env.step(None)
             self.assertTrue(first_trigger_info["events"]["callback_triggered"])
-            self.assertEqual(first_trigger_info["state"]["robot_mode"], "callback")
+            self.assertEqual(first_trigger_info["robot"]["mode"], "callback")
 
             _, _, _, _, completed_info = env.step(None)
             self.assertTrue(completed_info["events"]["callback_completed"])
@@ -2807,7 +2822,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, blocked_info = env.step(None)
             self.assertFalse(blocked_info["events"]["callback_triggered"])
-            self.assertEqual(blocked_info["state"]["robot_mode"], "move")
+            self.assertEqual(blocked_info["robot"]["mode"], "move")
 
             self._set_robot_and_human_poses(
                 env,
@@ -2818,7 +2833,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, cleared_info = env.step(None)
             self.assertFalse(cleared_info["events"]["callback_triggered"])
-            self.assertEqual(cleared_info["state"]["robot_mode"], "move")
+            self.assertEqual(cleared_info["robot"]["mode"], "move")
 
             self._set_robot_and_human_poses(
                 env,
@@ -2829,7 +2844,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, second_trigger_info = env.step(None)
             self.assertTrue(second_trigger_info["events"]["callback_triggered"])
-            self.assertEqual(second_trigger_info["state"]["robot_mode"], "callback")
+            self.assertEqual(second_trigger_info["robot"]["mode"], "callback")
         finally:
             env.close()
 
@@ -2849,18 +2864,18 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._invalidate_observation_cache(env)
 
             _, _, _, _, first_info = env.step(None)
-            self.assertEqual(first_info["state"]["robot_mode"], "stop")
+            self.assertEqual(first_info["robot"]["mode"], "stop")
             self.assertFalse(first_info["events"]["callback_triggered"])
 
             _, _, _, _, second_info = env.step(None)
-            self.assertEqual(second_info["state"]["robot_mode"], "stop")
+            self.assertEqual(second_info["robot"]["mode"], "stop")
             self.assertFalse(second_info["events"]["callback_triggered"])
 
             _, _, _, _, third_info = env.step(None)
             self.assertTrue(third_info["events"]["callback_triggered"])
-            self.assertEqual(third_info["state"]["robot_mode"], "callback")
+            self.assertEqual(third_info["robot"]["mode"], "callback")
             self.assertEqual(env.robot.callback_target_idx, 1)
-            self.assertEqual(third_info["state"]["callback_phase"], "turn")
+            self.assertEqual(third_info["robot"]["callback_phase"], "turn")
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP], 1)
         finally:
             env.close()
@@ -2882,7 +2897,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, triggered_info = env.step(None)
             self.assertTrue(triggered_info["events"]["callback_triggered"])
-            self.assertEqual(triggered_info["state"]["robot_mode"], "callback")
+            self.assertEqual(triggered_info["robot"]["mode"], "callback")
             self.assertTrue(env.robot.callback_active)
 
             _, completed_info = self._run_until(
@@ -2892,7 +2907,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self.assertTrue(completed_info["events"]["callback_completed"])
             self.assertFalse(env.robot.callback_active)
-            self.assertEqual(completed_info["state"]["robot_mode"], "move")
+            self.assertEqual(completed_info["robot"]["mode"], "move")
 
             _, _, _, _, waiting_again_info = env.step(None)
             self.assertFalse(waiting_again_info["events"]["callback_triggered"])
@@ -2938,7 +2953,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, recovered_info = env.step(None)
             self.assertFalse(recovered_info["events"]["callback_triggered"])
-            self.assertEqual(recovered_info["state"]["robot_mode"], "move")
+            self.assertEqual(recovered_info["robot"]["mode"], "move")
 
             self._set_robot_and_human_poses(
                 env,
@@ -2949,7 +2964,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, second_trigger_info = env.step(None)
             self.assertTrue(second_trigger_info["events"]["callback_triggered"])
-            self.assertEqual(second_trigger_info["state"]["robot_mode"], "callback")
+            self.assertEqual(second_trigger_info["robot"]["mode"], "callback")
         finally:
             env.close()
 
@@ -3106,7 +3121,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 30000,
             )
 
-            self.assertEqual(info["state"]["terminated_reason"], "final_listen_ready")
+            self.assertEqual(info["episode"]["terminated_reason"], "final_listen_ready")
         finally:
             env.close()
 

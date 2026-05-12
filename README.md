@@ -2,12 +2,13 @@
 
 ## Step info schema
 
-`MuseumEnv.step()` now returns a compact `info` structure with four top-level keys:
+`MuseumEnv.step()` now returns a compact `info` structure with five top-level keys:
 
 - `info["events"]`
-- `info["state"]`
+- `info["episode"]`
+- `info["phase"]`
 - `info["robot"]`
-- `info["humans"]`
+- `info["crowd"]`
 
 `info["events"]` contains the high-level episode markers:
 
@@ -21,16 +22,15 @@
 - `happy_triggered`
 - `happy_completed`
 
-`info["state"]` contains the current orchestration state:
+`info["episode"]` contains episode-level metadata:
 
-- `step_count`
-- `follow_phase`
-- `listen_phase`
-- `robot_mode`
-- `callback_phase`
-- `robot_emotion`
-- `speaker_active`
+- `step`
 - `terminated_reason`
+
+`info["phase"]` contains the current orchestration phase:
+
+- `follow`
+- `listen`
 
 `info["robot"]` contains pose and control summary:
 
@@ -38,16 +38,21 @@
 - `goal_xy`
 - `dist_to_goal`
 - `yaw`
+- `mode`
+- `callback_phase`
+- `emotion`
+- `speaker_active`
 - `action`
 
-`info["humans"]` contains the compact crowd snapshot:
+`info["crowd"]` contains the compact crowd snapshot:
 
 - `pose_xy`
 - `goal_xy`
-- `mode`
-- `profile`
+- `modes`
+- `profiles`
+- `human_robot_distance`
 - `reached_goal_indices`
-- `perceived_distracted_indices`
+- `distracted_indices`
 
 The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback internals are no longer returned by default.
 
@@ -56,9 +61,9 @@ Example:
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
-print(info["state"]["listen_phase"])
+print(info["phase"]["listen"])
 print(info["robot"]["dist_to_goal"])
-print(info["humans"]["mode"])
+print(info["crowd"]["modes"])
 
 if info["events"]["final_listen_ready"]:
     print("Episode completed")

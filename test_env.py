@@ -58,18 +58,15 @@ def _build_video_folder(video_root, use_timestamp_subfolder, name_prefix):
 
 
 def _summarize_info(step, info):
-    state = info["state"]
+    phase = info["phase"]
     robot = info["robot"]
-    humans = info["humans"]
-    perceived = humans["perceived_distracted_indices"]
-    perceived_str = ",".join(str(idx + 1) for idx in perceived) if perceived else "none"
     return (
         f"[step {step}] "
-        f"robot_mode={state['robot_mode']} "
-        f"follow_phase={state['follow_phase']} "
-        f"listen_phase={state['listen_phase']} "
+        f"robot_mode={robot['mode']} "
+        f"follow_phase={phase['follow']} "
+        f"listen_phase={phase['listen']} "
         f"dist_to_goal={robot['dist_to_goal']:.2f} "
-        f"speaker={state['speaker_active']} "
+        f"speaker={robot['speaker_active']} "
     )
 
 
@@ -98,7 +95,7 @@ def _report_step(step, terminated, truncated, info, base_env=None, wall_start=No
 
     if info["events"]["question_completed"]:
         print(
-            f"[step {step}] question completed: listen_phase={info['state']['listen_phase']}{suffix}"
+            f"[step {step}] question completed: listen_phase={info['phase']['listen']}{suffix}"
         )
 
     if info["events"]["final_listen_ready"]:
@@ -116,22 +113,22 @@ def _report_step(step, terminated, truncated, info, base_env=None, wall_start=No
 
 
 def _print_human_robot_distance(step, info):
-    distances = info["humans"]["human_robot_distance"]
+    distances = info["crowd"]["human_robot_distance"]
     if len(distances) == 0:
         print(f"[step {step}] hr_distance none")
         return
 
-    listen_phase = info["state"]["listen_phase"]
+    listen_phase = info["phase"]["listen"]
     listen_phase_prefix = f"listen_phase={listen_phase} " if listen_phase != "idle" else ""
     parts = [f"person{idx + 1}={float(distance):.2f}" for idx, distance in enumerate(distances)]
     print(f"[step {step}] hr_distance {listen_phase_prefix}{' '.join(parts)}")
 
 
 def _print_following_crowd_regulation_status(step, info):
-    distances = np.asarray(info["humans"]["human_robot_distance"], dtype=np.float32)
+    distances = np.asarray(info["crowd"]["human_robot_distance"], dtype=np.float32)
     max_hr_distance = float(np.max(distances)) if distances.size != 0 else 0.0
     print(
-        f"[step {step}] robot_mode={info['state']['robot_mode']} "
+        f"[step {step}] robot_mode={info['robot']['mode']} "
         f"max_hr_distance={max_hr_distance:.2f}"
     )
 

@@ -50,7 +50,7 @@ RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 WALL_REPULSION_DISTANCE_METERS = 0.45
 WALL_REPULSION_GAIN = 2.0
-WALL_DETOUR_ANGLES_DEG = (90.0, -90.0, 120.0, -120.0)
+WALL_DETOUR_ANGLES_DEG = (60.0, -60.0, 90.0, -90.0, 120.0, -120.0)
 WALL_DETOUR_ROTATIONS = tuple(
     (float(np.cos(np.deg2rad(angle_deg))), float(np.sin(np.deg2rad(angle_deg))))
     for angle_deg in WALL_DETOUR_ANGLES_DEG
@@ -216,6 +216,29 @@ class Human:
         else:
             self.hr_distance_min = float(HR_DISTANCE_MIN)
             self.hr_distance_max = float(HR_DISTANCE_MAX_NORMAL_DEFAULT)
+
+    def apply_runtime_config(
+        self,
+        *,
+        dt: float,
+        max_distracted_duration_seconds: float,
+        impatient_duration_seconds: float,
+        impatient_speed_multiplier: float,
+        impatient_front_offset: float,
+    ) -> None:
+        dt = float(dt)
+        self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
+        self.distracted_duration = round(self.max_distracted_duration_seconds / dt)
+        self.distracted_stop_duration = round(self.distracted_stop_duration_seconds / dt)
+        self.nd_distracted_stop_and_go_stop_steps = round(
+            self.nd_distracted_stop_and_go_stop_seconds / dt
+        )
+        self.nd_distracted_stop_and_go_move_steps = round(
+            self.nd_distracted_stop_and_go_move_seconds / dt
+        )
+        self.impatient_duration = round(float(impatient_duration_seconds) / dt)
+        self.impatient_speed_multiplier = float(impatient_speed_multiplier)
+        self.impatient_front_offset = float(impatient_front_offset)
 
     def reset_following_duration(self):
         self.following_steps = 0

@@ -5,8 +5,6 @@ from typing import Optional
 
 import numpy as np
 
-from .human import HumanMode
-
 FOLLOW_PHASE_PRE_LISTEN_ENGAGE = "pre_listen_engage"
 FOLLOW_PHASE_TRANSIT = "transit_follow"
 
@@ -99,6 +97,16 @@ class ListeningState:
         self.wait_target_steps = 0
         self.distance_shorten_triggered_indices.clear()
 
+    def initialize_wait_runtime(self, default_wait_steps: int) -> int:
+        self.reset_wait_runtime()
+        self.wait_target_steps = max(1, int(default_wait_steps))
+        return self.wait_target_steps
+
+    def ensure_wait_target_steps(self, default_wait_steps: int) -> int:
+        if self.wait_target_steps <= 0:
+            self.wait_target_steps = max(1, int(default_wait_steps))
+        return int(self.wait_target_steps)
+
     def reset(self) -> None:
         self.phase = LISTEN_PHASE_IDLE
         self.counter = 0
@@ -185,23 +193,6 @@ class PostExplanationState:
         self.roles.clear()
         self.targets = _zero_targets()
         self.listen_radii = _zero_radii()
-
-
-@dataclass
-class CallbackState:
-    triggered_for_distracted: list[bool] = field(default_factory=list)
-    active_target_idx: Optional[int] = None
-    last_response: Optional[str] = None
-    last_response_target_idx: Optional[int] = None
-    success_mode: str = HumanMode.FOLLOWING
-
-    def reset(self, n_humans: int) -> None:
-        self.triggered_for_distracted = [False] * int(n_humans)
-        self.active_target_idx = None
-        self.last_response = None
-        self.last_response_target_idx = None
-        self.success_mode = HumanMode.FOLLOWING
-
 
 @dataclass
 class ObservationSnapshot:

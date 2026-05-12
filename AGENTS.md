@@ -31,21 +31,22 @@
 ## Runtime Contract
 
 - `MuseumEnv.step()` returns `obs, reward, terminated, truncated, info`.
-- `info` currently uses a compact four-key schema:
+- `info` currently uses a compact five-key schema:
   - `info["events"]`
-  - `info["state"]`
+  - `info["episode"]`
+  - `info["phase"]`
   - `info["robot"]`
-  - `info["humans"]`
+  - `info["crowd"]`
 - Most useful debug fields:
-  - `info["state"]["follow_phase"]`
-  - `info["state"]["listen_phase"]`
-  - `info["state"]["robot_mode"]`
-  - `info["state"]["callback_phase"]`
-  - `info["state"]["speaker_active"]`
-  - `info["humans"]["perceived_distracted_indices"]`
-  - `info["humans"]["human_robot_distance"]`
+  - `info["phase"]["follow"]`
+  - `info["phase"]["listen"]`
+  - `info["robot"]["mode"]`
+  - `info["robot"]["callback_phase"]`
+  - `info["robot"]["speaker_active"]`
+  - `info["crowd"]["distracted_indices"]`
+  - `info["crowd"]["human_robot_distance"]`
 - `info["robot"]` is a compact pose/goal/action summary, not a full internal dump.
-- `info["humans"]` is a compact crowd snapshot with positions, goals, modes, profiles, reached-goal indices, and perceived distracted indices.
+- `info["crowd"]` is a compact crowd snapshot with positions, goals, modes, profiles, reached-goal indices, distracted indices, and human-robot distances.
 - Preserve this compact contract unless the task explicitly requires an interface change. If you change it, update the dependent docs and tests in the same task.
 
 ## Runbook

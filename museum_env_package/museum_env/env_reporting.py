@@ -117,17 +117,13 @@ def build_step_info(
 ) -> dict:
     return {
         "events": events.as_dict(),
-        "state": {
-            "step_count": int(step_count),
-            "follow_phase": follow_phase,
-            "listen_phase": listen_phase,
-            "robot_mode": str(robot.mode),
-            "callback_phase": (
-                str(robot.callback_phase) if robot.callback_phase is not None else None
-            ),
-            "robot_emotion": str(robot.emotion),
-            "speaker_active": bool(robot.speaker_active),
+        "episode": {
+            "step": int(step_count),
             "terminated_reason": terminated_reason,
+        },
+        "phase": {
+            "follow": follow_phase,
+            "listen": listen_phase,
         },
         "robot": {
             "pose_xy": np.array(world_frame.robot_xy, dtype=np.float32),
@@ -139,22 +135,28 @@ def build_step_info(
                 )
             ),
             "yaw": float(world_frame.robot_pose[2]),
+            "mode": str(robot.mode),
+            "callback_phase": (
+                str(robot.callback_phase) if robot.callback_phase is not None else None
+            ),
+            "emotion": str(robot.emotion),
+            "speaker_active": bool(robot.speaker_active),
             "action": {
                 "vx": float(robot_action[0]),
                 "vy": float(robot_action[1]),
                 "yaw_rate": float(robot_action[2]),
             },
         },
-        "humans": {
+        "crowd": {
             "pose_xy": np.array(world_frame.human_xy, dtype=np.float32),
             "goal_xy": np.array(human_goals, dtype=np.float32),
             "human_robot_distance": np.array(
                 world_frame.observations.human_robot_distance,
                 dtype=np.float32,
             ),
-            "mode": [human.mode for human in humans],
-            "profile": [human.profile for human in humans],
+            "modes": [human.mode for human in humans],
+            "profiles": [human.profile for human in humans],
             "reached_goal_indices": [int(idx) for idx in reached_goal_indices],
-            "perceived_distracted_indices": [int(idx) for idx in perceived_distracted_indices],
+            "distracted_indices": [int(idx) for idx in perceived_distracted_indices],
         },
     }
