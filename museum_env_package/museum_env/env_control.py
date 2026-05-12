@@ -547,6 +547,33 @@ def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:
     return int(candidate_indices[nearest_idx])
 
 
+def apply_callback_response_if_needed(env, events) -> None:
+    """Resolve the targeted distracted human's response when a callback cue ends."""
+    target_idx = env.robot.callback_target_idx
+    if target_idx is None or not (0 <= int(target_idx) < len(env.humans)):
+        return
+
+    target_human = env.humans[int(target_idx)]
+    if target_human.mode != HumanMode.DISTRACTED:
+        return
+
+    profile_probs = env.callback_response_profile_probs.get(target_human.profile, {})
+    rejoin_weight = max(0.0, float(profile_probs.get("rejoin", 0.0)))
+    ignore_weight = max(0.0, float(profile_probs.get("ignore", 0.0)))
+    total_weight = rejoin_weight + ignore_weight
+    rejoin_prob = 0.0 if total_weight <= 0.0 else (rejoin_weight / total_weight)
+
+    if float(env.np_random.random()) < rejoin_prob:
+        restored_mode = HumanMode.LISTENING if env.listening_state.controller_active else HumanMode.FOLLOWING
+        target_human.set_mode(restored_mode)
+        events.callback_success = True
+        env._log_event(f">>> {target_human.name} responded to callback and rejoined ({restored_mode}).")
+        return
+
+    events.callback_ignored = True
+    env._log_event(f">>> {target_human.name} ignored callback and stayed distracted.")
+
+
 def start_following_callback(env, world_frame) -> bool:
     """Start a following callback cue toward the selected or fallback target human."""
     distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)

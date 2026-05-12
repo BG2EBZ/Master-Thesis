@@ -229,6 +229,7 @@ class StepEvents:
     callback_triggered: bool = False
     callback_completed: bool = False
     callback_success: bool = False
+    callback_ignored: bool = False
     happy_triggered: bool = False
     happy_completed: bool = False
 
@@ -243,6 +244,7 @@ class StepEvents:
             "callback_triggered": bool(self.callback_triggered),
             "callback_completed": bool(self.callback_completed),
             "callback_success": bool(self.callback_success),
+            "callback_ignored": bool(self.callback_ignored),
             "happy_triggered": bool(self.happy_triggered),
             "happy_completed": bool(self.happy_completed),
         }

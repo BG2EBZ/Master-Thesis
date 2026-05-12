@@ -22,6 +22,7 @@ from museum_env.env_state import (
     LISTEN_QUESTION_PHASE_TURN_TO_HUMAN,
     LISTEN_QUESTION_TIMING_MID_RANDOM,
     LISTEN_QUESTION_TIMING_POST_WAIT,
+    StepEvents,
 )
 from museum_env.human import (
     DEFAULT_SIM_TIMESTEP_SECONDS,
@@ -853,6 +854,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             human.set_mode(HumanMode.DISTRACTED)
             human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
             human.distracted_recovery_mode = HumanMode.FOLLOWING
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((-0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
 
             _, _, _, _, info = env.step(None)
 
@@ -860,6 +867,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertFalse(info["events"]["callback_completed"])
             self.assertFalse(info["events"]["callback_success"])
+            self.assertFalse(info["events"]["callback_ignored"])
             self.assertFalse(env.robot.callback_active)
             self.assertIsNone(info["robot"]["callback_phase"])
             np.testing.assert_allclose(
@@ -2942,6 +2950,8 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 200,
             )
             self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertFalse(completed_info["events"]["callback_success"])
+            self.assertFalse(completed_info["events"]["callback_ignored"])
             self.assertFalse(env.robot.callback_active)
             self.assertEqual(completed_info["robot"]["mode"], "move")
             self.assertEqual(completed_info["robot"]["emotion"], "natural")
@@ -3002,6 +3012,147 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             _, _, _, _, second_trigger_info = env.step(None)
             self.assertTrue(second_trigger_info["events"]["callback_triggered"])
             self.assertEqual(second_trigger_info["robot"]["mode"], "callback")
+        finally:
+            env.close()
+
+    def test_callback_response_defaults_use_updated_nd_split(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=136)
+            self.assertEqual(
+                env.callback_response_profile_probs[HumanProfile.NEURODIVERGENT]["rejoin"],
+                0.50,
+            )
+            self.assertEqual(
+                env.callback_response_profile_probs[HumanProfile.NEURODIVERGENT]["ignore"],
+                0.50,
+            )
+        finally:
+            env.close()
+
+    def test_callback_completion_rejoins_distracted_normal_human_in_follow_stage(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_rejoin_prob_normal=1.0,
+            callback_ignore_prob_normal=0.0,
+        )
+        try:
+            env.reset(seed=137)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.DISTRACTED)
+            human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+            human.distracted_recovery_mode = HumanMode.FOLLOWING
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+            self.assertEqual(env.robot.callback_target_idx, 0)
+
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertTrue(completed_info["events"]["callback_success"])
+            self.assertFalse(completed_info["events"]["callback_ignored"])
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        finally:
+            env.close()
+
+    def test_callback_completion_can_be_ignored_by_distracted_normal_human(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_rejoin_prob_normal=0.0,
+            callback_ignore_prob_normal=1.0,
+        )
+        try:
+            env.reset(seed=138)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.DISTRACTED)
+            human.distracted_source = DISTRACTED_SOURCE_FOLLOWING
+            human.distracted_recovery_mode = HumanMode.FOLLOWING
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((1.3680806, 3.7587705, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertFalse(completed_info["events"]["callback_success"])
+            self.assertTrue(completed_info["events"]["callback_ignored"])
+            self.assertEqual(human.mode, HumanMode.DISTRACTED)
+        finally:
+            env.close()
+
+    def test_callback_response_rejoins_to_listening_when_listening_stage_is_active(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_rejoin_prob_normal=1.0,
+            callback_ignore_prob_normal=0.0,
+        )
+        try:
+            env.reset(seed=139)
+            env.listening_state.enter_wait(False)
+            env.robot.callback_target_idx = 0
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.DISTRACTED)
+            human.distracted_source = DISTRACTED_SOURCE_LISTENING
+            human.distracted_recovery_mode = HumanMode.LISTENING
+            events = StepEvents()
+
+            env_control.apply_callback_response_if_needed(env, events)
+
+            self.assertTrue(events.callback_success)
+            self.assertFalse(events.callback_ignored)
+            self.assertEqual(human.mode, HumanMode.LISTENING)
+        finally:
+            env.close()
+
+    def test_callback_response_ignores_non_distracted_target_human(self):
+        env = self._make_env(
+            n_humans=1,
+            callback_rejoin_prob_normal=1.0,
+            callback_ignore_prob_normal=0.0,
+        )
+        try:
+            env.reset(seed=140)
+            env.robot.callback_target_idx = 0
+            human = env.humans[0]
+            human.set_profile(HumanProfile.NORMAL)
+            human.set_mode(HumanMode.FOLLOWING)
+            events = StepEvents()
+
+            env_control.apply_callback_response_if_needed(env, events)
+
+            self.assertFalse(events.callback_success)
+            self.assertFalse(events.callback_ignored)
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
         finally:
             env.close()
 
