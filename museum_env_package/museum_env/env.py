@@ -12,6 +12,10 @@ from . import env_control, env_flow
 from .env_constants import (
     ACTION_HIGH,
     ACTION_LOW,
+    CALLBACK_IMPATIENT_IGNORE_PROB_ND_DEFAULT,
+    CALLBACK_IMPATIENT_IGNORE_PROB_NORMAL_DEFAULT,
+    CALLBACK_IMPATIENT_REJOIN_PROB_ND_DEFAULT,
+    CALLBACK_IMPATIENT_REJOIN_PROB_NORMAL_DEFAULT,
     CALLBACK_IGNORE_PROB_ND_DEFAULT,
     CALLBACK_IGNORE_PROB_NORMAL_DEFAULT,
     CALLBACK_OVERWHELMED_IGNORE_PROB_ND_DEFAULT,
@@ -105,6 +109,10 @@ class MuseumEnv(gym.Env):
         callback_overwhelmed_ignore_prob_normal: float = CALLBACK_OVERWHELMED_IGNORE_PROB_NORMAL_DEFAULT,
         callback_overwhelmed_rejoin_prob_nd: float = CALLBACK_OVERWHELMED_REJOIN_PROB_ND_DEFAULT,
         callback_overwhelmed_ignore_prob_nd: float = CALLBACK_OVERWHELMED_IGNORE_PROB_ND_DEFAULT,
+        callback_impatient_rejoin_prob_normal: float = CALLBACK_IMPATIENT_REJOIN_PROB_NORMAL_DEFAULT,
+        callback_impatient_ignore_prob_normal: float = CALLBACK_IMPATIENT_IGNORE_PROB_NORMAL_DEFAULT,
+        callback_impatient_rejoin_prob_nd: float = CALLBACK_IMPATIENT_REJOIN_PROB_ND_DEFAULT,
+        callback_impatient_ignore_prob_nd: float = CALLBACK_IMPATIENT_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
         observation_update_period_seconds: float = 0.1,
         listen_question_probability: float = LISTEN_QUESTION_PROBABILITY_DEFAULT,
@@ -209,6 +217,16 @@ class MuseumEnv(gym.Env):
                 HumanProfile.NEURODIVERGENT: {
                     "rejoin": float(callback_overwhelmed_rejoin_prob_nd),
                     "ignore": float(callback_overwhelmed_ignore_prob_nd),
+                },
+            },
+            HumanMode.IMPATIENT: {
+                HumanProfile.NORMAL: {
+                    "rejoin": float(callback_impatient_rejoin_prob_normal),
+                    "ignore": float(callback_impatient_ignore_prob_normal),
+                },
+                HumanProfile.NEURODIVERGENT: {
+                    "rejoin": float(callback_impatient_rejoin_prob_nd),
+                    "ignore": float(callback_impatient_ignore_prob_nd),
                 },
             },
         }

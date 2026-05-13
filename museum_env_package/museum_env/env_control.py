@@ -614,14 +614,14 @@ def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:
 
 
 def apply_callback_response_if_needed(env, events) -> None:
-    """Resolve the targeted distracted or overwhelmed human's response when a callback cue ends."""
+    """Resolve the targeted stress-state human's response when a callback cue ends."""
     target_idx = env.robot.callback_target_idx
     if target_idx is None or not (0 <= int(target_idx) < len(env.humans)):
         return
 
     target_human = env.humans[int(target_idx)]
     target_mode = str(target_human.mode)
-    if target_mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED):
+    if target_mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
         return
 
     mode_probs = env.callback_response_profile_probs_by_mode.get(target_mode, {})
