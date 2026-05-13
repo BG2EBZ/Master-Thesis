@@ -67,6 +67,7 @@ from .env_reporting import (
 from .env_runtime import build_human_goals, build_world_frame, compute_reached_goal_indices
 from .env_state import (
     ListeningState,
+    PersonalSpaceBackoffState,
     PostExplanationState,
     RuntimeCache,
     StepEvents,
@@ -183,6 +184,7 @@ class MuseumEnv(gym.Env):
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
+        self.personal_space_backoff_state = PersonalSpaceBackoffState()
         self.runtime_cache = RuntimeCache()
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
@@ -417,6 +419,7 @@ class MuseumEnv(gym.Env):
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
         env_control.reset_following_wait_episode(self)
+        self.personal_space_backoff_state.reset()
 
         for human in self.humans:
             human.reset_episode_state()
@@ -442,20 +445,18 @@ class MuseumEnv(gym.Env):
         events = StepEvents()
 
         pre_frame = self._build_world_frame()
-        robot_action, callback_mode_this_step = env_flow.compute_robot_action(self, pre_frame, events)
+        robot_action, _ = env_flow.compute_robot_action(self, pre_frame, events)
         env_flow.maybe_finish_post_explanation_hold(
             self,
             pre_frame.robot_xy,
             float(np.hypot(robot_action[0], robot_action[1])),
         )
         env_flow.maybe_activate_follow_phase_from_robot_progress(self, pre_frame.robot_xy)
-
-        if not callback_mode_this_step:
-            robot_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                self,
-                robot_action,
-                pre_frame,
-            )
+        robot_action = env_control.apply_robot_personal_space_backoff_if_needed(
+            self,
+            robot_action,
+            pre_frame,
+        )
 
         self.data.ctrl[:] = 0.0
         self.data.ctrl[0:3] = robot_action
