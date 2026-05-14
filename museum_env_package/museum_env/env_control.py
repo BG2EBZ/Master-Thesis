@@ -15,9 +15,10 @@ from .env_constants import (
     LISTENING_REPULSION_SCALE,
     ROBOT_FOOTPRINT_RADIUS_METERS,
     ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS,
+    ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS,
     ROBOT_PERSONAL_SPACE_MARGIN_METERS,
     ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS,
-    ROBOT_PERSONAL_SPACE_RETREAT_DISTANCE_METERS,
+    ROBOT_PERSONAL_SPACE_RELEASE_METERS,
     ROBOT_PERSONAL_SPACE_TRIGGER_METERS,
 )
 from .env_runtime import resolve_fuzzy_metric_input
@@ -530,27 +531,44 @@ def apply_robot_personal_space_backoff_if_needed(env, robot_action, world_frame)
         return adjusted_action
 
     session_state = env.personal_space_backoff_state
+    session_ended = False
     if session_state.active:
-        if session_state.target_idx is None or session_state.direction_label is None:
+        target_idx = session_state.target_idx
+        valid_target = target_idx is not None and 0 <= int(target_idx) < len(world_frame.human_xy)
+        if (not valid_target) or session_state.direction_label is None:
             _end_robot_personal_space_backoff_session(env)
+            session_ended = True
         else:
-            retreat_progress = session_state.projected_retreat_progress(world_frame.robot_xy)
-            if retreat_progress + 1e-6 >= float(ROBOT_PERSONAL_SPACE_RETREAT_DISTANCE_METERS):
+            tracked_target_distance = float(world_frame.observations.human_robot_distance[int(target_idx)])
+            if tracked_target_distance > float(ROBOT_PERSONAL_SPACE_RELEASE_METERS):
                 _end_robot_personal_space_backoff_session(env)
+                session_ended = True
             else:
                 direction_safe, _, _, _ = is_robot_backoff_direction_safe(
                     env,
                     world_frame,
-                    target_idx=int(session_state.target_idx),
+                    target_idx=int(target_idx),
                     direction_xy=np.asarray(session_state.direction_xy, dtype=np.float32),
                 )
-                if direction_safe:
-                    return _apply_robot_personal_space_backoff_motion(
-                        env,
-                        adjusted_action,
-                        np.asarray(session_state.direction_xy, dtype=np.float32),
-                    )
-                _end_robot_personal_space_backoff_session(env)
+                if not direction_safe:
+                    _end_robot_personal_space_backoff_session(env)
+                    session_ended = True
+                else:
+                    retreat_progress = session_state.projected_retreat_progress(world_frame.robot_xy)
+                    if retreat_progress + 1e-6 >= float(
+                        ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS
+                    ):
+                        _end_robot_personal_space_backoff_session(env)
+                        session_ended = True
+                    else:
+                        return _apply_robot_personal_space_backoff_motion(
+                            env,
+                            adjusted_action,
+                            np.asarray(session_state.direction_xy, dtype=np.float32),
+                        )
+
+    if session_ended:
+        return adjusted_action
 
     target_idx = get_nearest_close_human_idx(world_frame)
     if target_idx is None:

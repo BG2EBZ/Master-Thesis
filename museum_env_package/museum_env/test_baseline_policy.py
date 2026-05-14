@@ -2734,7 +2734,9 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_personal_space_backoff_session_keeps_direction_until_retreat_distance_reached(self):
+    def test_personal_space_backoff_session_keeps_direction_until_target_reaches_release_distance(
+        self,
+    ):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=1461)
@@ -2784,6 +2786,19 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     end_frame,
                 )
 
+                self._set_robot_and_human_poses(
+                    env,
+                    robot_pose=(5.35, 5.0, 0.0),
+                    human_poses=((4.6, 5.0, 0.0),),
+                )
+                self._invalidate_observation_cache(env)
+                release_frame = env._build_world_frame(force=True)
+                fourth_action = env_control.apply_robot_personal_space_backoff_if_needed(
+                    env,
+                    np.zeros(3, dtype=np.float32),
+                    release_frame,
+                )
+
             self.assertEqual(log_mock.call_count, 2)
             self.assertIn("Robot personal-space backoff near person1", log_mock.call_args_list[0].args[0])
             self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
@@ -2794,22 +2809,60 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertAlmostEqual(first_action[1], 0.0, places=6)
             self.assertGreater(second_action[0], 0.0)
             self.assertAlmostEqual(second_action[1], 0.0, places=6)
-            self.assertAlmostEqual(third_action[0], 0.0, places=6)
+            self.assertGreater(third_action[0], 0.0)
             self.assertAlmostEqual(third_action[1], 0.0, places=6)
+            self.assertAlmostEqual(fourth_action[0], 0.0, places=6)
+            self.assertAlmostEqual(fourth_action[1], 0.0, places=6)
         finally:
             env.close()
 
-    def test_personal_space_backoff_keeps_full_speed_just_before_retreat_threshold(self):
+    def test_personal_space_backoff_ends_when_tracked_target_reaches_release_distance(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14614)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.31, 5.0, 0.0),
+                human_poses=((4.6, 5.0, 0.0),),
+            )
+            env.personal_space_backoff_state.start(
+                target_idx=0,
+                direction_label="away",
+                direction_xy=np.array([1.0, 0.0], dtype=np.float32),
+                start_xy=np.array([5.0, 5.0], dtype=np.float32),
+            )
+            self._invalidate_observation_cache(env)
+            world_frame = env._build_world_frame(force=True)
+
+            with patch.object(env, "_log_event") as log_mock:
+                action = env_control.apply_robot_personal_space_backoff_if_needed(
+                    env,
+                    np.zeros(3, dtype=np.float32),
+                    world_frame,
+                )
+
+            self.assertEqual(log_mock.call_count, 1)
+            self.assertEqual(log_mock.call_args_list[0].args[0], ">>> Robot personal-space backoff ended.")
+            self.assertFalse(env.personal_space_backoff_state.active)
+            self.assertEqual(env.personal_space_backoff_state.direction_label, None)
+            self.assertAlmostEqual(action[0], 0.0, places=6)
+            self.assertAlmostEqual(action[1], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_personal_space_backoff_keeps_full_speed_just_before_hard_retreat_cap(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=14615)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
-            near_end_progress = float(env_control.ROBOT_PERSONAL_SPACE_RETREAT_DISTANCE_METERS) - 1e-4
+            near_end_progress = float(env_control.ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS) - 1e-4
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(5.0 + near_end_progress, 5.0, 0.0),
-                human_poses=((4.8, 5.0, 0.0),),
+                human_poses=((5.0, 5.0, 0.0),),
             )
             env.personal_space_backoff_state.start(
                 target_idx=0,
@@ -2841,7 +2894,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_personal_space_backoff_starts_new_session_when_retreat_finishes_but_human_is_still_close(
+    def test_personal_space_backoff_keeps_same_session_when_retreat_exceeds_old_threshold_but_target_is_still_close(
         self,
     ):
         env = self._make_env(n_humans=1)
@@ -2880,18 +2933,63 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     second_frame,
                 )
 
-            self.assertEqual(log_mock.call_count, 3)
+            self.assertEqual(log_mock.call_count, 1)
             self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
-            self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
-            self.assertIn("direction=away", log_mock.call_args_list[2].args[0])
             self.assertTrue(env.personal_space_backoff_state.active)
             np.testing.assert_allclose(
                 env.personal_space_backoff_state.start_xy,
-                np.array([5.25, 5.0], dtype=np.float32),
+                np.array([5.0, 5.0], dtype=np.float32),
                 atol=1e-6,
             )
             self.assertGreater(second_action[0], 0.0)
             self.assertAlmostEqual(second_action[1], 0.0, places=6)
+        finally:
+            env.close()
+
+    def test_personal_space_backoff_ends_at_hard_retreat_cap_and_can_restart_later(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14621)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            hard_cap_progress = float(env_control.ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(5.0 + hard_cap_progress, 5.0, 0.0),
+                human_poses=((5.05, 5.0, 0.0),),
+            )
+            env.personal_space_backoff_state.start(
+                target_idx=0,
+                direction_label="away",
+                direction_xy=np.array([1.0, 0.0], dtype=np.float32),
+                start_xy=np.array([5.0, 5.0], dtype=np.float32),
+            )
+            self._invalidate_observation_cache(env)
+            world_frame = env._build_world_frame(force=True)
+
+            with patch.object(env, "_log_event") as log_mock, patch(
+                "museum_env.env_control.is_robot_backoff_direction_safe",
+                return_value=(True, 0.2, 1.0, 1.0),
+            ):
+                end_action = env_control.apply_robot_personal_space_backoff_if_needed(
+                    env,
+                    np.zeros(3, dtype=np.float32),
+                    world_frame,
+                )
+                restart_action = env_control.apply_robot_personal_space_backoff_if_needed(
+                    env,
+                    np.zeros(3, dtype=np.float32),
+                    world_frame,
+                )
+
+            self.assertEqual(log_mock.call_count, 2)
+            self.assertEqual(log_mock.call_args_list[0].args[0], ">>> Robot personal-space backoff ended.")
+            self.assertIn("Robot personal-space backoff near person1", log_mock.call_args_list[1].args[0])
+            self.assertTrue(env.personal_space_backoff_state.active)
+            self.assertAlmostEqual(end_action[0], 0.0, places=6)
+            self.assertAlmostEqual(end_action[1], 0.0, places=6)
+            self.assertGreater(restart_action[0], 0.0)
+            self.assertAlmostEqual(restart_action[1], 0.0, places=6)
         finally:
             env.close()
 
@@ -2937,7 +3035,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     world_frame,
                 )
 
-            self.assertEqual(call_index["value"], 3)
+            self.assertEqual(call_index["value"], 2)
             self.assertEqual(log_mock.call_count, 2)
             self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
             self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
