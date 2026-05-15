@@ -418,7 +418,21 @@ def _step_impatient(human, ctx, pose):
                         hr_distance_min=human.hr_distance_min,
                         hr_distance_max=None,
                     )
-                    action = human._compose_action(v_total, 0.0)
+                    guide_norm = float(np.linalg.norm(to_target_xy))
+                    if guide_norm > NORM_EPS:
+                        guide_dir = to_target_xy / guide_norm
+                        if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
+                            fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
+                            if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
+                                v_total = np.asarray(fallback_v_xy, dtype=np.float32)
+                            else:
+                                v_total = np.zeros(2, dtype=np.float32)
+                    speed = float(np.linalg.norm(v_total))
+                    desired_yaw = float(np.arctan2(v_total[1], v_total[0])) if speed > NORM_EPS else float(yaw)
+                    action = human._compose_action(
+                        v_total,
+                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
+                    )
     else:
         human.assign_target_from_context(ctx)
         action = _step_following(human, ctx, pose)

@@ -2135,9 +2135,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
                 direction = expected_target - np.asarray(pose[:2], dtype=np.float32)
                 expected_velocity = direction / np.linalg.norm(direction)
+                expected_yaw_rate = HUMAN_YAW_RATE_GAIN * wrap_to_pi(
+                    float(np.arctan2(expected_velocity[1], expected_velocity[0])) - float(pose[2])
+                )
 
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
-                self.assertAlmostEqual(float(action[2]), 0.0, places=6)
+                self.assertAlmostEqual(float(action[2]), expected_yaw_rate, places=5)
 
     def test_listening_impatient_move_uses_compose_move_velocity(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -2175,7 +2178,56 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         compose_mock.assert_called_once()
         self.assertIsNone(compose_mock.call_args.kwargs["hr_distance_max"])
         np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
-        self.assertAlmostEqual(float(action[2]), 0.0, places=6)
+        expected_yaw_rate = HUMAN_YAW_RATE_GAIN * wrap_to_pi(
+            float(np.arctan2(adjusted_v_xy[1], adjusted_v_xy[0])) - float(pose[2])
+        )
+        self.assertAlmostEqual(float(action[2]), expected_yaw_rate, places=6)
+
+    def test_listening_impatient_preserves_forward_progress_with_fallback_velocity(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.impatient_speed_multiplier = 1.0
+        with (
+            patch("numpy.random.uniform", return_value=45.0),
+            patch("numpy.random.rand", return_value=1.0),
+        ):
+            human.start_impatient(recovery_mode=HumanMode.LISTENING)
+
+        human.impatient_duration = 6
+        human.listening_impatient_glance_steps = 3
+        human.impatient_timer = human.listening_impatient_glance_steps
+
+        pose = (8.25, -11.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (9.25, -11.0, 0.0),
+            "robot_xy": np.array([9.25, -11.0], dtype=np.float32),
+            "robot_yaw": 0.0,
+            "human_xy": np.array([pose[:2]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+            "listen_radius": 1.0,
+            "listening_sector_half_angle": np.deg2rad(80.0),
+        }
+        reverse_v_xy = np.array([0.0, -0.5], dtype=np.float32)
+        fallback_v_xy = np.array([0.0, 0.5], dtype=np.float32)
+
+        with (
+            patch.object(human, "_compose_move_velocity", return_value=reverse_v_xy) as compose_mock,
+            patch.object(human, "_constrain_velocity_with_walkable", return_value=fallback_v_xy),
+        ):
+            action = human.step(None, data, ctx)
+
+        compose_mock.assert_called_once()
+        np.testing.assert_allclose(
+            compose_mock.call_args.kwargs["guide_xy"],
+            np.array([0.0, 1.0], dtype=np.float32),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(action[:2], fallback_v_xy, atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
 
     def test_listening_impatient_holds_at_corridor_midpoint_until_duration_ends(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -2255,8 +2307,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 action = human.step(None, data, ctx)
                 expected_velocity = expected_target - np.asarray(pose[:2], dtype=np.float32)
                 expected_velocity = expected_velocity / np.linalg.norm(expected_velocity)
+                expected_yaw_rate = HUMAN_YAW_RATE_GAIN * wrap_to_pi(
+                    float(np.arctan2(expected_velocity[1], expected_velocity[0])) - float(pose[2])
+                )
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
-                self.assertAlmostEqual(float(action[2]), 0.0, places=6)
+                self.assertAlmostEqual(float(action[2]), expected_yaw_rate, places=5)
 
     def test_general_phase_impatient_recovers_to_current_phase_mode(self):
         env = self._make_env(n_humans=1)
