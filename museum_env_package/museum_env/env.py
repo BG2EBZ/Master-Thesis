@@ -77,7 +77,7 @@ from .env_state import (
     StepEvents,
     build_fuzzy_debug_states,
 )
-from .human import Human, HumanMode, HumanProfile
+from .human import Human, HumanMode, HumanProfile, LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT
 from .map_layouts import MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
 from .robot import Robot
@@ -338,8 +338,9 @@ class MuseumEnv(gym.Env):
                 dt=self.dt,
                 max_distracted_duration_seconds=self.max_distracted_duration_seconds,
                 impatient_duration_seconds=6.0,
-                impatient_speed_multiplier=1.6,
+                impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
+                listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
             )
 
     def _sample_active_human_spawn_states(self, robot_xy) -> list[np.ndarray]:

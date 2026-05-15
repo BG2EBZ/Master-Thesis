@@ -367,7 +367,7 @@ def _step_impatient(human, ctx, pose):
         robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
         to_robot = robot_xy - current_xy
         base_yaw = np.arctan2(to_robot[1], to_robot[0]) if np.linalg.norm(to_robot) > NORM_EPS else yaw
-        look_steps = max(1, int(human.impatient_duration) // 2)
+        look_steps = max(1, int(human.listening_impatient_glance_steps))
         if human.impatient_timer <= look_steps:
             action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
         else:

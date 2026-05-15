@@ -702,9 +702,10 @@ def apply_following_crowd_regulation_if_needed(
     if front_sector_target_idx is not None:
         front_sector_target_distance = float(distances[int(front_sector_target_idx)])
         # A front-sector target gets immediate priority: the robot pauses and
-        # cues that person right away instead of waiting through the generic
+        # cues that person right away once they are beyond the configured
+        # callback distance threshold, instead of waiting through the generic
         # follow-gap timer used for lagging crowd regulation.
-        if front_sector_target_distance > float(ROBOT_PERSONAL_SPACE_TRIGGER_METERS) + 1e-6:
+        if front_sector_target_distance > float(env.callback_trigger_distance_meters):
             env._following_callback_override_target_idx = int(front_sector_target_idx)
             if not env._following_wait_callback_triggered:
                 env.robot.mode = RobotMode.STOP

@@ -3,7 +3,10 @@ from typing import Optional
 
 import numpy as np
 
-from .env_constants import FOLLOW_RADIUS_DEFAULT, HUMAN_WALL_FOOTPRINT_RADIUS
+from .env_constants import (
+    FOLLOW_RADIUS_DEFAULT,
+    HUMAN_WALL_FOOTPRINT_RADIUS,
+)
 from .map_layouts import DEFAULT_MUSEUM_LAYOUT, MapLayout
 from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
@@ -29,6 +32,7 @@ DISTRACTED_FALLBACK_DISTANCE = 1.0
 DISTRACTED_CONVERSATION_STOP_DISTANCE = 0.8
 ND_DISTRACTED_STOP_AND_GO_STOP_SECONDS = 0.6
 ND_DISTRACTED_STOP_AND_GO_MOVE_SECONDS = 0.4
+LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT = 2.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
@@ -132,6 +136,7 @@ class Human:
         self.impatient_timer = 0
         self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
+        self.listening_impatient_glance_steps = round(LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.impatient_original_max_speed = None
         self.impatient_recovery_mode = HumanMode.FOLLOWING
         self.listening_impatient_yaw_deviation = 0.0
@@ -225,6 +230,7 @@ class Human:
         impatient_duration_seconds: float,
         impatient_speed_multiplier: float,
         impatient_front_offset: float,
+        listening_impatient_glance_seconds: float,
     ) -> None:
         dt = float(dt)
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
@@ -239,6 +245,7 @@ class Human:
         self.impatient_duration = round(float(impatient_duration_seconds) / dt)
         self.impatient_speed_multiplier = float(impatient_speed_multiplier)
         self.impatient_front_offset = float(impatient_front_offset)
+        self.listening_impatient_glance_steps = float((listening_impatient_glance_seconds) / dt)
 
     def reset_following_duration(self):
         self.following_steps = 0
