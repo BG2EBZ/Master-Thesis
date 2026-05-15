@@ -372,12 +372,12 @@ def _step_impatient(human, ctx, pose):
             action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
         else:
             room_regions = human.map_layout.metadata.get("room_regions", {})
-            transition_targets = human.map_layout.metadata.get("impatient_transition_targets", {})
+            corridor_midpoints = human.map_layout.metadata.get("impatient_corridor_midpoints", {})
             source_room = next(
                 (
                     str(room_name)
                     for room_name, room_region in room_regions.items()
-                    if hasattr(room_region, "contains_point") and room_region.contains_point(robot_xy)
+                    if hasattr(room_region, "contains_point") and room_region.contains_point(current_xy)
                 ),
                 None,
             )
@@ -390,34 +390,22 @@ def _step_impatient(human, ctx, pose):
                     ),
                     key=lambda room_name: float(
                         np.linalg.norm(
-                            np.asarray(room_regions[room_name].center(), dtype=np.float32) - robot_xy
+                            np.asarray(room_regions[room_name].center(), dtype=np.float32) - current_xy
                         )
                     ),
                     default=None,
                 )
 
-            target_spec = transition_targets.get(source_room, {})
-            approach_xy = target_spec.get("approach_xy")
-            focus_xy = target_spec.get("focus_xy")
-            if approach_xy is None or focus_xy is None:
+            midpoint_xy = corridor_midpoints.get(source_room)
+            if midpoint_xy is None:
                 action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
             else:
-                target_xy = np.asarray(approach_xy, dtype=np.float32)
-                focus_xy = np.asarray(focus_xy, dtype=np.float32)
+                target_xy = np.asarray(midpoint_xy, dtype=np.float32)
                 to_target_xy = target_xy - current_xy
                 dist_to_target = float(np.linalg.norm(to_target_xy))
-                focus_delta = focus_xy - current_xy
-                desired_yaw = (
-                    float(np.arctan2(focus_delta[1], focus_delta[0]))
-                    if np.linalg.norm(focus_delta) > NORM_EPS
-                    else float(yaw)
-                )
 
                 if dist_to_target <= human.waypoint_threshold:
-                    action = human._compose_action(
-                        np.zeros(2, dtype=np.float32),
-                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
-                    )
+                    action = np.zeros(3, dtype=np.float32)
                 else:
                     v_goal = human.max_speed * (to_target_xy / dist_to_target)
                     v_total = human._compose_move_velocity(
@@ -430,10 +418,7 @@ def _step_impatient(human, ctx, pose):
                         hr_distance_min=human.hr_distance_min,
                         hr_distance_max=None,
                     )
-                    action = human._compose_action(
-                        v_total,
-                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
-                    )
+                    action = human._compose_action(v_total, 0.0)
     else:
         human.assign_target_from_context(ctx)
         action = _step_following(human, ctx, pose)

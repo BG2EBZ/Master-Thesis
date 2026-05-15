@@ -2093,13 +2093,17 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 )
                 np.testing.assert_allclose(human.current_waypoint, expected_waypoint, atol=1e-6)
 
-    def test_listening_impatient_moves_toward_next_exhibit_after_look_phase(self):
+    def test_listening_impatient_moves_toward_corridor_midpoint_after_look_phase(self):
         cases = (
-            ((1.0, 5.0, 0.0), np.array([5.0, 5.0], dtype=np.float32), "room_a"),
-            ((9.25, -12.5, 0.0), np.array([9.25, -11.0], dtype=np.float32), "room_b"),
+            ((1.0, 5.0, 0.0), np.array([5.0, 5.0], dtype=np.float32), np.array([8.25, 0.0], dtype=np.float32)),
+            (
+                (9.25, -12.5, 0.0),
+                np.array([9.25, -11.0], dtype=np.float32),
+                np.array([8.25, -10.0], dtype=np.float32),
+            ),
         )
-        for pose, robot_xy, source_room in cases:
-            with self.subTest(pose=pose, source_room=source_room):
+        for pose, robot_xy, expected_target in cases:
+            with self.subTest(pose=pose, expected_target=tuple(expected_target.tolist())):
                 human = Human("person1", "person1", 0, max_speed=1.0)
                 human.impatient_speed_multiplier = 1.0
                 with (
@@ -2129,15 +2133,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
                 action = human.step(None, data, ctx)
 
-                target_spec = human.map_layout.metadata["impatient_transition_targets"][source_room]
-                approach_xy = np.asarray(target_spec["approach_xy"], dtype=np.float32)
-                focus_xy = np.asarray(target_spec["focus_xy"], dtype=np.float32)
-                direction = approach_xy - np.asarray(pose[:2], dtype=np.float32)
+                direction = expected_target - np.asarray(pose[:2], dtype=np.float32)
                 expected_velocity = direction / np.linalg.norm(direction)
-                expected_yaw = float(np.arctan2(focus_xy[1] - pose[1], focus_xy[0] - pose[0]))
 
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
-                self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * expected_yaw, places=5)
+                self.assertAlmostEqual(float(action[2]), 0.0, places=6)
 
     def test_listening_impatient_move_uses_compose_move_velocity(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
@@ -2175,8 +2175,9 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         compose_mock.assert_called_once()
         self.assertIsNone(compose_mock.call_args.kwargs["hr_distance_max"])
         np.testing.assert_allclose(action[:2], adjusted_v_xy, atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), 0.0, places=6)
 
-    def test_listening_impatient_holds_at_target_until_duration_ends(self):
+    def test_listening_impatient_holds_at_corridor_midpoint_until_duration_ends(self):
         human = Human("person1", "person1", 0, max_speed=1.0)
         human.impatient_speed_multiplier = 1.0
         with (
@@ -2189,7 +2190,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         human.listening_impatient_glance_steps = 2
         human.impatient_timer = human.listening_impatient_glance_steps
 
-        pose = (11.05, -12.5, 0.0)
+        pose = (8.25, -10.0, 0.7)
         data = self._make_pose_data(pose)
         ctx = {
             "index": 0,
@@ -2197,7 +2198,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             "robot_pose": (5.0, 5.0, 0.0),
             "robot_xy": np.array([5.0, 5.0], dtype=np.float32),
             "robot_yaw": 0.0,
-            "human_xy": np.array([[11.05, -12.5]], dtype=np.float32),
+            "human_xy": np.array([pose[:2]], dtype=np.float32),
             "repulsion": np.zeros(2, dtype=np.float32),
             "fan_half_angle": np.deg2rad(80.0),
             "impatient_front_offset": human.impatient_front_offset,
@@ -2206,20 +2207,24 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         }
 
         action = human.step(None, data, ctx)
-        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        np.testing.assert_allclose(action, np.zeros(3, dtype=np.float32), atol=1e-6)
         self.assertEqual(human.mode, HumanMode.IMPATIENT)
 
         human.impatient_timer = human.impatient_duration - 1
         action = human.step(None, data, ctx)
-        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        np.testing.assert_allclose(action, np.zeros(3, dtype=np.float32), atol=1e-6)
         self.assertEqual(human.mode, HumanMode.LISTENING)
 
-    def test_listening_impatient_corridor_fallback_uses_robot_nearest_room(self):
-        for robot_xy, expected_target in (
-            (np.array([5.0, 5.0], dtype=np.float32), np.array([11.0, -12.5], dtype=np.float32)),
-            (np.array([9.25, -12.5], dtype=np.float32), np.array([1.0, 5.0], dtype=np.float32)),
+    def test_listening_impatient_corridor_fallback_uses_human_nearest_room(self):
+        for pose, robot_xy, expected_target in (
+            ((8.0, -1.0, 0.0), np.array([9.25, -12.5], dtype=np.float32), np.array([8.25, 0.0], dtype=np.float32)),
+            ((8.0, -5.0, 0.0), np.array([5.0, 5.0], dtype=np.float32), np.array([8.25, -10.0], dtype=np.float32)),
         ):
-            with self.subTest(robot_xy=tuple(robot_xy.tolist())):
+            with self.subTest(
+                pose=pose,
+                robot_xy=tuple(robot_xy.tolist()),
+                expected_target=tuple(expected_target.tolist()),
+            ):
                 human = Human("person1", "person1", 0, max_speed=1.0)
                 human.impatient_speed_multiplier = 1.0
                 with (
@@ -2232,7 +2237,6 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 human.listening_impatient_glance_steps = 3
                 human.impatient_timer = human.listening_impatient_glance_steps
 
-                pose = (8.0, -5.0, 0.0)
                 data = self._make_pose_data(pose)
                 ctx = {
                     "index": 0,
@@ -2240,7 +2244,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     "robot_pose": (float(robot_xy[0]), float(robot_xy[1]), 0.0),
                     "robot_xy": robot_xy,
                     "robot_yaw": 0.0,
-                    "human_xy": np.array([[8.0, -5.0]], dtype=np.float32),
+                    "human_xy": np.array([pose[:2]], dtype=np.float32),
                     "repulsion": np.zeros(2, dtype=np.float32),
                     "fan_half_angle": np.deg2rad(80.0),
                     "impatient_front_offset": human.impatient_front_offset,
@@ -2252,6 +2256,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 expected_velocity = expected_target - np.asarray(pose[:2], dtype=np.float32)
                 expected_velocity = expected_velocity / np.linalg.norm(expected_velocity)
                 np.testing.assert_allclose(action[:2], expected_velocity, atol=1e-6)
+                self.assertAlmostEqual(float(action[2]), 0.0, places=6)
 
     def test_general_phase_impatient_recovers_to_current_phase_mode(self):
         env = self._make_env(n_humans=1)
