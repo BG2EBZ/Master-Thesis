@@ -182,6 +182,7 @@ class MuseumEnv(gym.Env):
         self.listen_distance_shorten_steps = self._steps(LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN)
         self.following_callback_wait_steps = self._steps(FOLLOWING_CALLBACK_WAIT_SECONDS)
         self.following_callback_cue_steps = self._steps(FOLLOWING_CALLBACK_CUE_SECONDS)
+        self.following_callback_resume_grace_steps = self._steps(5.0)
         self.following_callback_front_sector_half_angle = np.deg2rad(
             FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG
         )
@@ -197,6 +198,7 @@ class MuseumEnv(gym.Env):
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         env_control.reset_following_wait_episode(self)
+        self._following_callback_resume_grace_steps_remaining = 0
         self.callback_response_profile_probs = {
             HumanProfile.NORMAL: {
                 "rejoin": float(callback_rejoin_prob_normal),
@@ -438,6 +440,7 @@ class MuseumEnv(gym.Env):
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
         env_control.reset_following_wait_episode(self)
+        self._following_callback_resume_grace_steps_remaining = 0
         self.personal_space_backoff_state.reset()
 
         for human in self.humans:

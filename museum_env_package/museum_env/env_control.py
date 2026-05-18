@@ -697,8 +697,17 @@ def apply_following_crowd_regulation_if_needed(
         return adjusted_action, should_start_callback
     if robot_mode != RobotMode.MOVE:
         return adjusted_action, should_start_callback
+    grace_active = int(getattr(env, "_following_callback_resume_grace_steps_remaining", 0)) > 0
+    if grace_active:
+        env._following_callback_resume_grace_steps_remaining = max(
+            0,
+            int(env._following_callback_resume_grace_steps_remaining) - 1,
+        )
+        reset_following_wait_episode(env)
 
-    front_sector_target_idx = get_following_front_sector_target_idx(env, world_frame)
+    front_sector_target_idx = None
+    if not grace_active:
+        front_sector_target_idx = get_following_front_sector_target_idx(env, world_frame)
     if front_sector_target_idx is not None:
         front_sector_target_distance = float(distances[int(front_sector_target_idx)])
         # A front-sector target gets immediate priority: the robot pauses and
@@ -719,7 +728,7 @@ def apply_following_crowd_regulation_if_needed(
         reset_following_wait_episode(env)
         return adjusted_action, should_start_callback
     max_hr_distance = float(np.max(distances))
-    if max_hr_distance > float(FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS):
+    if (not grace_active) and max_hr_distance > float(FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS):
         env.robot.mode = RobotMode.STOP
         env._following_wait_elapsed_steps += 1
         if (

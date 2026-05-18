@@ -537,6 +537,9 @@ def compute_robot_action(env, pre_frame, events) -> tuple[np.ndarray, bool]:
             person_label = "none" if target_idx is None else f"person{int(target_idx) + 1}"
             env._log_event(f">>> Robot callback completed for {person_label}.")
             env_control.apply_callback_response_if_needed(env, events)
+            env._following_callback_resume_grace_steps_remaining = int(
+                env.following_callback_resume_grace_steps
+            )
             env.robot.finish_callback()
     else:
         robot_action, should_start_callback = env_control.apply_following_crowd_regulation_if_needed(

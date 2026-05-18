@@ -3362,6 +3362,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.robot.listen_done = True
             env.following_callback_wait_steps = 3
             env.following_callback_cue_steps = 1
+            env.following_callback_resume_grace_steps = 0
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
@@ -3519,6 +3520,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.robot.listen_done = True
             env.following_callback_wait_steps = 1
             env.following_callback_cue_steps = 1
+            env.following_callback_resume_grace_steps = 0
             self._set_robot_and_human_poses(
                 env,
                 robot_pose=(0.0, 0.0, 0.0),
@@ -3557,6 +3559,102 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 human_poses=((1.3680806, 3.7587705, 0.0),),
             )
             self._invalidate_observation_cache(env)
+
+            _, _, _, _, second_trigger_info = env.step(None)
+            self.assertTrue(second_trigger_info["events"]["callback_triggered"])
+            self.assertEqual(second_trigger_info["robot"]["mode"], "callback")
+        finally:
+            env.close()
+
+    def test_transit_follow_callback_completion_grants_resume_grace_period(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=152)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 99
+            env.following_callback_cue_steps = 1
+            env.following_callback_resume_grace_steps = 3
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((2.1, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, triggered_info = env.step(None)
+            self.assertTrue(triggered_info["events"]["callback_triggered"])
+            self.assertEqual(triggered_info["robot"]["mode"], "callback")
+
+            _, _, _, _, completed_info = env.step(None)
+            self.assertTrue(completed_info["events"]["callback_completed"])
+            self.assertEqual(env._following_callback_resume_grace_steps_remaining, 3)
+
+            for expected_remaining in (2, 1, 0):
+                _, _, _, _, grace_info = env.step(None)
+                self.assertFalse(grace_info["events"]["callback_triggered"])
+                self.assertFalse(env.robot.callback_active)
+                self.assertEqual(grace_info["robot"]["mode"], "move")
+                self.assertEqual(
+                    env._following_callback_resume_grace_steps_remaining,
+                    expected_remaining,
+                )
+        finally:
+            env.close()
+
+    def test_transit_follow_callback_resume_grace_resets_wait_episode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=153)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.following_callback_wait_steps = 1
+            env.following_callback_cue_steps = 1
+            env.following_callback_resume_grace_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.4, 3.6, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_trigger_info = env.step(None)
+            self.assertTrue(first_trigger_info["events"]["callback_triggered"])
+
+            _, completed_info = self._run_until(
+                env,
+                lambda _info: _info["events"]["callback_completed"],
+                200,
+            )
+            self.assertTrue(completed_info["events"]["callback_completed"])
+
+            env.following_callback_wait_steps = 3
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((3.4, 3.6, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            for expected_remaining in (1, 0):
+                _, _, _, _, grace_info = env.step(None)
+                self.assertFalse(grace_info["events"]["callback_triggered"])
+                self.assertEqual(grace_info["robot"]["mode"], "move")
+                self.assertEqual(
+                    env._following_callback_resume_grace_steps_remaining,
+                    expected_remaining,
+                )
+                self.assertEqual(env._following_wait_elapsed_steps, 0)
+
+            _, _, _, _, post_grace_stop1 = env.step(None)
+            self.assertFalse(post_grace_stop1["events"]["callback_triggered"])
+            self.assertEqual(post_grace_stop1["robot"]["mode"], "stop")
+            self.assertEqual(env._following_wait_elapsed_steps, 1)
+
+            _, _, _, _, post_grace_stop2 = env.step(None)
+            self.assertFalse(post_grace_stop2["events"]["callback_triggered"])
+            self.assertEqual(post_grace_stop2["robot"]["mode"], "stop")
+            self.assertEqual(env._following_wait_elapsed_steps, 2)
 
             _, _, _, _, second_trigger_info = env.step(None)
             self.assertTrue(second_trigger_info["events"]["callback_triggered"])
