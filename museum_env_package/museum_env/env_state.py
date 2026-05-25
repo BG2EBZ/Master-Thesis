@@ -44,6 +44,7 @@ def _default_fuzzy_inputs() -> dict[str, float]:
         "hhd": 0.0,
         "hrd": 0.0,
         "density": 0.0,
+        "angle": 0.0,
     }
 
 

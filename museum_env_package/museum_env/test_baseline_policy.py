@@ -1,3 +1,4 @@
+import importlib
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1003,6 +1004,9 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                     mock_compute.call_args.kwargs["profile"],
                     HumanProfile.NEURODIVERGENT,
                 )
+                self.assertIn("angle", mock_compute.call_args.kwargs)
+                self.assertGreaterEqual(mock_compute.call_args.kwargs["angle"], -180.0)
+                self.assertLessEqual(mock_compute.call_args.kwargs["angle"], 180.0)
 
                 env.step(None)
                 self.assertEqual(mock_compute.call_count, 1)
@@ -1010,6 +1014,49 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 env.step(None)
                 self.assertEqual(mock_compute.call_count, 2)
                 self.assertEqual(env.fuzzy_debug[0].context, "following")
+        finally:
+            env.close()
+
+    def test_human_states_module_import_and_compute_accepts_angle(self):
+        module = importlib.import_module("museum_env.fuzzy.human_states")
+        result = module.compute(3.1, 0.56, 1.05, 5.0, 0.0, context="following")
+
+        self.assertIn("dominant_state", result)
+        self.assertIn("engaged", result)
+
+    def test_compute_human_fuzzy_debug_reports_robot_relative_angle_degrees(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=19)
+            cases = [
+                ((1.0, 0.0, 0.0), 0.0),
+                ((0.0, -1.0, 0.0), -90.0),
+                ((0.0, 1.0, 0.0), 90.0),
+                ((-1.0, 0.0, 0.0), 180.0),
+            ]
+
+            for human_pose, expected_angle in cases:
+                with self.subTest(human_pose=human_pose):
+                    self._set_robot_and_human_poses(
+                        env,
+                        robot_pose=(0.0, 0.0, 0.0),
+                        human_poses=[human_pose],
+                    )
+                    self._invalidate_observation_cache(env)
+                    world_frame = env._build_world_frame(force=True)
+                    fuzzy_debug = env_control.compute_human_fuzzy_debug(
+                        env,
+                        idx=0,
+                        context="following",
+                        session_steps=0,
+                        world_frame=world_frame,
+                    )
+                    measured_angle = float(fuzzy_debug["inputs"]["angle"])
+
+                    if abs(expected_angle) == 180.0:
+                        self.assertAlmostEqual(abs(measured_angle), 180.0, places=4)
+                    else:
+                        self.assertAlmostEqual(measured_angle, expected_angle, places=4)
         finally:
             env.close()
 

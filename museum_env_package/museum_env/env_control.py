@@ -64,6 +64,19 @@ def _repulsion_vec(world_frame, idx: int) -> np.ndarray:
     return np.asarray(world_frame.repulsion_vectors[idx], dtype=np.float32)
 
 
+def _compute_robot_relative_angle_deg(world_frame, idx: int) -> float:
+    """Return one human's robot-relative bearing in degrees."""
+    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+    human_xy = np.asarray(world_frame.human_xy[idx], dtype=np.float32)
+    robot_yaw = float(world_frame.robot_pose[2])
+    diff_xy = human_xy - robot_xy
+    return float(
+        np.rad2deg(
+            wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw)
+        )
+    )
+
+
 def should_evaluate_fuzzy(env, idx: int, context: str) -> bool:
     """Decide whether fuzzy state should be recomputed for this human and phase."""
     # Fuzzy transitions are only meaningful in the phase that owns the behavior:
@@ -81,9 +94,10 @@ def should_evaluate_fuzzy(env, idx: int, context: str) -> bool:
     return env.runtime_cache.refresh_counter > debug_state.refresh_counter
 
 
-def compute_human_fuzzy_debug(env, idx: int, context: str, session_steps: int, observations):
+def compute_human_fuzzy_debug(env, idx: int, context: str, session_steps: int, world_frame):
     """Build fuzzy inputs and evaluate the human state classifier."""
     human = env.humans[idx]
+    observations = world_frame.observations
     inputs = env.following_fuzzy_engine.clip_inputs(
         following_time=float(session_steps) * float(env.dt),
         hhd=resolve_fuzzy_metric_input(
@@ -95,6 +109,7 @@ def compute_human_fuzzy_debug(env, idx: int, context: str, session_steps: int, o
             current_value=float(observations.human_robot_distance[idx]),
         ),
         density=float(observations.local_crowding_count_1m[idx]),
+        angle=_compute_robot_relative_angle_deg(world_frame, idx),
     )
     result = env.following_fuzzy_engine.compute(
         **inputs,
@@ -142,7 +157,8 @@ def apply_fuzzy_transition(
         f"following_time={float(fuzzy_inputs['following_time']):.1f}, "
         f"hhd={float(fuzzy_inputs['hhd']):.2f}, "
         f"hrd={float(fuzzy_inputs['hrd']):.2f}, "
-        f"density={float(fuzzy_inputs['density']):.1f}"
+        f"density={float(fuzzy_inputs['density']):.1f}, "
+        f"angle={float(fuzzy_inputs['angle']):.1f}"
     )
 
     if dominant_state == "distracted":
@@ -187,7 +203,7 @@ def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, w
         idx=idx,
         context=context,
         session_steps=int(session_steps),
-        observations=world_frame.observations,
+        world_frame=world_frame,
     )
     record_fuzzy_debug(env, idx, context=context, fuzzy_debug=fuzzy_debug)
     apply_fuzzy_transition(
