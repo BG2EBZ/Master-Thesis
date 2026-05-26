@@ -993,6 +993,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 "distracted": 0.1,
                 "impatient": 0.1,
                 "engaged": 0.9,
+                "curiosity": 0.0,
                 "dominant_state": "engaged",
                 "dominant_value": 0.9,
             }
@@ -1023,6 +1024,17 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
         self.assertIn("dominant_state", result)
         self.assertIn("engaged", result)
+        self.assertIn("curiosity", result)
+
+    def test_human_states_curiosity_prefers_ahead_angle_and_can_dominate(self):
+        module = importlib.import_module("museum_env.fuzzy.human_states")
+
+        ahead_result = module.compute(20.0, 1.5, 0.5, 8.0, 0.0, context="following")
+        behind_result = module.compute(20.0, 1.5, 0.5, 8.0, 180.0, context="following")
+
+        self.assertGreater(ahead_result["curiosity"], behind_result["curiosity"])
+        self.assertEqual(ahead_result["dominant_state"], "curiosity")
+        self.assertNotEqual(behind_result["dominant_state"], "curiosity")
 
     def test_compute_human_fuzzy_debug_reports_robot_relative_angle_degrees(self):
         env = self._make_env(n_humans=1)
@@ -1052,11 +1064,47 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                         world_frame=world_frame,
                     )
                     measured_angle = float(fuzzy_debug["inputs"]["angle"])
+                    self.assertIn("curiosity", fuzzy_debug["result"])
 
                     if abs(expected_angle) == 180.0:
                         self.assertAlmostEqual(abs(measured_angle), 180.0, places=4)
                     else:
                         self.assertAlmostEqual(measured_angle, expected_angle, places=4)
+        finally:
+            env.close()
+
+    def test_apply_fuzzy_transition_ignores_curiosity_dominant_state(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=23)
+            human = env.humans[0]
+            human.set_mode(HumanMode.FOLLOWING)
+
+            env_control.apply_fuzzy_transition(
+                env,
+                human,
+                idx=0,
+                context="following",
+                fuzzy_result={
+                    "overwhelmed": 0.1,
+                    "distracted": 0.1,
+                    "impatient": 0.1,
+                    "engaged": 0.2,
+                    "curiosity": 0.9,
+                    "dominant_state": "curiosity",
+                    "dominant_value": 0.9,
+                },
+                fuzzy_inputs={
+                    "following_time": 20.0,
+                    "hhd": 1.5,
+                    "hrd": 0.5,
+                    "density": 8.0,
+                    "angle": 0.0,
+                },
+                world_frame=None,
+            )
+
+            self.assertEqual(human.mode, HumanMode.FOLLOWING)
         finally:
             env.close()
 

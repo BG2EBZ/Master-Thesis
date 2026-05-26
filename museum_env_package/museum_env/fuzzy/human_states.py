@@ -13,6 +13,7 @@ Outputs:
     distracted  : float, [0, 1]
     impatient   : float, [0, 1]
     engaged     : float, [0, 1]
+    curiosity   : float, [0, 1]
 
 Usage:
     result = compute(
@@ -35,6 +36,7 @@ from ..human import HumanProfile
 
 _RES = 1000
 _DEFAULT = 0.5
+_CURIOSITY_DEFAULT = 0.0
 _TIE_TOLERANCE = 0.01
 _CONTEXTS = ("following", "listening")
 _PROFILES = (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT)
@@ -55,6 +57,18 @@ def _normalize_context(context: str) -> str:
     return normalized
 
 
+def _define_angle_mfs(angle) -> None:
+    ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
+    side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
+    side_right = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
+    behind_left = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
+    behind_right = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+
+    angle["ahead"] = ahead
+    angle["side"] = np.fmax(side_left, side_right)
+    angle["behind"] = np.fmax(behind_left, behind_right)
+
+
 def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
     if context == "following":
         ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 15, 25])
@@ -73,11 +87,7 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
         density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-        angle["ahead"] = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-        angle["left"] = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-        angle["right"] = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-        angle["behind_left"] = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-        angle["behind_right"] = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+        _define_angle_mfs(angle)
         return
 
     ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 5, 10])
@@ -96,11 +106,8 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
     density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
     density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-    angle["ahead"] = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-    angle["left"] = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-    angle["right"] = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-    angle["behind_left"] = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-    angle["behind_right"] = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+    _define_angle_mfs(angle)
+
 
 def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
     if context == "following":
@@ -120,11 +127,7 @@ def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
         density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
         density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
 
-        angle["ahead"] = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-        angle["left"] = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-        angle["right"] = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-        angle["behind_left"] = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-        angle["behind_right"] = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+        _define_angle_mfs(angle)
         return
 
     ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 4, 8])
@@ -143,11 +146,8 @@ def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
     density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
     density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
 
-    angle["ahead"] = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-    angle["left"] = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-    angle["right"] = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-    angle["behind_left"] = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-    angle["behind_right"] = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+    _define_angle_mfs(angle)
+
 
 def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density, angle) -> None:
     if profile == HumanProfile.NEURODIVERGENT:
@@ -156,8 +156,8 @@ def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density, angle) 
     _define_normal_input_mfs(context, ft, hhd, hrd, density, angle)
 
 
-def _define_output_mfs(engaged, overwhelmed, distracted, impatient) -> None:
-    for output_var in (engaged, overwhelmed, distracted, impatient):
+def _define_output_mfs(engaged, overwhelmed, distracted, impatient, curiosity) -> None:
+    for output_var in (engaged, overwhelmed, distracted, impatient, curiosity):
         output_var["low"] = fuzz.trapmf(output_var.universe, [0, 0, 0.2, 0.5])
         output_var["medium"] = fuzz.trimf(output_var.universe, [0.2, 0.5, 0.8])
         output_var["high"] = fuzz.trapmf(output_var.universe, [0.5, 0.8, 1.0, 1.0])
@@ -174,14 +174,14 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
         ctrl.Rule(hhd["far"] & hrd["medium"] & density["low"], distracted["high"]),
         ctrl.Rule(hhd["medium"] & hrd["medium"] & density["low"], distracted["high"]),
 
-        # Impatient rulesW
+        # Impatient rules
         ctrl.Rule(hhd["close"] & hrd["close"] & density["low"], impatient["high"]),
         ctrl.Rule(hhd["close"] & hrd["close"] & density["medium"], impatient["high"]),
 
         # Curiosity rules
         ctrl.Rule(hrd["close"] & angle["ahead"], curiosity["high"]),
         ctrl.Rule(hrd["medium"] & angle["ahead"], curiosity["high"]),
-                   
+
         # Engaged rules
         ctrl.Rule(density["low"], engaged["high"]),
         ctrl.Rule(density["medium"], engaged["high"]),
@@ -211,10 +211,22 @@ def _build_system(context: str, profile: str) -> ctrl.ControlSystem:
     overwhelmed = ctrl.Consequent(np.linspace(0, 1, _RES), "overwhelmed", defuzzify_method="centroid")
     distracted = ctrl.Consequent(np.linspace(0, 1, _RES), "distracted", defuzzify_method="centroid")
     impatient = ctrl.Consequent(np.linspace(0, 1, _RES), "impatient", defuzzify_method="centroid")
+    curiosity = ctrl.Consequent(np.linspace(0, 1, _RES), "curiosity", defuzzify_method="centroid")
 
     _define_input_mfs(normalized_context, normalized_profile, ft, hhd, hrd, density, angle)
-    _define_output_mfs(engaged, overwhelmed, distracted, impatient)
-    rules = _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted, impatient)
+    _define_output_mfs(engaged, overwhelmed, distracted, impatient, curiosity)
+    rules = _build_rules(
+        ft,
+        hhd,
+        hrd,
+        density,
+        angle,
+        engaged,
+        overwhelmed,
+        distracted,
+        impatient,
+        curiosity,
+    )
     return ctrl.ControlSystem(rules)
 
 
@@ -227,14 +239,14 @@ _SYSTEMS = {
 
 
 def _select_dominant_state(results: dict[str, float], tie_tolerance: float = _TIE_TOLERANCE) -> str:
-    """Pick the dominant state with engaged-first tie handling."""
+    """Pick the dominant state with engaged-first and curiosity-last tie handling."""
     max_value = max(results.values())
     tied_states = [
         state for state, value in results.items() if max_value - float(value) <= tie_tolerance
     ]
     if "engaged" in tied_states:
         return "engaged"
-    for state in ("overwhelmed", "distracted", "impatient", "engaged"):
+    for state in ("overwhelmed", "distracted", "impatient", "curiosity", "engaged"):
         if state in tied_states:
             return state
     raise RuntimeError("Failed to resolve dominant state from fuzzy outputs.")
@@ -254,7 +266,7 @@ def compute(
     Run the fuzzy inference system for a single input vector.
 
     Returns a dict with keys:
-    overwhelmed, distracted, impatient, engaged, dominant_state, dominant_value.
+    overwhelmed, distracted, impatient, engaged, curiosity, dominant_state, dominant_value.
     """
     normalized_context = _normalize_context(context)
     normalized_profile = str(profile).strip().lower()
@@ -266,6 +278,7 @@ def compute(
     simulation.input["hhd"] = float(hhd)
     simulation.input["hrd"] = float(hrd)
     simulation.input["density"] = float(density)
+    simulation.input["angle"] = float(angle)
     simulation.compute()
 
     results = {
@@ -273,6 +286,7 @@ def compute(
         "distracted": simulation.output.get("distracted", _DEFAULT),
         "impatient": simulation.output.get("impatient", _DEFAULT),
         "engaged": simulation.output.get("engaged", _DEFAULT),
+        "curiosity": simulation.output.get("curiosity", _CURIOSITY_DEFAULT),
     }
 
     dominant = _select_dominant_state(results)

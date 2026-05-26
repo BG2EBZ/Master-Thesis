@@ -126,7 +126,7 @@ def record_fuzzy_debug(env, idx: int, context: str, fuzzy_debug: dict) -> None:
     debug_state.inputs = dict(fuzzy_debug["inputs"])
     debug_state.scores = {
         state: float(fuzzy_debug["result"][state])
-        for state in ("overwhelmed", "distracted", "impatient", "engaged")
+        for state in ("overwhelmed", "distracted", "impatient", "engaged", "curiosity")
     }
     debug_state.dominant_state = str(fuzzy_debug["result"]["dominant_state"])
     debug_state.refresh_counter = int(env.runtime_cache.refresh_counter)
@@ -143,7 +143,7 @@ def apply_fuzzy_transition(
 ) -> None:
     """Apply the fuzzy engine's dominant-state transition to one human."""
     dominant_state = fuzzy_result["dominant_state"]
-    if dominant_state == "engaged":
+    if dominant_state in ("engaged", "curiosity"):
         return
 
     if context == "listening":

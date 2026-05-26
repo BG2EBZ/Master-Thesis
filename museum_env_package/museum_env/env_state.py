@@ -54,6 +54,7 @@ def _default_fuzzy_scores() -> dict[str, float]:
         "distracted": 0.0,
         "impatient": 0.0,
         "engaged": 0.0,
+        "curiosity": 0.0,
     }
 
 
