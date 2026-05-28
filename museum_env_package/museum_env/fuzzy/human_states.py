@@ -57,18 +57,6 @@ def _normalize_context(context: str) -> str:
     return normalized
 
 
-def _define_angle_mfs(angle) -> None:
-    ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-    side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-    side_right = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-    behind_left = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-    behind_right = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
-
-    angle["ahead"] = ahead
-    angle["side"] = np.fmax(side_left, side_right)
-    angle["behind"] = np.fmax(behind_left, behind_right)
-
-
 def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
     if context == "following":
         ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 15, 25])
@@ -87,26 +75,37 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
         density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-        _define_angle_mfs(angle)
-        return
+        ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
+        side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
+        side_right = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
+        behind_right = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+    else:
+        ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 5, 10])
+        ft["medium"] = fuzz.trapmf(ft.universe, [10, 15, 20, 25])
+        ft["long"] = fuzz.trapmf(ft.universe, [20, 25, 60, 60])
 
-    ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 5, 10])
-    ft["medium"] = fuzz.trapmf(ft.universe, [10, 15, 20, 25])
-    ft["long"] = fuzz.trapmf(ft.universe, [20, 25, 60, 60])
+        hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.6])
+        hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.6, 0.9, 1.0])
+        hhd["far"] = fuzz.trapmf(hhd.universe, [0.9, 1.0, 4.0, 4.0])
 
-    hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.6])
-    hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.6, 0.9, 1.0])
-    hhd["far"] = fuzz.trapmf(hhd.universe, [0.9, 1.0, 4.0, 4.0])
+        hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.6, 0.8])
+        hrd["medium"] = fuzz.trapmf(hrd.universe, [0.6, 0.8, 2.0, 2.2])
+        hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
 
-    hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.6, 0.8])
-    hrd["medium"] = fuzz.trapmf(hrd.universe, [0.6, 0.8, 2.0, 2.2])
-    hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
+        density["low"] = fuzz.trapmf(density.universe, [0, 0, 3, 3])
+        density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
+        density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-    density["low"] = fuzz.trapmf(density.universe, [0, 0, 3, 3])
-    density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
-    density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
+        ahead = fuzz.trapmf(angle.universe, [-45, -20, 20, 45])
+        side_left = fuzz.trapmf(angle.universe, [-100, -80, -45, -20])
+        side_right = fuzz.trapmf(angle.universe, [20, 45, 80, 100])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -100, -80])
+        behind_right = fuzz.trapmf(angle.universe, [80, 100, 180, 180])
 
-    _define_angle_mfs(angle)
+    angle["ahead"] = ahead
+    angle["side"] = np.fmax(side_left, side_right)
+    angle["behind"] = np.fmax(behind_left, behind_right)
 
 
 def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
@@ -127,26 +126,37 @@ def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
         density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
         density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
 
-        _define_angle_mfs(angle)
-        return
+        ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
+        side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
+        side_right = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
+        behind_right = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+    else:
+        ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 4, 8])
+        ft["medium"] = fuzz.trapmf(ft.universe, [8, 12, 18, 22])
+        ft["long"] = fuzz.trapmf(ft.universe, [18, 22, 60, 60])
 
-    ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 4, 8])
-    ft["medium"] = fuzz.trapmf(ft.universe, [8, 12, 18, 22])
-    ft["long"] = fuzz.trapmf(ft.universe, [18, 22, 60, 60])
+        hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.8, 1.0])
+        hhd["medium"] = fuzz.trapmf(hhd.universe, [0.8, 1.0, 1.2, 1.4])
+        hhd["far"] = fuzz.trapmf(hhd.universe, [1.2, 1.4, 4.0, 4.0])
 
-    hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.8, 1.0])
-    hhd["medium"] = fuzz.trapmf(hhd.universe, [0.8, 1.0, 1.2, 1.4])
-    hhd["far"] = fuzz.trapmf(hhd.universe, [1.2, 1.4, 4.0, 4.0])
+        hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.9, 1.1])
+        hrd["medium"] = fuzz.trapmf(hrd.universe, [0.9, 1.1, 2.2, 2.4])
+        hrd["far"] = fuzz.trapmf(hrd.universe, [2.2, 2.4, 5.0, 5.0])
 
-    hrd["close"] = fuzz.trapmf(hrd.universe, [0, 0, 0.9, 1.1])
-    hrd["medium"] = fuzz.trapmf(hrd.universe, [0.9, 1.1, 2.2, 2.4])
-    hrd["far"] = fuzz.trapmf(hrd.universe, [2.2, 2.4, 5.0, 5.0])
+        density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
+        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
+        density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
 
-    density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
-    density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
-    density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
+        ahead = fuzz.trapmf(angle.universe, [-45, -20, 20, 45])
+        side_left = fuzz.trapmf(angle.universe, [-100, -80, -45, -20])
+        side_right = fuzz.trapmf(angle.universe, [20, 45, 80, 100])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -100, -80])
+        behind_right = fuzz.trapmf(angle.universe, [80, 100, 180, 180])
 
-    _define_angle_mfs(angle)
+    angle["ahead"] = ahead
+    angle["side"] = np.fmax(side_left, side_right)
+    angle["behind"] = np.fmax(behind_left, behind_right)
 
 
 def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density, angle) -> None:
