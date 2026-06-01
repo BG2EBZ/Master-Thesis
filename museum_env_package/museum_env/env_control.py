@@ -30,6 +30,7 @@ from .env_state import (
     POST_EXPLANATION_ROLE_WAIT,
     POST_EXPLANATION_ROLE_YIELD,
 )
+from .fuzzy.human_states import in_ahead_region
 from .human import (
     DISTRACTED_SOURCE_FOLLOWING,
     DISTRACTED_SOURCE_LISTENING,
@@ -129,7 +130,24 @@ def record_fuzzy_debug(env, idx: int, context: str, fuzzy_debug: dict) -> None:
         for state in ("overwhelmed", "distracted", "impatient", "engaged", "curiosity")
     }
     debug_state.dominant_state = str(fuzzy_debug["result"]["dominant_state"])
+    debug_state.ahead_active = bool(fuzzy_debug.get("ahead_active", False))
     debug_state.refresh_counter = int(env.runtime_cache.refresh_counter)
+
+
+def maybe_log_following_ahead_entry(env, idx: int, fuzzy_debug: dict) -> None:
+    """Log when a following human newly enters the fuzzy `ahead` region."""
+    debug_state = env.fuzzy_debug[idx]
+    ahead_active = bool(fuzzy_debug.get("ahead_active", False))
+    if debug_state.context != "following":
+        previous_ahead_active = False
+    else:
+        previous_ahead_active = bool(debug_state.ahead_active)
+    if (not previous_ahead_active) and ahead_active:
+        human = env.humans[idx]
+        angle_deg = float(fuzzy_debug["inputs"]["angle"])
+        env._log_event(
+            f">>> {human.name} entered FOLLOWING ahead region (angle={angle_deg:.1f} deg)."
+        )
 
 
 def apply_fuzzy_transition(
@@ -212,6 +230,16 @@ def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, w
         session_steps=int(session_steps),
         world_frame=world_frame,
     )
+    fuzzy_debug["ahead_active"] = bool(
+        context == "following"
+        and in_ahead_region(
+            float(fuzzy_debug["inputs"]["angle"]),
+            context=context,
+            profile=human.profile,
+        )
+    )
+    if context == "following":
+        maybe_log_following_ahead_entry(env, idx=idx, fuzzy_debug=fuzzy_debug)
     record_fuzzy_debug(env, idx, context=context, fuzzy_debug=fuzzy_debug)
     apply_fuzzy_transition(
         env,

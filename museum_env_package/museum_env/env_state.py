@@ -242,6 +242,7 @@ class FuzzyDebugState:
     inputs: dict[str, float] = field(default_factory=_default_fuzzy_inputs)
     scores: dict[str, float] = field(default_factory=_default_fuzzy_scores)
     dominant_state: Optional[str] = None
+    ahead_active: bool = False
     refresh_counter: int = -1
 
 

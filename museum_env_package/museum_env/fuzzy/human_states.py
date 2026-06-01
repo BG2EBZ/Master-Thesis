@@ -75,11 +75,11 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
         density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-        ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
-        side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
-        side_right = fuzz.trapmf(angle.universe, [15, 35, 90, 110])
-        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -110, -90])
-        behind_right = fuzz.trapmf(angle.universe, [90, 110, 180, 180])
+        ahead = fuzz.trapmf(angle.universe, [-45, -30, 30, 45])
+        side_left = fuzz.trapmf(angle.universe, [-105, -90, -45, -30])
+        side_right = fuzz.trapmf(angle.universe, [30, 45, 90, 105])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -105, -90])
+        behind_right = fuzz.trapmf(angle.universe, [90, 105, 180, 180])
     else:
         ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 5, 10])
         ft["medium"] = fuzz.trapmf(ft.universe, [10, 15, 20, 25])
@@ -97,11 +97,11 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
         density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
 
-        ahead = fuzz.trapmf(angle.universe, [-45, -20, 20, 45])
-        side_left = fuzz.trapmf(angle.universe, [-100, -80, -45, -20])
-        side_right = fuzz.trapmf(angle.universe, [20, 45, 80, 100])
-        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -100, -80])
-        behind_right = fuzz.trapmf(angle.universe, [80, 100, 180, 180])
+        ahead = fuzz.trapmf(angle.universe, [-45, -30, 30, 45])
+        side_left = fuzz.trapmf(angle.universe, [-105, -90, -45, -30])
+        side_right = fuzz.trapmf(angle.universe, [30, 45, 90, 105])
+        behind_left = fuzz.trapmf(angle.universe, [-180, -180, -105, -90])
+        behind_right = fuzz.trapmf(angle.universe, [90, 105, 180, 180])
 
     angle["ahead"] = ahead
     angle["side"] = np.fmax(side_left, side_right)
@@ -166,6 +166,20 @@ def _define_input_mfs(context: str, profile: str, ft, hhd, hrd, density, angle) 
     _define_normal_input_mfs(context, ft, hhd, hrd, density, angle)
 
 
+def in_ahead_region(angle_value: float, *, context: str, profile: str = HumanProfile.NORMAL) -> bool:
+    """Return whether the angle falls inside the fuzzy `ahead` support."""
+    normalized_context = _normalize_context(context)
+    normalized_profile = str(profile).strip().lower()
+    if normalized_profile not in _PROFILES:
+        valid = ", ".join(_PROFILES)
+        raise ValueError(f"Unknown fuzzy profile: {profile!r}. Expected one of: {valid}.")
+    del normalized_profile
+
+    lower_deg, upper_deg = (-35.0, 35.0) if normalized_context == "following" else (-45.0, 45.0)
+    angle_deg = float(angle_value)
+    return bool(lower_deg < angle_deg < upper_deg)
+
+
 def _define_output_mfs(engaged, overwhelmed, distracted, impatient, curiosity) -> None:
     for output_var in (engaged, overwhelmed, distracted, impatient, curiosity):
         output_var["low"] = fuzz.trapmf(output_var.universe, [0, 0, 0.2, 0.5])
@@ -190,8 +204,6 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
 
         # Curiosity rules
         ctrl.Rule(hrd["close"] & angle["ahead"], curiosity["high"]),
-        ctrl.Rule(hrd["medium"] & angle["ahead"], curiosity["high"]),
-        ctrl.Rule(hrd["far"] & angle["ahead"], curiosity["high"]),
 
         # Engaged rules
         ctrl.Rule(density["low"], engaged["high"]),
@@ -205,6 +217,7 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
         ctrl.Rule(ft["long"] & hrd["far"] & density["low"], engaged["low"]),
         ctrl.Rule(hhd["medium"], engaged["high"]),
         ctrl.Rule(hrd["medium"], engaged["high"]),
+        ctrl.Rule(hrd["close"] & angle["ahead"], engaged["medium"]),
     ]
 
 

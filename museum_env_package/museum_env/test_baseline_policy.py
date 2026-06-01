@@ -1037,6 +1037,15 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         self.assertEqual(ahead_result["dominant_state"], "curiosity")
         self.assertNotEqual(behind_result["dominant_state"], "curiosity")
 
+    def test_human_states_in_ahead_region_matches_following_support(self):
+        module = importlib.import_module("museum_env.fuzzy.human_states")
+
+        self.assertTrue(module.in_ahead_region(-34.0, context="following"))
+        self.assertTrue(module.in_ahead_region(0.0, context="following"))
+        self.assertTrue(module.in_ahead_region(34.0, context="following"))
+        self.assertFalse(module.in_ahead_region(-36.0, context="following"))
+        self.assertFalse(module.in_ahead_region(36.0, context="following"))
+
     def test_compute_human_fuzzy_debug_reports_robot_relative_angle_degrees(self):
         env = self._make_env(n_humans=1)
         try:
@@ -1141,6 +1150,181 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
 
             self.assertEqual(human.mode, HumanMode.LISTENING)
+        finally:
+            env.close()
+
+    def test_following_ahead_entry_logs_only_on_first_entry(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=26)
+            env.follow_phase = FOLLOW_PHASE_TRANSIT
+            human = env.humans[0]
+            human.set_mode(HumanMode.FOLLOWING)
+            engaged_result = {
+                "overwhelmed": 0.0,
+                "distracted": 0.0,
+                "impatient": 0.0,
+                "engaged": 0.9,
+                "curiosity": 0.0,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+            with patch.object(env, "_log_event") as mock_log:
+                with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result):
+                    env_control._maybe_apply_fuzzy(
+                        env,
+                        human,
+                        idx=0,
+                        context="following",
+                        session_steps=0,
+                        world_frame=SimpleNamespace(
+                            observations=SimpleNamespace(
+                                nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                nearest_human_distance=np.array([1.0], dtype=np.float32),
+                                human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                human_robot_distance=np.array([1.0], dtype=np.float32),
+                                local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                            ),
+                            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                            human_xy=np.array([[1.0, 0.0]], dtype=np.float32),
+                            robot_pose=(0.0, 0.0, 0.0),
+                        ),
+                    )
+                    self.assertTrue(
+                        any("entered FOLLOWING ahead region" in str(call.args[0]) for call in mock_log.call_args_list)
+                    )
+
+                    mock_log.reset_mock()
+                    env.runtime_cache.refresh_counter += 1
+                    env_control._maybe_apply_fuzzy(
+                        env,
+                        human,
+                        idx=0,
+                        context="following",
+                        session_steps=0,
+                        world_frame=SimpleNamespace(
+                            observations=SimpleNamespace(
+                                nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                nearest_human_distance=np.array([1.0], dtype=np.float32),
+                                human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                human_robot_distance=np.array([1.0], dtype=np.float32),
+                                local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                            ),
+                            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                            human_xy=np.array([[1.0, 0.0]], dtype=np.float32),
+                            robot_pose=(0.0, 0.0, 0.0),
+                        ),
+                    )
+                    self.assertFalse(
+                        any("entered FOLLOWING ahead region" in str(call.args[0]) for call in mock_log.call_args_list)
+                    )
+        finally:
+            env.close()
+
+    def test_following_ahead_entry_logs_again_after_exit_and_reentry(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=27)
+            env.follow_phase = FOLLOW_PHASE_TRANSIT
+            human = env.humans[0]
+            human.set_mode(HumanMode.FOLLOWING)
+            engaged_result = {
+                "overwhelmed": 0.0,
+                "distracted": 0.0,
+                "impatient": 0.0,
+                "engaged": 0.9,
+                "curiosity": 0.0,
+                "dominant_state": "engaged",
+                "dominant_value": 0.9,
+            }
+            with patch.object(env, "_log_event") as mock_log:
+                with patch.object(env.following_fuzzy_engine, "compute", return_value=engaged_result):
+                    for world_frame in (
+                        SimpleNamespace(
+                            observations=SimpleNamespace(
+                                nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                nearest_human_distance=np.array([1.0], dtype=np.float32),
+                                human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                human_robot_distance=np.array([1.0], dtype=np.float32),
+                                local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                            ),
+                            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                            human_xy=np.array([[1.0, 0.0]], dtype=np.float32),
+                            robot_pose=(0.0, 0.0, 0.0),
+                        ),
+                        SimpleNamespace(
+                            observations=SimpleNamespace(
+                                nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                nearest_human_distance=np.array([1.0], dtype=np.float32),
+                                human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                human_robot_distance=np.array([1.0], dtype=np.float32),
+                                local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                            ),
+                            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                            human_xy=np.array([[0.0, 1.0]], dtype=np.float32),
+                            robot_pose=(0.0, 0.0, 0.0),
+                        ),
+                        SimpleNamespace(
+                            observations=SimpleNamespace(
+                                nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                nearest_human_distance=np.array([1.0], dtype=np.float32),
+                                human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                                human_robot_distance=np.array([1.0], dtype=np.float32),
+                                local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                            ),
+                            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                            human_xy=np.array([[1.0, 0.0]], dtype=np.float32),
+                            robot_pose=(0.0, 0.0, 0.0),
+                        ),
+                    ):
+                        env.runtime_cache.refresh_counter += 1
+                        env_control._maybe_apply_fuzzy(
+                            env,
+                            human,
+                            idx=0,
+                            context="following",
+                            session_steps=0,
+                            world_frame=world_frame,
+                        )
+
+                ahead_logs = [
+                    call for call in mock_log.call_args_list
+                    if "entered FOLLOWING ahead region" in str(call.args[0])
+                ]
+                self.assertEqual(len(ahead_logs), 2)
+        finally:
+            env.close()
+
+    def test_listening_ahead_does_not_emit_following_ahead_log(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=28)
+            env.listening_state.enter_intro(False)
+            human = env.humans[0]
+            human.set_mode(HumanMode.LISTENING)
+            with patch.object(env, "_log_event") as mock_log:
+                env_control._maybe_apply_fuzzy(
+                    env,
+                    human,
+                    idx=0,
+                    context="listening",
+                    session_steps=0,
+                    world_frame=SimpleNamespace(
+                        observations=SimpleNamespace(
+                            nearest_human_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                            nearest_human_distance=np.array([1.0], dtype=np.float32),
+                            human_robot_distance_mean_1s=np.array([1.0], dtype=np.float32),
+                            human_robot_distance=np.array([1.0], dtype=np.float32),
+                            local_crowding_count_1m=np.array([1.0], dtype=np.float32),
+                        ),
+                        robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+                        human_xy=np.array([[1.0, 0.0]], dtype=np.float32),
+                        robot_pose=(0.0, 0.0, 0.0),
+                    ),
+                )
+                self.assertFalse(
+                    any("entered FOLLOWING ahead region" in str(call.args[0]) for call in mock_log.call_args_list)
+                )
         finally:
             env.close()
 
