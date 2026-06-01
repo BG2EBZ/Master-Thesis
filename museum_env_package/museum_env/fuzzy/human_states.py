@@ -191,6 +191,7 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
         # Curiosity rules
         ctrl.Rule(hrd["close"] & angle["ahead"], curiosity["high"]),
         ctrl.Rule(hrd["medium"] & angle["ahead"], curiosity["high"]),
+        ctrl.Rule(hrd["far"] & angle["ahead"], curiosity["high"]),
 
         # Engaged rules
         ctrl.Rule(density["low"], engaged["high"]),

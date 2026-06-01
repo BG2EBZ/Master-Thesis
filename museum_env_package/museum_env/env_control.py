@@ -143,7 +143,7 @@ def apply_fuzzy_transition(
 ) -> None:
     """Apply the fuzzy engine's dominant-state transition to one human."""
     dominant_state = fuzzy_result["dominant_state"]
-    if dominant_state in ("engaged", "curiosity"):
+    if dominant_state == "engaged":
         return
 
     if context == "listening":
@@ -160,6 +160,13 @@ def apply_fuzzy_transition(
         f"density={float(fuzzy_inputs['density']):.1f}, "
         f"angle={float(fuzzy_inputs['angle']):.1f}"
     )
+
+    if dominant_state == "curiosity":
+        if context != "following":
+            return
+        human.start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+        env._log_event(f">>> {human.name} became CURIOUS!{fuzzy_inputs_log}")
+        return
 
     if dominant_state == "distracted":
         human.distracted_source = distracted_source
@@ -237,7 +244,12 @@ def _build_move_ctx(env, human, idx: int, world_frame, repulsion_vec, human_mode
 def apply_general_phase_strategy(env, human, idx: int, world_frame) -> np.ndarray:
     """Compute one human action during the generic following or wandering phase."""
     repulsion_vec = _repulsion_vec(world_frame, idx)
-    if human.mode not in (HumanMode.DISTRACTED, HumanMode.OVERWHELMED, HumanMode.IMPATIENT):
+    if human.mode not in (
+        HumanMode.CURIOSITY,
+        HumanMode.DISTRACTED,
+        HumanMode.OVERWHELMED,
+        HumanMode.IMPATIENT,
+    ):
         human.set_mode(HumanMode.FOLLOWING if env.follow_phase is not None else HumanMode.WANDERING)
 
     human.update_following_duration(

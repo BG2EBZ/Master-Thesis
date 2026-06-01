@@ -69,6 +69,8 @@ def step_behavior(human, ctx, pose):
             anchor_robot_yaw=float(ctx["robot_yaw"]),
             live_robot_xy=ctx["robot_xy"],
         )
+    if human.mode == HumanMode.CURIOSITY:
+        return _step_curiosity(human, ctx, pose)
     if human.mode == HumanMode.DISTRACTED:
         return _step_distracted(human, ctx, pose)
     if human.mode == HumanMode.OVERWHELMED:
@@ -130,6 +132,28 @@ def _step_listening_like(human, ctx, pose, *, anchor_robot_xy, anchor_robot_yaw:
     )
 
     return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
+
+
+def _step_curiosity(human, ctx, pose):
+    human.curiosity_timer += 1
+    current_xy = np.asarray(pose[:2], dtype=np.float32)
+    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+    to_robot = robot_xy - current_xy
+    desired_yaw = (
+        float(np.arctan2(to_robot[1], to_robot[0]))
+        if np.linalg.norm(to_robot) > NORM_EPS
+        else float(pose[2])
+    )
+    yaw_err = wrap_to_pi(desired_yaw - pose[2])
+    action = human._compose_action(np.zeros(2, dtype=np.float32), HUMAN_YAW_RATE_GAIN * yaw_err)
+
+    if human.curiosity_timer >= max(1, int(human.curiosity_duration)):
+        human.set_mode(human.curiosity_recovery_mode)
+        if human.enable_event_logs:
+            logger.info(f">>> {human.name} recovered from CURIOSITY -> {human.mode.upper()}")
+    return action
+
+
 def _step_distracted(human, ctx, pose):
     human.distracted_elapsed_steps += 1
     yaw = pose[2]

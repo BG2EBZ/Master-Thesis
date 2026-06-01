@@ -18,6 +18,7 @@ from museum_env.env_reporting import (
     resolve_robot_visual_state,
 )
 from museum_env.env_state import (
+    FOLLOW_PHASE_TRANSIT,
     LISTEN_QUESTION_PHASE_ANSWER,
     LISTEN_QUESTION_PHASE_TURN_BACK,
     LISTEN_QUESTION_PHASE_TURN_TO_HUMAN,
@@ -1073,7 +1074,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_apply_fuzzy_transition_ignores_curiosity_dominant_state(self):
+    def test_apply_fuzzy_transition_enters_curiosity_during_following(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=23)
@@ -1104,7 +1105,110 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 world_frame=None,
             )
 
-            self.assertEqual(human.mode, HumanMode.FOLLOWING)
+            self.assertEqual(human.mode, HumanMode.CURIOSITY)
+        finally:
+            env.close()
+
+    def test_apply_fuzzy_transition_ignores_curiosity_during_listening(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=24)
+            human = env.humans[0]
+            human.set_mode(HumanMode.LISTENING)
+
+            env_control.apply_fuzzy_transition(
+                env,
+                human,
+                idx=0,
+                context="listening",
+                fuzzy_result={
+                    "overwhelmed": 0.1,
+                    "distracted": 0.1,
+                    "impatient": 0.1,
+                    "engaged": 0.2,
+                    "curiosity": 0.9,
+                    "dominant_state": "curiosity",
+                    "dominant_value": 0.9,
+                },
+                fuzzy_inputs={
+                    "following_time": 20.0,
+                    "hhd": 1.5,
+                    "hrd": 0.5,
+                    "density": 8.0,
+                    "angle": 0.0,
+                },
+                world_frame=None,
+            )
+
+            self.assertEqual(human.mode, HumanMode.LISTENING)
+        finally:
+            env.close()
+
+    def test_curiosity_rotates_in_place_toward_robot(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.start_curiosity()
+
+        pose = (1.0, 1.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 2.0, 0.0),
+            "robot_xy": np.array([1.0, 2.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 1.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        action = human.step(None, data, ctx)
+
+        np.testing.assert_allclose(action[:2], np.zeros(2, dtype=np.float32), atol=1e-6)
+        self.assertAlmostEqual(float(action[2]), HUMAN_YAW_RATE_GAIN * (np.pi / 2.0), places=5)
+        self.assertEqual(human.mode, HumanMode.CURIOSITY)
+
+    def test_curiosity_recovers_to_following_and_resets_following_timer(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.set_mode(HumanMode.FOLLOWING)
+        human.following_steps = 17
+        human.curiosity_duration = 2
+        human.start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+
+        self.assertEqual(human.following_steps, 0)
+
+        pose = (1.0, 1.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 2.0, 0.0),
+            "robot_xy": np.array([1.0, 2.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 1.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.CURIOSITY)
+        self.assertEqual(human.following_steps, 0)
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        self.assertEqual(human.following_steps, 0)
+
+    def test_step_info_can_report_curiosity_mode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=25)
+            env.follow_phase = FOLLOW_PHASE_TRANSIT
+            env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+
+            _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["crowd"]["modes"][0], HumanMode.CURIOSITY)
         finally:
             env.close()
 

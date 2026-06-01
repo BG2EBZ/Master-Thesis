@@ -36,6 +36,7 @@ LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT = 2.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
+CURIOUS_STOP_DURATION_SECONDS_DEFAULT = 5.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
 HR_DISTANCE_MAX = 2.0
@@ -70,6 +71,7 @@ class HumanMode:
     WANDERING = "wandering"
     FOLLOWING = "following"
     LISTENING = "listening"
+    CURIOSITY = "curiosity"
     DISTRACTED = "distracted"
     OVERWHELMED = "overwhelmed"
     IMPATIENT = "impatient"
@@ -145,6 +147,10 @@ class Human:
         self.profile = None
         self.following_steps = 0
         self.listening_steps = 0
+        self.curiosity_duration_seconds = float(CURIOUS_STOP_DURATION_SECONDS_DEFAULT)
+        self.curiosity_duration = round(self.curiosity_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
+        self.curiosity_timer = 0
+        self.curiosity_recovery_mode = HumanMode.FOLLOWING
 
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
@@ -174,6 +180,8 @@ class Human:
             self._clear_distracted_navigation_state()
             self.distracted_source = None
             self.distracted_recovery_mode = HumanMode.FOLLOWING
+        if prev_mode == HumanMode.CURIOSITY:
+            self.reset_curiosity_state()
         if prev_mode == HumanMode.FOLLOWING:
             self.reset_following_duration()
         if prev_mode == HumanMode.OVERWHELMED:
@@ -183,6 +191,8 @@ class Human:
             self.distracted_timer = 0
             self.distracted_elapsed_steps = 0
             self._clear_distracted_navigation_state()
+        if mode == HumanMode.CURIOSITY:
+            self.curiosity_timer = 0
 
     def reset_overwhelmed_state(self):
         self.overwhelmed_stage = None
@@ -190,6 +200,10 @@ class Human:
         self.overwhelmed_pause_timer = 0
         self.overwhelmed_leave_dir = np.zeros(2, dtype=np.float32)
         self.overwhelmed_backoff_start_xy = None
+
+    def reset_curiosity_state(self):
+        self.curiosity_timer = 0
+        self.curiosity_recovery_mode = HumanMode.FOLLOWING
 
     def reset_episode_state(self):
         self.mode = None
@@ -211,6 +225,7 @@ class Human:
         self.max_speed = float(self.base_max_speed)
         self.reset_following_duration()
         self.reset_listening_session_state()
+        self.reset_curiosity_state()
         self.reset_overwhelmed_state()
 
     def set_profile(self, profile: str):
@@ -246,6 +261,7 @@ class Human:
         self.impatient_speed_multiplier = float(impatient_speed_multiplier)
         self.impatient_front_offset = float(impatient_front_offset)
         self.listening_impatient_glance_steps = float((listening_impatient_glance_seconds) / dt)
+        self.curiosity_duration = round(self.curiosity_duration_seconds / dt)
 
     def reset_following_duration(self):
         self.following_steps = 0
@@ -297,6 +313,11 @@ class Human:
             self.listening_impatient_yaw_deviation = 0.0
             self.listening_impatient_turn_sign = 1.0
         self.set_mode(HumanMode.IMPATIENT)
+
+    def start_curiosity(self, recovery_mode: str = HumanMode.FOLLOWING):
+        self.curiosity_timer = 0
+        self.curiosity_recovery_mode = recovery_mode
+        self.set_mode(HumanMode.CURIOSITY)
 
     def _stop_impatient(self):
         if self.impatient_original_max_speed is not None:
