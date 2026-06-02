@@ -70,7 +70,7 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
     elif show_answer:
         text_label = "answer question"
     elif show_pass_request:
-        text_label = "Please let me pass."
+        text_label = "Please let me pass"
     else:
         text_label = "none"
 

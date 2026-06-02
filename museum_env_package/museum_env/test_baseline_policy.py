@@ -1,7 +1,7 @@
 import importlib
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import mujoco
 import numpy as np
@@ -3060,6 +3060,101 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(second_info["robot"]["mode"], "stop")
             self.assertEqual(third_info["robot"]["mode"], "stop")
             self.assertEqual(env._label_scene_option.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP], 0)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_curiosity_can_rejoin_following(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=1411)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.49))
+            with patch.object(env, "_np_random", fake_rng):
+                with patch.object(env, "_log_event") as mock_log:
+                    _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env.humans[0].mode, HumanMode.FOLLOWING)
+            self.assertTrue(
+                any(
+                    "responded to pass request and rejoined (following)." in str(call.args[0])
+                    for call in mock_log.call_args_list
+                )
+            )
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_curiosity_can_keep_blocking(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=1412)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.5))
+            with patch.object(env, "_np_random", fake_rng):
+                with patch.object(env, "_log_event") as mock_log:
+                    _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env.humans[0].mode, HumanMode.CURIOSITY)
+            self.assertTrue(
+                any(
+                    "ignored pass request and stayed curiosity." in str(call.args[0])
+                    for call in mock_log.call_args_list
+                )
+            )
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_curiosity_samples_once_per_episode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=1413)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot_pass_request_steps = 2
+            env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.5))
+            with patch.object(env, "_np_random", fake_rng):
+                with patch.object(env, "_log_event") as mock_log:
+                    _, _, _, _, first_info = env.step(None)
+                    _, _, _, _, second_info = env.step(None)
+
+            self.assertEqual(fake_rng.random.call_count, 1)
+            self.assertEqual(first_info["robot"]["mode"], "stop")
+            self.assertEqual(second_info["robot"]["mode"], "stop")
+            self.assertEqual(env.humans[0].mode, HumanMode.CURIOSITY)
+            matching_logs = [
+                call for call in mock_log.call_args_list
+                if "ignored pass request and stayed curiosity." in str(call.args[0])
+            ]
+            self.assertEqual(len(matching_logs), 1)
         finally:
             env.close()
 

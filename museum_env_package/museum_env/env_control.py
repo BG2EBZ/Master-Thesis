@@ -29,6 +29,8 @@ from .human import (
 from .robot import RobotMode
 from .spatial_utils import wrap_to_pi
 
+_FRONT_BLOCKING_CURIOSITY_REJOIN_PROB = 0.5
+
 
 def reset_following_wait_episode(env) -> None:
     """Clear the temporary waiting/callback state used during follow transit."""
@@ -445,6 +447,7 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
         return adjusted_action
 
     if not state.active:
+        _maybe_apply_front_blocking_curiosity_response(env, blocker_idx=int(blocker_idx))
         state.active = True
         state.blocker_idx = int(blocker_idx)
         state.speech_steps_remaining = int(env.robot_pass_request_steps)
@@ -454,6 +457,23 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
     adjusted_action[:2] = 0.0
     env.robot.mode = RobotMode.STOP
     return adjusted_action
+
+
+def _maybe_apply_front_blocking_curiosity_response(env, *, blocker_idx: int) -> None:
+    """Resolve a one-shot curiosity response when a new front-blocking episode begins."""
+    if not (0 <= int(blocker_idx) < len(env.humans)):
+        return
+
+    blocker = env.humans[int(blocker_idx)]
+    if blocker.mode != HumanMode.CURIOSITY:
+        return
+
+    if float(env.np_random.random()) < _FRONT_BLOCKING_CURIOSITY_REJOIN_PROB:
+        blocker.set_mode(HumanMode.FOLLOWING)
+        env._log_event(f">>> {blocker.name} responded to pass request and rejoined (following).")
+        return
+
+    env._log_event(f">>> {blocker.name} ignored pass request and stayed curiosity.")
 
 
 def advance_robot_front_blocking_runtime(env) -> None:
