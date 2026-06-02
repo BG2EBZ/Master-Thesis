@@ -192,11 +192,17 @@ class RobotFrontBlockingState:
     active: bool = False
     blocker_idx: Optional[int] = None
     speech_steps_remaining: int = 0
+    bypass_active: bool = False
+    bypass_target_xy: Optional[np.ndarray] = None
+    bypass_side_sign: float = 0.0
 
     def reset(self) -> None:
         self.active = False
         self.blocker_idx = None
         self.speech_steps_remaining = 0
+        self.bypass_active = False
+        self.bypass_target_xy = None
+        self.bypass_side_sign = 0.0
 
 
 @dataclass
