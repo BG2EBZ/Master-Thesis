@@ -37,6 +37,9 @@ from .spatial_utils import wrap_to_pi
 
 
 def sync_robot_speaker_state(env) -> None:
+    if int(env.robot_front_blocking_state.speech_steps_remaining) > 0:
+        env.robot.set_speech_mode(RobotSpeechMode.PASS_REQUEST)
+        return
     if env.listening_state.phase == LISTEN_PHASE_WAIT:
         env.robot.set_speech_mode(RobotSpeechMode.EXPLANATION)
         return

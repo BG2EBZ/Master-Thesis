@@ -11,6 +11,7 @@ HUMAN_LABEL_SITE_GROUP = 2
 ROBOT_EXPLANATION_LABEL_GROUP = 3
 ROBOT_FOLLOWME_LABEL_GROUP = 4
 ROBOT_ANSWER_LABEL_GROUP = 1
+ROBOT_PASS_REQUEST_LABEL_GROUP = 5
 HUMAN_LABEL_MODE = mujoco.mjtLabel.mjLABEL_SITE
 
 ROBOT_COLOR_NATURAL = np.array([0.85, 0.85, 0.85, 1.0], dtype=np.float32)
@@ -31,6 +32,7 @@ class RobotVisualState:
     show_follow_me: bool
     show_explanation: bool
     show_answer: bool
+    show_pass_request: bool
     text_label: str
     signature: tuple[str, str, bool]
 
@@ -43,6 +45,7 @@ def build_label_scene_option():
     opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
     opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
     opt.sitegroup[ROBOT_ANSWER_LABEL_GROUP] = 0
+    opt.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP] = 0
     return opt
 
 
@@ -59,12 +62,15 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
     show_follow_me = bool(callback_visual_active)
     show_explanation = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.EXPLANATION)
     show_answer = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.ANSWER)
+    show_pass_request = (not show_follow_me) and (robot.speech_mode == RobotSpeechMode.PASS_REQUEST)
     if show_follow_me:
         text_label = "please rejoin"
     elif show_explanation:
         text_label = "explanation"
     elif show_answer:
         text_label = "answer question"
+    elif show_pass_request:
+        text_label = "Please let me pass."
     else:
         text_label = "none"
 
@@ -75,6 +81,7 @@ def resolve_robot_visual_state(*, robot, callback_visual_active: bool) -> RobotV
         show_follow_me=show_follow_me,
         show_explanation=show_explanation,
         show_answer=show_answer,
+        show_pass_request=show_pass_request,
         text_label=text_label,
         signature=(str(robot.emotion), str(robot.speech_mode), bool(callback_visual_active)),
     )
@@ -95,6 +102,9 @@ def apply_robot_visual_state(
         1 if visual_state.show_explanation else 0
     )
     label_scene_option.sitegroup[ROBOT_ANSWER_LABEL_GROUP] = 1 if visual_state.show_answer else 0
+    label_scene_option.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP] = (
+        1 if visual_state.show_pass_request else 0
+    )
 
 
 def apply_label_scene_option_to_viewer(*, viewer, label_scene_option) -> None:

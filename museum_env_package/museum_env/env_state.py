@@ -34,10 +34,6 @@ def _zero_radii() -> np.ndarray:
     return np.zeros((0,), dtype=np.float32)
 
 
-def _zero_xy() -> np.ndarray:
-    return np.zeros((2,), dtype=np.float32)
-
-
 def _default_fuzzy_inputs() -> dict[str, float]:
     return {
         "following_time": 0.0,
@@ -192,39 +188,15 @@ class PostExplanationState:
 
 
 @dataclass
-class PersonalSpaceBackoffState:
+class RobotFrontBlockingState:
     active: bool = False
-    target_idx: Optional[int] = None
-    direction_label: Optional[str] = None
-    direction_xy: np.ndarray = field(default_factory=_zero_xy)
-    start_xy: Optional[np.ndarray] = None
+    blocker_idx: Optional[int] = None
+    speech_steps_remaining: int = 0
 
     def reset(self) -> None:
         self.active = False
-        self.target_idx = None
-        self.direction_label = None
-        self.direction_xy = _zero_xy()
-        self.start_xy = None
-
-    def start(self, *, target_idx: int, direction_label: str, direction_xy, start_xy) -> None:
-        direction_xy = np.asarray(direction_xy, dtype=np.float32)
-        direction_norm = float(np.linalg.norm(direction_xy))
-        self.active = True
-        self.target_idx = int(target_idx)
-        self.direction_label = str(direction_label)
-        self.direction_xy = (
-            direction_xy / direction_norm if direction_norm > 1e-6 else _zero_xy()
-        ).astype(np.float32)
-        self.start_xy = np.asarray(start_xy, dtype=np.float32).copy()
-
-    def projected_retreat_progress(self, robot_xy) -> float:
-        if (not self.active) or self.start_xy is None:
-            return 0.0
-        direction_norm = float(np.linalg.norm(self.direction_xy))
-        if direction_norm <= 1e-6:
-            return 0.0
-        robot_xy = np.asarray(robot_xy, dtype=np.float32)
-        return max(0.0, float(np.dot(robot_xy - self.start_xy, self.direction_xy)))
+        self.blocker_idx = None
+        self.speech_steps_remaining = 0
 
 
 @dataclass

@@ -57,6 +57,7 @@ from .env_constants import (
     POST_EXPLANATION_HOLD_RESUME_DISTANCE,
     POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD,
     REPULSION_GAIN_DEFAULT,
+    ROBOT_PASS_REQUEST_SECONDS,
     SOCIAL_DISTANCE_DEFAULT,
 )
 from .env_reporting import (
@@ -71,8 +72,8 @@ from .env_reporting import (
 from .env_runtime import build_human_goals, build_world_frame, compute_reached_goal_indices
 from .env_state import (
     ListeningState,
-    PersonalSpaceBackoffState,
     PostExplanationState,
+    RobotFrontBlockingState,
     RuntimeCache,
     StepEvents,
     build_fuzzy_debug_states,
@@ -190,10 +191,11 @@ class MuseumEnv(gym.Env):
             POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD
         )
         self.post_explanation_resume_distance = float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
+        self.robot_pass_request_steps = self._steps(ROBOT_PASS_REQUEST_SECONDS)
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
-        self.personal_space_backoff_state = PersonalSpaceBackoffState()
+        self.robot_front_blocking_state = RobotFrontBlockingState()
         self.runtime_cache = RuntimeCache()
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
@@ -441,7 +443,7 @@ class MuseumEnv(gym.Env):
         self.hr_distance_metric.reset()
         env_control.reset_following_wait_episode(self)
         self._following_callback_resume_grace_steps_remaining = 0
-        self.personal_space_backoff_state.reset()
+        self.robot_front_blocking_state.reset()
 
         for human in self.humans:
             human.reset_episode_state()
@@ -474,7 +476,7 @@ class MuseumEnv(gym.Env):
             float(np.hypot(robot_action[0], robot_action[1])),
         )
         env_flow.maybe_activate_follow_phase_from_robot_progress(self, pre_frame.robot_xy)
-        robot_action = env_control.apply_robot_personal_space_backoff_if_needed(
+        robot_action = env_control.apply_robot_front_blocking_stop_if_needed(
             self,
             robot_action,
             pre_frame,
@@ -538,6 +540,7 @@ class MuseumEnv(gym.Env):
             reached_goal_indices=reached_goal_indices,
             perceived_distracted_indices=distracted_indices,
         )
+        env_control.advance_robot_front_blocking_runtime(self)
         reward = -float(info["robot"]["dist_to_goal"])
         return self._build_observation(post_frame), reward, terminated, truncated, info
 

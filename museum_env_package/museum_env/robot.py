@@ -32,6 +32,7 @@ class RobotSpeechMode:
     NONE = "none"
     EXPLANATION = "explanation"
     ANSWER = "answer"
+    PASS_REQUEST = "pass_request"
 
 
 class Robot:

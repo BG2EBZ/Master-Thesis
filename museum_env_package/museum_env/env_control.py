@@ -11,22 +11,12 @@ from .env_constants import (
     FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS,
     FOLLOWING_SLOWDOWN_SPEED_SCALE,
     FOLLOW_RADIUS_DEFAULT,
-    HUMAN_WALL_FOOTPRINT_RADIUS,
     LISTENING_REPULSION_SCALE,
-    ROBOT_FOOTPRINT_RADIUS_METERS,
-    ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS,
-    ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS,
-    ROBOT_PERSONAL_SPACE_MARGIN_METERS,
-    ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS,
-    ROBOT_PERSONAL_SPACE_RELEASE_METERS,
-    ROBOT_PERSONAL_SPACE_TRIGGER_METERS,
+    ROBOT_FRONT_BLOCKING_TRIGGER_METERS,
 )
 from .env_runtime import resolve_fuzzy_metric_input
 from .env_state import (
     FOLLOW_PHASE_TRANSIT,
-    LISTEN_PHASE_INTRO,
-    LISTEN_PHASE_PAUSED,
-    LISTEN_PHASE_WAIT,
     POST_EXPLANATION_ROLE_WAIT,
     POST_EXPLANATION_ROLE_YIELD,
 )
@@ -37,7 +27,7 @@ from .human import (
     HumanMode,
 )
 from .robot import RobotMode
-from .spatial_utils import raycast_hit_distance, wrap_to_pi
+from .spatial_utils import wrap_to_pi
 
 
 def reset_following_wait_episode(env) -> None:
@@ -417,241 +407,60 @@ def apply_human_controls(env, world_frame) -> None:
         env.data.ctrl[ctrl_idx : ctrl_idx + 3] = human_action
 
 
-def get_nearest_close_human_idx(world_frame) -> Optional[int]:
-    """Return the nearest human inside the robot personal-space trigger radius."""
+def get_nearest_front_blocking_human_idx(env, world_frame) -> Optional[int]:
+    """Return the nearest human who blocks the robot inside the ahead sector."""
     distances = np.asarray(world_frame.observations.human_robot_distance, dtype=np.float32)
     if distances.size == 0:
         return None
-    nearest_idx = int(np.argmin(distances))
-    if float(distances[nearest_idx]) >= float(ROBOT_PERSONAL_SPACE_TRIGGER_METERS):
-        return None
-    return nearest_idx
+
+    best_idx = None
+    best_distance = float("inf")
+    for idx, distance in enumerate(distances):
+        if float(distance) >= float(ROBOT_FRONT_BLOCKING_TRIGGER_METERS):
+            continue
+        if not in_ahead_region(
+            _compute_robot_relative_angle_deg(world_frame, idx),
+            context="following",
+            profile=env.humans[idx].profile,
+        ):
+            continue
+        if float(distance) < best_distance:
+            best_idx = int(idx)
+            best_distance = float(distance)
+    return best_idx
 
 
-def is_robot_backoff_direction_safe(
-    env,
-    world_frame,
-    target_idx: int,
-    direction_xy,
-) -> tuple[bool, float, float, float]:
-    """Check whether a candidate robot backoff direction increases clearance safely."""
-    direction_xy = np.asarray(direction_xy, dtype=np.float32)
-    direction_norm = float(np.linalg.norm(direction_xy))
-    if direction_norm <= 1e-6:
-        return False, float("-inf"), float("-inf"), float("-inf")
+def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) -> np.ndarray:
+    """Stop the robot when someone blocks the ahead region at close range."""
+    adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
+    state = env.robot_front_blocking_state
 
-    direction_unit = direction_xy / direction_norm
-    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
-    human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
-    if not (0 <= int(target_idx) < human_xy.shape[0]):
-        return False, float("-inf"), float("-inf"), float("-inf")
+    if env.robot.mode != RobotMode.MOVE:
+        state.reset()
+        return adjusted_action
 
-    probe_xy = robot_xy + (float(ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS) * direction_unit)
-    current_target_distance = float(world_frame.observations.human_robot_distance[int(target_idx)])
-    candidate_target_distance = float(np.linalg.norm(human_xy[int(target_idx)] - probe_xy))
-    if candidate_target_distance <= current_target_distance + 1e-6:
-        return False, float("-inf"), float("-inf"), float("-inf")
+    blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
+    if blocker_idx is None:
+        state.reset()
+        return adjusted_action
 
-    required_wall_clearance = float(
-        ROBOT_FOOTPRINT_RADIUS_METERS + ROBOT_PERSONAL_SPACE_PROBE_DISTANCE_METERS
-    )
-    hit_distance = raycast_hit_distance(
-        env.model,
-        env.data,
-        env.robot_body_id,
-        direction_unit,
-    )
-    raycast_clearance = float("inf") if hit_distance is None else float(hit_distance)
-    if raycast_clearance < required_wall_clearance:
-        return False, float("-inf"), float("-inf"), raycast_clearance
+    if not state.active:
+        state.active = True
+        state.blocker_idx = int(blocker_idx)
+        state.speech_steps_remaining = int(env.robot_pass_request_steps)
+    else:
+        state.blocker_idx = int(blocker_idx)
 
-    required_human_clearance = float(
-        ROBOT_FOOTPRINT_RADIUS_METERS
-        + HUMAN_WALL_FOOTPRINT_RADIUS
-        + ROBOT_PERSONAL_SPACE_MARGIN_METERS
-    )
-    human_clearances = np.linalg.norm(human_xy - probe_xy[None, :], axis=1).astype(np.float32)
-    min_human_clearance = float(np.min(human_clearances)) if human_clearances.size else float("inf")
-    if np.any(human_clearances < required_human_clearance):
-        return False, float("-inf"), min_human_clearance, raycast_clearance
-
-    target_distance_gain = candidate_target_distance - current_target_distance
-    return True, float(target_distance_gain), min_human_clearance, raycast_clearance
-
-
-def _end_robot_personal_space_backoff_session(env) -> None:
-    """Clear the active personal-space backoff session and log its completion once."""
-    if env.personal_space_backoff_state.active:
-        env._log_event(">>> Robot personal-space backoff ended.")
-    env.personal_space_backoff_state.reset()
-
-
-def _resolve_robot_backoff_away_direction(robot_action, world_frame, target_idx: int) -> Optional[np.ndarray]:
-    """Build the primary "move away from target" direction with robust fallbacks."""
-    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
-    target_xy = np.asarray(world_frame.human_xy[int(target_idx)], dtype=np.float32)
-    away_dir = np.asarray(robot_xy - target_xy, dtype=np.float32)
-    away_norm = float(np.linalg.norm(away_dir))
-    if away_norm <= 1e-6:
-        planar_action = np.asarray(robot_action[:2], dtype=np.float32)
-        planar_norm = float(np.linalg.norm(planar_action))
-        if planar_norm > 1e-6:
-            away_dir = -planar_action
-        else:
-            robot_yaw = float(world_frame.robot_pose[2])
-            away_dir = np.array([-np.cos(robot_yaw), -np.sin(robot_yaw)], dtype=np.float32)
-            if float(np.linalg.norm(away_dir)) <= 1e-6:
-                away_dir = np.array([-1.0, 0.0], dtype=np.float32)
-    away_norm = float(np.linalg.norm(away_dir))
-    if away_norm <= 1e-6:
-        return None
-    return (away_dir / away_norm).astype(np.float32)
-
-
-def choose_robot_personal_space_backoff_direction(
-    env,
-    robot_action,
-    world_frame,
-    target_idx: int,
-) -> tuple[Optional[str], Optional[np.ndarray]]:
-    """Choose one safe retreat direction for a new backoff session."""
-    away_dir = _resolve_robot_backoff_away_direction(
-        robot_action,
-        world_frame,
-        target_idx=int(target_idx),
-    )
-    if away_dir is None:
-        return None, None
-
-    away_safe, _, _, _ = is_robot_backoff_direction_safe(
-        env,
-        world_frame,
-        target_idx=int(target_idx),
-        direction_xy=away_dir,
-    )
-    if away_safe:
-        return "away", np.asarray(away_dir, dtype=np.float32)
-    return None, None
-
-
-def _apply_robot_personal_space_backoff_motion(
-    env,
-    adjusted_action,
-    direction_xy,
-) -> np.ndarray:
-    """Override planar motion to keep retreating along one chosen backoff direction."""
-    adjusted_action[:2] = (
-        float(ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS) * np.asarray(direction_xy, dtype=np.float32)
-    )
-    env.robot.mode = RobotMode.MOVE
+    adjusted_action[:2] = 0.0
+    env.robot.mode = RobotMode.STOP
     return adjusted_action
 
 
-def _start_robot_personal_space_backoff_session(
-    env,
-    world_frame,
-    *,
-    target_idx: int,
-    direction_label: str,
-    direction_xy,
-) -> None:
-    """Start one fixed-distance personal-space retreat session and log it once."""
-    env.personal_space_backoff_state.start(
-        target_idx=int(target_idx),
-        direction_label=str(direction_label),
-        direction_xy=np.asarray(direction_xy, dtype=np.float32),
-        start_xy=np.asarray(world_frame.robot_xy, dtype=np.float32),
-    )
-    person_label = f"person{int(target_idx) + 1}"
-    distance_now = float(world_frame.observations.human_robot_distance[int(target_idx)])
-    env._log_event(
-        f">>> Robot personal-space backoff near {person_label} "
-        f"(distance={distance_now:.2f}m) direction={direction_label}."
-    )
-
-
-def apply_robot_personal_space_backoff_if_needed(env, robot_action, world_frame) -> np.ndarray:
-    """Override the robot action when it must immediately back off from a nearby human."""
-    adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
-
-    listening_override_allowed = env.listening_state.phase in (
-        LISTEN_PHASE_INTRO,
-        LISTEN_PHASE_WAIT,
-        LISTEN_PHASE_PAUSED,
-    )
-    if env.robot.callback_active or env.robot.mode == RobotMode.CALLBACK:
-        _end_robot_personal_space_backoff_session(env)
-        return adjusted_action
-    if (not listening_override_allowed) and env.robot.mode == RobotMode.STOP:
-        _end_robot_personal_space_backoff_session(env)
-        return adjusted_action
-
-    session_state = env.personal_space_backoff_state
-    session_ended = False
-    if session_state.active:
-        target_idx = session_state.target_idx
-        valid_target = target_idx is not None and 0 <= int(target_idx) < len(world_frame.human_xy)
-        if (not valid_target) or session_state.direction_label is None:
-            _end_robot_personal_space_backoff_session(env)
-            session_ended = True
-        else:
-            tracked_target_distance = float(world_frame.observations.human_robot_distance[int(target_idx)])
-            if tracked_target_distance > float(ROBOT_PERSONAL_SPACE_RELEASE_METERS):
-                _end_robot_personal_space_backoff_session(env)
-                session_ended = True
-            else:
-                direction_safe, _, _, _ = is_robot_backoff_direction_safe(
-                    env,
-                    world_frame,
-                    target_idx=int(target_idx),
-                    direction_xy=np.asarray(session_state.direction_xy, dtype=np.float32),
-                )
-                if not direction_safe:
-                    _end_robot_personal_space_backoff_session(env)
-                    session_ended = True
-                else:
-                    retreat_progress = session_state.projected_retreat_progress(world_frame.robot_xy)
-                    if retreat_progress + 1e-6 >= float(
-                        ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS
-                    ):
-                        _end_robot_personal_space_backoff_session(env)
-                        session_ended = True
-                    else:
-                        return _apply_robot_personal_space_backoff_motion(
-                            env,
-                            adjusted_action,
-                            np.asarray(session_state.direction_xy, dtype=np.float32),
-                        )
-
-    if session_ended:
-        return adjusted_action
-
-    target_idx = get_nearest_close_human_idx(world_frame)
-    if target_idx is None:
-        return adjusted_action
-
-    chosen_label, chosen_direction = choose_robot_personal_space_backoff_direction(
-        env,
-        adjusted_action,
-        world_frame,
-        target_idx=int(target_idx),
-    )
-    if chosen_direction is None or chosen_label is None:
-        adjusted_action[:2] = 0.0
-        return adjusted_action
-
-    _start_robot_personal_space_backoff_session(
-        env,
-        world_frame,
-        target_idx=int(target_idx),
-        direction_label=str(chosen_label),
-        direction_xy=np.asarray(chosen_direction, dtype=np.float32),
-    )
-    return _apply_robot_personal_space_backoff_motion(
-        env,
-        adjusted_action,
-        np.asarray(chosen_direction, dtype=np.float32),
-    )
+def advance_robot_front_blocking_runtime(env) -> None:
+    """Advance the one-shot pass-request timer after the current step is reported."""
+    state = env.robot_front_blocking_state
+    if int(state.speech_steps_remaining) > 0:
+        state.speech_steps_remaining = max(0, int(state.speech_steps_remaining) - 1)
 
 
 def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:

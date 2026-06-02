@@ -13,8 +13,9 @@ from museum_env.env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_ON,
     ROBOT_COLOR_NATURAL,
     ROBOT_COLOR_SAD,
-    ROBOT_FOLLOWME_LABEL_GROUP,
     ROBOT_ANSWER_LABEL_GROUP,
+    ROBOT_FOLLOWME_LABEL_GROUP,
+    ROBOT_PASS_REQUEST_LABEL_GROUP,
     resolve_robot_visual_state,
 )
 from museum_env.env_state import (
@@ -193,6 +194,17 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             visual_state = resolve_robot_visual_state(robot=env.robot, callback_visual_active=True)
             self.assertTrue(visual_state.show_follow_me)
             self.assertEqual(visual_state.text_label, "please rejoin")
+        finally:
+            env.close()
+
+    def test_pass_request_visual_state_uses_please_let_me_pass_label(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=114)
+            env.robot.set_speech_mode("pass_request")
+            visual_state = resolve_robot_visual_state(robot=env.robot, callback_visual_active=False)
+            self.assertTrue(visual_state.show_pass_request)
+            self.assertEqual(visual_state.text_label, "Please let me pass.")
         finally:
             env.close()
 
@@ -2952,7 +2964,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_transit_follow_personal_space_backoff_moves_away_from_close_human(self):
+    def test_transit_follow_front_blocking_stop_triggers_for_ahead_close_human(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=138)
@@ -2960,631 +2972,215 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             env.robot.listen_done = True
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
-            baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, info = env.step(None)
 
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
-            self.assertEqual(info["robot"]["mode"], "move")
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env.robot_front_blocking_state.blocker_idx, 0)
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP], 1)
         finally:
             env.close()
 
-    def test_transit_follow_personal_space_backoff_targets_nearest_close_human(self):
-        env = self._make_env(n_humans=2)
+    def test_transit_follow_front_blocking_ignores_close_human_outside_ahead_region(self):
+        env = self._make_env(n_humans=1)
         try:
             env.reset(seed=139)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0), (5.0, 4.5, 0.0)),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 0.5, 0.0),),
             )
             self._invalidate_observation_cache(env)
+            baseline_action, _, _, _ = env.robot._waypoint_action((0.0, 0.0, 0.0))
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, info = env.step(None)
 
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.5, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], float(baseline_action[0]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], float(baseline_action[1]), places=6)
+            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self.assertEqual(info["robot"]["mode"], "move")
+            self.assertFalse(info["robot"]["speaker_active"])
+            self.assertFalse(env.robot_front_blocking_state.active)
         finally:
             env.close()
 
-    def test_transit_follow_personal_space_backoff_freezes_when_away_is_unsafe(self):
-        env = self._make_env(n_humans=1)
+    def test_transit_follow_front_blocking_targets_nearest_ahead_human(self):
+        env = self._make_env(n_humans=2)
         try:
             env.reset(seed=140)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((5.0, 5.55, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.55, 0.0, 0.0), (0.45, 0.05, 0.0)),
             )
             self._invalidate_observation_cache(env)
 
-            def raycast_side_effect(_model, _data, _body_id, direction_xy):
-                direction_xy = np.asarray(direction_xy, dtype=np.float32)
-                direction_xy = direction_xy / np.linalg.norm(direction_xy)
-                if direction_xy[1] < -0.99:
-                    return 0.1
-                if direction_xy[0] < -0.99:
-                    return 0.1
-                return 1.0
+            _, _, _, _, info = env.step(None)
 
-            with patch("museum_env.env_control.raycast_hit_distance", side_effect=raycast_side_effect):
-                _, _, _, _, info = env.step(None)
-
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertEqual(env.robot_front_blocking_state.blocker_idx, 1)
         finally:
             env.close()
 
-    def test_transit_follow_personal_space_backoff_does_not_start_lateral_session_when_away_is_unsafe(
-        self,
-    ):
+    def test_transit_follow_front_blocking_speaks_once_then_keeps_stopping(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=141)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
+            env.robot_pass_request_steps = 2
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((5.0, 5.55, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-            call_count = {"value": 0}
 
-            def safety_side_effect(_env, world_frame, target_idx, direction_xy):
-                del world_frame, target_idx
-                call_count["value"] += 1
-                direction_xy = np.asarray(direction_xy, dtype=np.float32)
-                direction_xy = direction_xy / np.linalg.norm(direction_xy)
-                if direction_xy[1] < -0.99:
-                    return False, float("-inf"), float("-inf"), float("-inf")
-                if direction_xy[0] > 0.99:
-                    return True, 0.30, 0.60, 0.80
-                return True, 0.10, 0.95, 10.0
+            _, _, _, _, first_info = env.step(None)
+            _, _, _, _, second_info = env.step(None)
+            _, _, _, _, third_info = env.step(None)
 
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.is_robot_backoff_direction_safe",
-                side_effect=safety_side_effect,
-            ):
-                action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(call_count["value"], 1)
-            self.assertEqual(log_mock.call_count, 0)
-            self.assertFalse(env.personal_space_backoff_state.active)
-            self.assertEqual(env.personal_space_backoff_state.direction_label, None)
-            self.assertAlmostEqual(action[0], 0.0, places=6)
-            self.assertAlmostEqual(action[1], 0.0, places=6)
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertTrue(second_info["robot"]["speaker_active"])
+            self.assertFalse(third_info["robot"]["speaker_active"])
+            self.assertEqual(first_info["robot"]["mode"], "stop")
+            self.assertEqual(second_info["robot"]["mode"], "stop")
+            self.assertEqual(third_info["robot"]["mode"], "stop")
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP], 0)
         finally:
             env.close()
 
-    def test_transit_follow_personal_space_backoff_freezes_translation_when_all_directions_are_unsafe(self):
+    def test_transit_follow_front_blocking_clears_and_can_reannounce(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=142)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
+            env.robot_pass_request_steps = 1
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
-            baseline_action, _, _, _ = env.robot._waypoint_action((5.0, 5.0, 0.0))
 
-            with patch(
-                "museum_env.env_control.is_robot_backoff_direction_safe",
-                return_value=(False, float("-inf"), float("-inf"), float("-inf")),
-            ):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, first_info = env.step(None)
 
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["yaw_rate"], float(baseline_action[2]), places=6)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 0.5, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            _, _, _, _, cleared_info = env.step(None)
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            _, _, _, _, second_info = env.step(None)
+
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertFalse(cleared_info["robot"]["speaker_active"])
+            self.assertEqual(cleared_info["robot"]["mode"], "move")
+            self.assertTrue(second_info["robot"]["speaker_active"])
+            self.assertEqual(second_info["robot"]["mode"], "stop")
         finally:
             env.close()
 
-    def test_listening_wait_personal_space_backoff_overrides_stop(self):
-        env = self._make_env(n_humans=1)
+    def test_transit_follow_front_blocking_does_not_repeat_when_blocker_changes(self):
+        env = self._make_env(n_humans=2)
         try:
             env.reset(seed=143)
-            env.listening_state.enter_wait(False)
-            env.robot.listen_mode = True
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot_pass_request_steps = 1
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((5.4, 5.0, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.45, 0.0, 0.0), (0.7, 0.7, 0.0)),
             )
             self._invalidate_observation_cache(env)
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, first_info = env.step(None)
 
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
-            self.assertEqual(info["robot"]["mode"], "move")
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 0.8, 0.0), (0.5, 0.0, 0.0)),
+            )
+            self._invalidate_observation_cache(env)
+            _, _, _, _, second_info = env.step(None)
+
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertFalse(second_info["robot"]["speaker_active"])
+            self.assertEqual(second_info["robot"]["mode"], "stop")
+            self.assertEqual(env.robot_front_blocking_state.blocker_idx, 1)
         finally:
             env.close()
 
-    def test_listening_paused_personal_space_backoff_preserves_turn_yaw_rate(self):
+    def test_listening_wait_front_blocking_does_not_override_stop(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=144)
-            env.robot.listen_mode = True
             env.listening_state.enter_wait(False)
-            env.listening_state.pause()
-            env.listening_state.question_phase = LISTEN_QUESTION_PHASE_TURN_TO_HUMAN
-            env.listening_state.question_human_idx = 0
+            env.robot.listen_mode = True
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((5.0, 5.55, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, info = env.step(None)
 
+            self.assertEqual(info["robot"]["mode"], "stop")
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], -0.5, places=6)
-            self.assertAlmostEqual(abs(info["robot"]["action"]["yaw_rate"]), 1.0, places=6)
-            self.assertEqual(info["robot"]["mode"], "move")
+            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env._label_scene_option.sitegroup[ROBOT_PASS_REQUEST_LABEL_GROUP], 0)
+            self.assertFalse(env.robot_front_blocking_state.active)
         finally:
             env.close()
 
-    def test_active_callback_personal_space_backoff_does_not_interrupt_callback(self):
+    def test_active_callback_front_blocking_does_not_interrupt_callback(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=145)
             self._set_robot_and_human_poses(
                 env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((5.4, 5.0, 0.0),),
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
             )
             self._invalidate_observation_cache(env)
             env.robot.start_callback(
                 target_idx=0,
-                target_xy=np.array([5.4, 5.0], dtype=np.float32),
+                target_xy=np.array([0.5, 0.0], dtype=np.float32),
                 cue_steps=2,
             )
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, info = env.step(None)
 
             self.assertEqual(info["robot"]["mode"], "callback")
             self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_non_listening_stop_personal_space_backoff_does_not_override_protected_stop(self):
-        env = self._make_env(n_humans=2)
-        try:
-            env.reset(seed=146)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            env.following_callback_wait_steps = 99
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0), (5.0, 9.1, 0.0)),
-            )
-            self._invalidate_observation_cache(env)
-
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
-
-            self.assertEqual(info["robot"]["mode"], "stop")
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
-            self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_session_keeps_direction_until_target_reaches_release_distance(
-        self,
-    ):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1461)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.raycast_hit_distance",
-                return_value=1.0,
-            ):
-                first_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-                self._set_robot_and_human_poses(
-                    env,
-                    robot_pose=(5.10, 5.0, 0.0),
-                    human_poses=((4.6, 5.0, 0.0),),
-                )
-                self._invalidate_observation_cache(env)
-                mid_frame = env._build_world_frame(force=True)
-                second_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    mid_frame,
-                )
-
-                self._set_robot_and_human_poses(
-                    env,
-                    robot_pose=(5.25, 5.0, 0.0),
-                    human_poses=((4.6, 5.0, 0.0),),
-                )
-                self._invalidate_observation_cache(env)
-                end_frame = env._build_world_frame(force=True)
-                third_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    end_frame,
-                )
-
-                self._set_robot_and_human_poses(
-                    env,
-                    robot_pose=(5.35, 5.0, 0.0),
-                    human_poses=((4.6, 5.0, 0.0),),
-                )
-                self._invalidate_observation_cache(env)
-                release_frame = env._build_world_frame(force=True)
-                fourth_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    release_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 2)
-            self.assertIn("Robot personal-space backoff near person1", log_mock.call_args_list[0].args[0])
-            self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
-            self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
-            self.assertFalse(env.personal_space_backoff_state.active)
-            self.assertEqual(env.personal_space_backoff_state.direction_label, None)
-            self.assertGreater(first_action[0], 0.0)
-            self.assertAlmostEqual(first_action[1], 0.0, places=6)
-            self.assertGreater(second_action[0], 0.0)
-            self.assertAlmostEqual(second_action[1], 0.0, places=6)
-            self.assertGreater(third_action[0], 0.0)
-            self.assertAlmostEqual(third_action[1], 0.0, places=6)
-            self.assertAlmostEqual(fourth_action[0], 0.0, places=6)
-            self.assertAlmostEqual(fourth_action[1], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_ends_when_tracked_target_reaches_release_distance(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=14614)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.31, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
-            )
-            env.personal_space_backoff_state.start(
-                target_idx=0,
-                direction_label="away",
-                direction_xy=np.array([1.0, 0.0], dtype=np.float32),
-                start_xy=np.array([5.0, 5.0], dtype=np.float32),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock:
-                action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 1)
-            self.assertEqual(log_mock.call_args_list[0].args[0], ">>> Robot personal-space backoff ended.")
-            self.assertFalse(env.personal_space_backoff_state.active)
-            self.assertEqual(env.personal_space_backoff_state.direction_label, None)
-            self.assertAlmostEqual(action[0], 0.0, places=6)
-            self.assertAlmostEqual(action[1], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_keeps_full_speed_just_before_hard_retreat_cap(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=14615)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            near_end_progress = float(env_control.ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS) - 1e-4
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0 + near_end_progress, 5.0, 0.0),
-                human_poses=((5.0, 5.0, 0.0),),
-            )
-            env.personal_space_backoff_state.start(
-                target_idx=0,
-                direction_label="away",
-                direction_xy=np.array([1.0, 0.0], dtype=np.float32),
-                start_xy=np.array([5.0, 5.0], dtype=np.float32),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch(
-                "museum_env.env_control.is_robot_backoff_direction_safe",
-                return_value=(True, 0.2, 1.0, 1.0),
-            ):
-                action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertTrue(env.personal_space_backoff_state.active)
-            self.assertAlmostEqual(
-                action[0],
-                float(env_control.ROBOT_PERSONAL_SPACE_BACKOFF_SPEED_METERS),
-                places=6,
-            )
-            self.assertAlmostEqual(action[1], 0.0, places=6)
-            self.assertEqual(env.robot.mode, "move")
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_keeps_same_session_when_retreat_exceeds_old_threshold_but_target_is_still_close(
-        self,
-    ):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1462)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.7, 5.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-            first_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.raycast_hit_distance",
-                return_value=1.0,
-            ):
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    first_frame,
-                )
-
-                self._set_robot_and_human_poses(
-                    env,
-                    robot_pose=(5.25, 5.0, 0.0),
-                    human_poses=((4.7, 5.0, 0.0),),
-                )
-                self._invalidate_observation_cache(env)
-                second_frame = env._build_world_frame(force=True)
-                second_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    second_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 1)
-            self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
-            self.assertTrue(env.personal_space_backoff_state.active)
-            np.testing.assert_allclose(
-                env.personal_space_backoff_state.start_xy,
-                np.array([5.0, 5.0], dtype=np.float32),
-                atol=1e-6,
-            )
-            self.assertGreater(second_action[0], 0.0)
-            self.assertAlmostEqual(second_action[1], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_ends_at_hard_retreat_cap_and_can_restart_later(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=14621)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            hard_cap_progress = float(env_control.ROBOT_PERSONAL_SPACE_MAX_RETREAT_DISTANCE_METERS)
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0 + hard_cap_progress, 5.0, 0.0),
-                human_poses=((5.05, 5.0, 0.0),),
-            )
-            env.personal_space_backoff_state.start(
-                target_idx=0,
-                direction_label="away",
-                direction_xy=np.array([1.0, 0.0], dtype=np.float32),
-                start_xy=np.array([5.0, 5.0], dtype=np.float32),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.is_robot_backoff_direction_safe",
-                return_value=(True, 0.2, 1.0, 1.0),
-            ):
-                end_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                restart_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 2)
-            self.assertEqual(log_mock.call_args_list[0].args[0], ">>> Robot personal-space backoff ended.")
-            self.assertIn("Robot personal-space backoff near person1", log_mock.call_args_list[1].args[0])
-            self.assertTrue(env.personal_space_backoff_state.active)
-            self.assertAlmostEqual(end_action[0], 0.0, places=6)
-            self.assertAlmostEqual(end_action[1], 0.0, places=6)
-            self.assertGreater(restart_action[0], 0.0)
-            self.assertAlmostEqual(restart_action[1], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_cancels_unsafe_session_without_lateral_reselection(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1463)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-            call_index = {"value": 0}
-
-            def safety_side_effect(_env, _world_frame, target_idx, direction_xy):
-                del target_idx
-                direction_xy = np.asarray(direction_xy, dtype=np.float32)
-                direction_xy = direction_xy / np.linalg.norm(direction_xy)
-                call_number = int(call_index["value"])
-                call_index["value"] += 1
-                if call_number == 0:
-                    return True, 0.2, 1.0, 1.0
-                if call_number == 1:
-                    return False, float("-inf"), float("-inf"), float("-inf")
-                return False, float("-inf"), float("-inf"), float("-inf")
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.is_robot_backoff_direction_safe",
-                side_effect=safety_side_effect,
-            ):
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                second_action = env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(call_index["value"], 2)
-            self.assertEqual(log_mock.call_count, 2)
-            self.assertIn("direction=away", log_mock.call_args_list[0].args[0])
-            self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
-            self.assertFalse(env.personal_space_backoff_state.active)
-            self.assertEqual(env.personal_space_backoff_state.direction_label, None)
-            self.assertAlmostEqual(second_action[0], 0.0, places=6)
-            self.assertAlmostEqual(second_action[1], 0.0, places=6)
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_logs_exit_once_when_callback_suppresses_backoff(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1465)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.raycast_hit_distance",
-                return_value=1.0,
-            ):
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                env.robot.callback_active = True
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 2)
-            self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
-        finally:
-            env.close()
-
-    def test_personal_space_backoff_logs_exit_once_when_protected_stop_suppresses_backoff(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1466)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(5.0, 5.0, 0.0),
-                human_poses=((4.6, 5.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-            world_frame = env._build_world_frame(force=True)
-
-            with patch.object(env, "_log_event") as log_mock, patch(
-                "museum_env.env_control.raycast_hit_distance",
-                return_value=1.0,
-            ):
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                env.robot.mode = "stop"
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-                env_control.apply_robot_personal_space_backoff_if_needed(
-                    env,
-                    np.zeros(3, dtype=np.float32),
-                    world_frame,
-                )
-
-            self.assertEqual(log_mock.call_count, 2)
-            self.assertEqual(log_mock.call_args_list[1].args[0], ">>> Robot personal-space backoff ended.")
+            self.assertFalse(info["robot"]["speaker_active"])
+            self.assertFalse(env.robot_front_blocking_state.active)
         finally:
             env.close()
 
@@ -3602,15 +3198,15 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             )
             self._invalidate_observation_cache(env)
 
-            with patch("museum_env.env_control.raycast_hit_distance", return_value=1.0):
-                _, _, _, _, info = env.step(None)
+            _, _, _, _, info = env.step(None)
 
             self.assertFalse(info["events"]["callback_triggered"])
             self.assertIsNone(env._following_callback_override_target_idx)
             self.assertFalse(env.robot.callback_active)
-            self.assertEqual(info["robot"]["mode"], "move")
-            self.assertAlmostEqual(info["robot"]["action"]["vx"], -0.5, places=6)
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertAlmostEqual(info["robot"]["action"]["vx"], 0.0, places=6)
             self.assertAlmostEqual(info["robot"]["action"]["vy"], 0.0, places=6)
+            self.assertTrue(info["robot"]["speaker_active"])
         finally:
             env.close()
 
