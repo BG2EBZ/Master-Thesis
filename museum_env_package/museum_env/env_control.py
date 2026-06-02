@@ -27,13 +27,12 @@ from .human import (
     HumanMode,
 )
 from .robot import ROBOT_YAW_RATE_LIMIT, RobotMode
-from .spatial_utils import raycast_hit_distance, wrap_to_pi
+from .spatial_utils import wrap_to_pi
 
 _FRONT_BLOCKING_CURIOSITY_REJOIN_PROB = 0.5
 _FRONT_BLOCKING_BYPASS_SIDE_OFFSET_METERS = 0.75
 _FRONT_BLOCKING_BYPASS_FORWARD_OFFSET_METERS = 0.45
 _FRONT_BLOCKING_BYPASS_REACHED_THRESHOLD_METERS = 0.20
-_FRONT_BLOCKING_BYPASS_CLEARANCE_EPS = 1e-3
 
 
 def reset_following_wait_episode(env) -> None:
@@ -450,7 +449,26 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
         state.reset()
         return adjusted_action
 
+    if not state.active:
+        blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
+        if blocker_idx is None:
+            return adjusted_action
+
+        state.blocker_idx = int(blocker_idx)
+        _maybe_apply_front_blocking_curiosity_response(env, blocker_idx=int(blocker_idx))
+        state.active = True
+        state.speech_steps_remaining = int(env.robot_pass_request_steps)
+        state.bypass_active = False
+        state.bypass_target_xy = None
+        state.bypass_side_sign = 0.0
+
     blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
+
+    if int(state.speech_steps_remaining) > 0:
+        adjusted_action[:2] = 0.0
+        env.robot.mode = RobotMode.STOP
+        return adjusted_action
+
     if blocker_idx is None:
         state.reset()
         return adjusted_action
@@ -459,45 +477,25 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
 
     if state.bypass_active:
         if _front_blocking_bypass_reached(env, state=state, world_frame=world_frame):
-            state.reset()
+            state.bypass_active = False
+            state.bypass_target_xy = None
+            state.bypass_side_sign = 0.0
             return adjusted_action
-
-        if not _front_blocking_bypass_target_is_feasible(env, state=state, world_frame=world_frame):
-            bypass_target_xy, bypass_side_sign = _select_front_blocking_bypass_target(
-                env,
-                blocker_idx=int(blocker_idx),
-                world_frame=world_frame,
-            )
-            if bypass_target_xy is None:
-                state.bypass_active = False
-                state.bypass_target_xy = None
-                state.bypass_side_sign = 0.0
-                adjusted_action[:2] = 0.0
-                env.robot.mode = RobotMode.STOP
-                return adjusted_action
-            state.bypass_target_xy = np.asarray(bypass_target_xy, dtype=np.float32)
-            state.bypass_side_sign = float(bypass_side_sign)
 
         env.robot.mode = RobotMode.MOVE
         return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
 
-    if not state.active:
-        _maybe_apply_front_blocking_curiosity_response(env, blocker_idx=int(blocker_idx))
-        state.active = True
-        state.speech_steps_remaining = int(env.robot_pass_request_steps)
-
-    if int(state.speech_steps_remaining) <= 0:
-        bypass_target_xy, bypass_side_sign = _select_front_blocking_bypass_target(
-            env,
-            blocker_idx=int(blocker_idx),
-            world_frame=world_frame,
-        )
-        if bypass_target_xy is not None:
-            state.bypass_active = True
-            state.bypass_target_xy = np.asarray(bypass_target_xy, dtype=np.float32)
-            state.bypass_side_sign = float(bypass_side_sign)
-            env.robot.mode = RobotMode.MOVE
-            return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
+    bypass_target_xy, bypass_side_sign = _select_front_blocking_bypass_target(
+        env,
+        blocker_idx=int(blocker_idx),
+        world_frame=world_frame,
+    )
+    if bypass_target_xy is not None:
+        state.bypass_active = True
+        state.bypass_target_xy = np.asarray(bypass_target_xy, dtype=np.float32)
+        state.bypass_side_sign = float(bypass_side_sign)
+        env.robot.mode = RobotMode.MOVE
+        return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
 
     adjusted_action[:2] = 0.0
     env.robot.mode = RobotMode.STOP
@@ -552,20 +550,8 @@ def _front_blocking_bypass_reached(env, *, state, world_frame) -> bool:
         np.linalg.norm(target_xy - robot_xy) <= float(_FRONT_BLOCKING_BYPASS_REACHED_THRESHOLD_METERS)
     )
 
-
-def _front_blocking_bypass_target_is_feasible(env, *, state, world_frame) -> bool:
-    """Return whether the cached bypass target is still reachable without a wall hit."""
-    if state.bypass_target_xy is None:
-        return False
-    return _is_robot_bypass_candidate_feasible(
-        env,
-        world_frame=world_frame,
-        candidate_xy=np.asarray(state.bypass_target_xy, dtype=np.float32),
-    )
-
-
 def _select_front_blocking_bypass_target(env, *, blocker_idx: int, world_frame) -> tuple[Optional[np.ndarray], float]:
-    """Pick the best temporary bypass target around the blocker or return no target."""
+    """Pick a fixed left-side temporary bypass target around the blocker."""
     if not (0 <= int(blocker_idx) < len(env.humans)):
         return None, 0.0
 
@@ -580,52 +566,13 @@ def _select_front_blocking_bypass_target(env, *, blocker_idx: int, world_frame) 
     guide_dir = guide_xy / guide_norm
     side_dir = np.array([-guide_dir[1], guide_dir[0]], dtype=np.float32)
 
-    best_target_xy = None
-    best_side_sign = 0.0
-    best_remaining_distance = float("inf")
-
-    for side_sign in (1.0, -1.0):
-        candidate_xy = np.asarray(
-            blocker_xy
-            + (side_sign * float(_FRONT_BLOCKING_BYPASS_SIDE_OFFSET_METERS) * side_dir)
-            + (float(_FRONT_BLOCKING_BYPASS_FORWARD_OFFSET_METERS) * guide_dir),
-            dtype=np.float32,
-        )
-        if not _is_robot_bypass_candidate_feasible(env, world_frame=world_frame, candidate_xy=candidate_xy):
-            continue
-
-        remaining_distance = float(np.linalg.norm(waypoint_xy - candidate_xy))
-        is_better_distance = remaining_distance < best_remaining_distance - 1e-8
-        is_tie_prefer_left = (
-            abs(remaining_distance - best_remaining_distance) <= 1e-8
-            and float(side_sign) > float(best_side_sign)
-        )
-        if best_target_xy is None or is_better_distance or is_tie_prefer_left:
-            best_target_xy = candidate_xy
-            best_side_sign = float(side_sign)
-            best_remaining_distance = remaining_distance
-
-    return best_target_xy, best_side_sign
-
-
-def _is_robot_bypass_candidate_feasible(env, *, world_frame, candidate_xy) -> bool:
-    """Return whether the robot can reach a bypass target without hitting a wall first."""
-    candidate_xy = np.asarray(candidate_xy, dtype=np.float32)
-    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
-    to_candidate_xy = candidate_xy - robot_xy
-    target_distance = float(np.linalg.norm(to_candidate_xy))
-    if target_distance <= 1e-8:
-        return False
-
-    hit_distance = raycast_hit_distance(
-        env.model,
-        env.data,
-        env.robot_body_id,
-        to_candidate_xy,
+    candidate_xy = np.asarray(
+        blocker_xy
+        + (float(_FRONT_BLOCKING_BYPASS_SIDE_OFFSET_METERS) * side_dir)
+        + (float(_FRONT_BLOCKING_BYPASS_FORWARD_OFFSET_METERS) * guide_dir),
+        dtype=np.float32,
     )
-    if hit_distance is None:
-        return True
-    return bool(float(hit_distance) + float(_FRONT_BLOCKING_BYPASS_CLEARANCE_EPS) >= target_distance)
+    return candidate_xy, 1.0
 
 
 def advance_robot_front_blocking_runtime(env) -> None:

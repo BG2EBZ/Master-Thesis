@@ -3129,8 +3129,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
 
             _, _, _, _, first_info = env.step(None)
             _, _, _, _, second_info = env.step(None)
-            with patch.object(env_control, "raycast_hit_distance", return_value=None):
-                _, _, _, _, third_info = env.step(None)
+            _, _, _, _, third_info = env.step(None)
 
             self.assertTrue(first_info["robot"]["speaker_active"])
             self.assertTrue(second_info["robot"]["speaker_active"])
@@ -3164,8 +3163,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             waypoint_idx_before = env.robot.current_waypoint_idx
 
             _, _, _, _, first_info = env.step(None)
-            with patch.object(env_control, "raycast_hit_distance", return_value=None):
-                _, _, _, _, second_info = env.step(None)
+            _, _, _, _, second_info = env.step(None)
 
             self.assertEqual(first_info["robot"]["mode"], "stop")
             self.assertEqual(second_info["robot"]["mode"], "move")
@@ -3174,7 +3172,7 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
-    def test_transit_follow_front_blocking_bypass_prefers_feasible_side(self):
+    def test_transit_follow_front_blocking_bypass_uses_fixed_left_side(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=1415)
@@ -3189,39 +3187,11 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self._invalidate_observation_cache(env)
 
             _, _, _, _, first_info = env.step(None)
-
-            with patch.object(env_control, "raycast_hit_distance", side_effect=[None, 0.1]):
-                _, _, _, _, second_info = env.step(None)
+            _, _, _, _, second_info = env.step(None)
 
             self.assertEqual(first_info["robot"]["mode"], "stop")
             self.assertEqual(second_info["robot"]["mode"], "move")
             self.assertAlmostEqual(env.robot_front_blocking_state.bypass_side_sign, 1.0, places=6)
-        finally:
-            env.close()
-
-    def test_transit_follow_front_blocking_bypass_falls_back_to_silent_stop_when_both_sides_blocked(self):
-        env = self._make_env(n_humans=1)
-        try:
-            env.reset(seed=1416)
-            env.follow_phase = "transit_follow"
-            env.robot.listen_done = True
-            env.robot_pass_request_steps = 1
-            self._set_robot_and_human_poses(
-                env,
-                robot_pose=(0.0, 0.0, 0.0),
-                human_poses=((0.5, 0.0, 0.0),),
-            )
-            self._invalidate_observation_cache(env)
-
-            _, _, _, _, first_info = env.step(None)
-
-            with patch.object(env_control, "raycast_hit_distance", side_effect=[0.1, 0.1]):
-                _, _, _, _, second_info = env.step(None)
-
-            self.assertEqual(first_info["robot"]["mode"], "stop")
-            self.assertEqual(second_info["robot"]["mode"], "stop")
-            self.assertFalse(second_info["robot"]["speaker_active"])
-            self.assertFalse(env.robot_front_blocking_state.bypass_active)
         finally:
             env.close()
 
@@ -3291,13 +3261,112 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_transit_follow_front_blocking_curiosity_begins_fixed_left_bypass_after_pass_request(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14121)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot_pass_request_steps = 1
+            env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.5))
+            with patch.object(env, "_np_random", fake_rng):
+                _, _, _, _, first_info = env.step(None)
+                _, _, _, _, second_info = env.step(None)
+
+            self.assertEqual(first_info["robot"]["mode"], "stop")
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertEqual(second_info["robot"]["mode"], "move")
+            self.assertFalse(second_info["robot"]["speaker_active"])
+            self.assertTrue(env.robot_front_blocking_state.bypass_active)
+            self.assertAlmostEqual(env.robot_front_blocking_state.bypass_side_sign, 1.0, places=6)
+            self.assertEqual(env.humans[0].mode, HumanMode.CURIOSITY)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_latches_full_pass_request_even_if_blocker_clears_early(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14122)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot_pass_request_steps = 2
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_info = env.step(None)
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 0.8, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            _, _, _, _, second_info = env.step(None)
+            _, _, _, _, third_info = env.step(None)
+
+            self.assertEqual(first_info["robot"]["mode"], "stop")
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertEqual(second_info["robot"]["mode"], "stop")
+            self.assertTrue(second_info["robot"]["speaker_active"])
+            self.assertEqual(third_info["robot"]["mode"], "move")
+            self.assertFalse(third_info["robot"]["speaker_active"])
+            self.assertFalse(env.robot_front_blocking_state.active)
+            self.assertFalse(env.robot_front_blocking_state.bypass_active)
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_resumes_following_without_bypass_when_clear_after_pass_request(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14123)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.robot_pass_request_steps = 1
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            _, _, _, _, first_info = env.step(None)
+
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.0, 0.8, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+            _, _, _, _, second_info = env.step(None)
+
+            self.assertEqual(first_info["robot"]["mode"], "stop")
+            self.assertTrue(first_info["robot"]["speaker_active"])
+            self.assertEqual(second_info["robot"]["mode"], "move")
+            self.assertFalse(second_info["robot"]["speaker_active"])
+            self.assertFalse(env.robot_front_blocking_state.active)
+            self.assertFalse(env.robot_front_blocking_state.bypass_active)
+        finally:
+            env.close()
+
     def test_transit_follow_front_blocking_curiosity_samples_once_per_episode(self):
         env = self._make_env(n_humans=1)
         try:
             env.reset(seed=1413)
             env.follow_phase = "transit_follow"
             env.robot.listen_done = True
-            env.robot_pass_request_steps = 2
+            env.robot_pass_request_steps = 1
             env.humans[0].start_curiosity(recovery_mode=HumanMode.FOLLOWING)
             self._set_robot_and_human_poses(
                 env,
@@ -3311,10 +3380,12 @@ class MuseumEnvRefactorTests(unittest.TestCase):
                 with patch.object(env, "_log_event") as mock_log:
                     _, _, _, _, first_info = env.step(None)
                     _, _, _, _, second_info = env.step(None)
+                    _, _, _, _, third_info = env.step(None)
 
             self.assertEqual(fake_rng.random.call_count, 1)
             self.assertEqual(first_info["robot"]["mode"], "stop")
-            self.assertEqual(second_info["robot"]["mode"], "stop")
+            self.assertEqual(second_info["robot"]["mode"], "move")
+            self.assertEqual(third_info["robot"]["mode"], "move")
             self.assertEqual(env.humans[0].mode, HumanMode.CURIOSITY)
             matching_logs = [
                 call for call in mock_log.call_args_list
