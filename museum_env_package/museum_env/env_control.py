@@ -455,7 +455,7 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
             return adjusted_action
 
         state.blocker_idx = int(blocker_idx)
-        _maybe_apply_front_blocking_curiosity_response(env, blocker_idx=int(blocker_idx))
+        _maybe_apply_front_blocking_pass_request_response(env, blocker_idx=int(blocker_idx))
         state.active = True
         state.speech_steps_remaining = int(env.robot_pass_request_steps)
         state.bypass_active = False
@@ -522,21 +522,18 @@ def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
     return np.array([vx, vy, yaw_rate], dtype=np.float32)
 
 
-def _maybe_apply_front_blocking_curiosity_response(env, *, blocker_idx: int) -> None:
-    """Resolve a one-shot curiosity response when a new front-blocking episode begins."""
+def _maybe_apply_front_blocking_pass_request_response(env, *, blocker_idx: int) -> None:
+    """Resolve a one-shot pass-request response when a new front-blocking episode begins."""
     if not (0 <= int(blocker_idx) < len(env.humans)):
         return
 
     blocker = env.humans[int(blocker_idx)]
-    if blocker.mode != HumanMode.CURIOSITY:
-        return
-
     if float(env.np_random.random()) < _FRONT_BLOCKING_CURIOSITY_REJOIN_PROB:
         blocker.set_mode(HumanMode.FOLLOWING)
         env._log_event(f">>> {blocker.name} responded to pass request and rejoined (following).")
         return
 
-    env._log_event(f">>> {blocker.name} ignored pass request and stayed curiosity.")
+    env._log_event(f">>> {blocker.name} ignored pass request and stayed {blocker.mode}.")
 
 
 def _front_blocking_bypass_reached(env, *, state, world_frame) -> bool:

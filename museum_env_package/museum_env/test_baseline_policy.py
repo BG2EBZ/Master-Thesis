@@ -3395,6 +3395,68 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_transit_follow_front_blocking_non_curiosity_can_rejoin_following(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14124)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.humans[0].set_mode(HumanMode.DISTRACTED)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.49))
+            with patch.object(env, "_np_random", fake_rng):
+                with patch.object(env, "_log_event") as mock_log:
+                    _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env.humans[0].mode, HumanMode.FOLLOWING)
+            self.assertTrue(
+                any(
+                    "responded to pass request and rejoined (following)." in str(call.args[0])
+                    for call in mock_log.call_args_list
+                )
+            )
+        finally:
+            env.close()
+
+    def test_transit_follow_front_blocking_non_curiosity_can_stay_original_mode(self):
+        env = self._make_env(n_humans=1)
+        try:
+            env.reset(seed=14125)
+            env.follow_phase = "transit_follow"
+            env.robot.listen_done = True
+            env.humans[0].set_mode(HumanMode.DISTRACTED)
+            self._set_robot_and_human_poses(
+                env,
+                robot_pose=(0.0, 0.0, 0.0),
+                human_poses=((0.5, 0.0, 0.0),),
+            )
+            self._invalidate_observation_cache(env)
+
+            fake_rng = SimpleNamespace(random=Mock(return_value=0.5))
+            with patch.object(env, "_np_random", fake_rng):
+                with patch.object(env, "_log_event") as mock_log:
+                    _, _, _, _, info = env.step(None)
+
+            self.assertEqual(info["robot"]["mode"], "stop")
+            self.assertTrue(info["robot"]["speaker_active"])
+            self.assertEqual(env.humans[0].mode, HumanMode.DISTRACTED)
+            self.assertTrue(
+                any(
+                    "ignored pass request and stayed distracted." in str(call.args[0])
+                    for call in mock_log.call_args_list
+                )
+            )
+        finally:
+            env.close()
+
     def test_transit_follow_front_blocking_clears_and_can_reannounce(self):
         env = self._make_env(n_humans=1)
         try:
