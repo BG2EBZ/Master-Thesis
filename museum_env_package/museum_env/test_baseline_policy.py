@@ -1394,6 +1394,84 @@ class MuseumEnvRefactorTests(unittest.TestCase):
         human.step(None, data, ctx)
         self.assertEqual(human.mode, HumanMode.FOLLOWING)
         self.assertEqual(human.following_steps, 0)
+        self.assertGreater(human.curiosity_retrigger_cooldown_steps_remaining, 0)
+
+    def test_curiosity_recovery_blocks_retrigger_during_cooldown(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.curiosity_duration = 1
+        human.start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+
+        pose = (1.0, 1.0, 0.0)
+        data = self._make_pose_data(pose)
+        ctx = {
+            "index": 0,
+            "n_humans": 1,
+            "robot_pose": (1.0, 2.0, 0.0),
+            "robot_xy": np.array([1.0, 2.0], dtype=np.float32),
+            "human_xy": np.array([[1.0, 1.0]], dtype=np.float32),
+            "repulsion": np.zeros(2, dtype=np.float32),
+            "follow_radius": 1.0,
+            "fan_half_angle": np.deg2rad(80.0),
+            "impatient_front_offset": human.impatient_front_offset,
+        }
+
+        human.step(None, data, ctx)
+        self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        self.assertGreater(human.curiosity_retrigger_cooldown_steps_remaining, 0)
+
+        fake_env = SimpleNamespace(_log_event=Mock())
+        env_control.apply_fuzzy_transition(
+            fake_env,
+            human,
+            idx=0,
+            context="following",
+            fuzzy_result={"dominant_state": "curiosity"},
+            fuzzy_inputs={
+                "following_time": 0.0,
+                "hhd": 0.6,
+                "hrd": 0.5,
+                "density": 2.0,
+                "angle": 0.0,
+            },
+            world_frame=None,
+        )
+
+        self.assertEqual(human.mode, HumanMode.FOLLOWING)
+        fake_env._log_event.assert_not_called()
+
+    def test_curiosity_can_retrigger_after_cooldown_expires(self):
+        human = Human("person1", "person1", 0, max_speed=1.0)
+        human.start_curiosity(recovery_mode=HumanMode.FOLLOWING)
+        human.set_mode(HumanMode.FOLLOWING)
+        human.curiosity_retrigger_cooldown_steps_remaining = 1
+
+        human.curiosity_retrigger_cooldown_steps_remaining = max(
+            0,
+            int(human.curiosity_retrigger_cooldown_steps_remaining) - 1,
+        )
+        self.assertEqual(human.curiosity_retrigger_cooldown_steps_remaining, 0)
+
+        fake_env = SimpleNamespace(_log_event=Mock())
+        env_control.apply_fuzzy_transition(
+            fake_env,
+            human,
+            idx=0,
+            context="following",
+            fuzzy_result={"dominant_state": "curiosity"},
+            fuzzy_inputs={
+                "following_time": 0.0,
+                "hhd": 0.6,
+                "hrd": 0.5,
+                "density": 2.0,
+                "angle": 0.0,
+            },
+            world_frame=None,
+        )
+
+        self.assertEqual(human.mode, HumanMode.CURIOSITY)
+        self.assertTrue(
+            any("became CURIOUS!" in str(call.args[0]) for call in fake_env._log_event.call_args_list)
+        )
 
     def test_step_info_can_report_curiosity_mode(self):
         env = self._make_env(n_humans=1)
@@ -3169,11 +3247,15 @@ class MuseumEnvRefactorTests(unittest.TestCase):
             self.assertEqual(info["robot"]["mode"], "stop")
             self.assertTrue(info["robot"]["speaker_active"])
             self.assertEqual(env.humans[0].mode, HumanMode.FOLLOWING)
+            self.assertGreater(env.humans[0].curiosity_retrigger_cooldown_steps_remaining, 0)
             self.assertTrue(
                 any(
                     "responded to pass request and rejoined (following)." in str(call.args[0])
                     for call in mock_log.call_args_list
                 )
+            )
+            self.assertFalse(
+                any("became CURIOUS!" in str(call.args[0]) for call in mock_log.call_args_list)
             )
         finally:
             env.close()

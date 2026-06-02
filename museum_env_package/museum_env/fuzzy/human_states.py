@@ -72,8 +72,8 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
 
         density["low"] = fuzz.trapmf(density.universe, [0, 0, 3, 3])
-        density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
-        density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
+        density["medium"] = fuzz.trapmf(density.universe, [4, 4, 8, 8])
+        density["crowded"] = fuzz.trapmf(density.universe, [9, 9, 12, 12])
 
         ahead = fuzz.trapmf(angle.universe, [-45, -30, 30, 45])
         side_left = fuzz.trapmf(angle.universe, [-105, -90, -45, -30])
@@ -94,8 +94,8 @@ def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None
         hrd["far"] = fuzz.trapmf(hrd.universe, [2.0, 2.2, 5.0, 5.0])
 
         density["low"] = fuzz.trapmf(density.universe, [0, 0, 3, 3])
-        density["medium"] = fuzz.trapmf(density.universe, [4, 4, 7, 7])
-        density["crowded"] = fuzz.trapmf(density.universe, [8, 8, 10, 10])
+        density["medium"] = fuzz.trapmf(density.universe, [4, 4, 8, 8])
+        density["crowded"] = fuzz.trapmf(density.universe, [9, 9, 12, 12])
 
         ahead = fuzz.trapmf(angle.universe, [-45, -30, 30, 45])
         side_left = fuzz.trapmf(angle.universe, [-105, -90, -45, -30])
@@ -123,8 +123,8 @@ def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
         hrd["far"] = fuzz.trapmf(hrd.universe, [2.3, 2.5, 5.0, 5.0])
 
         density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
-        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
-        density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
+        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 6, 6])
+        density["crowded"] = fuzz.trapmf(density.universe, [7, 7, 10, 10])
 
         ahead = fuzz.trapmf(angle.universe, [-35, -15, 15, 35])
         side_left = fuzz.trapmf(angle.universe, [-110, -90, -35, -15])
@@ -145,8 +145,8 @@ def _define_nd_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
         hrd["far"] = fuzz.trapmf(hrd.universe, [2.2, 2.4, 5.0, 5.0])
 
         density["low"] = fuzz.trapmf(density.universe, [0, 0, 2, 2])
-        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 5, 5])
-        density["crowded"] = fuzz.trapmf(density.universe, [6, 6, 10, 10])
+        density["medium"] = fuzz.trapmf(density.universe, [3, 3, 6, 6])
+        density["crowded"] = fuzz.trapmf(density.universe, [7, 7, 10, 10])
 
         ahead = fuzz.trapmf(angle.universe, [-45, -20, 20, 45])
         side_left = fuzz.trapmf(angle.universe, [-100, -80, -45, -20])

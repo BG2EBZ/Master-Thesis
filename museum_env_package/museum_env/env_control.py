@@ -48,7 +48,8 @@ def update_human_listening_session_progress(env) -> None:
     if not env.listening_state.fuzzy_active:
         return
     for human in env.humans:
-        human.update_listening_session_progress(active=(human.mode == HumanMode.LISTENING))
+        if human.mode == HumanMode.LISTENING:
+            human.listening_steps += 1
 
 
 def _current_human_modes(env) -> list[str]:
@@ -177,6 +178,8 @@ def apply_fuzzy_transition(
 
     if dominant_state == "curiosity":
         if context != "following":
+            return
+        if int(human.curiosity_retrigger_cooldown_steps_remaining) > 0:
             return
         human.start_curiosity(recovery_mode=HumanMode.FOLLOWING)
         env._log_event(f">>> {human.name} became CURIOUS!{fuzzy_inputs_log}")
@@ -403,6 +406,8 @@ def apply_post_explanation_phase_strategy(env, human, idx: int, world_frame) -> 
 def apply_human_controls(env, world_frame) -> None:
     """Write the current per-human controller outputs into the MuJoCo control buffer."""
     for idx, human in enumerate(env.humans):
+        if int(human.curiosity_retrigger_cooldown_steps_remaining) > 0:
+            human.curiosity_retrigger_cooldown_steps_remaining = int(human.curiosity_retrigger_cooldown_steps_remaining) - 1
         if env.post_explanation_state.active:
             human_action = apply_post_explanation_phase_strategy(env, human, idx, world_frame)
         elif env.listening_state.controller_active:

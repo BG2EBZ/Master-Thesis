@@ -455,7 +455,7 @@ class MuseumEnv(gym.Env):
 
         self.robot_start_xy = self._robot_xy_from_data()
         for human in self.humans:
-            human.reset_listening_session_state()
+            human.listening_steps = 0
 
         world_frame = self._build_world_frame(force=True)
         self._sync_robot_speaker_state()

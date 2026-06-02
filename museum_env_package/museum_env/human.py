@@ -37,6 +37,7 @@ LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG = 45.0
 LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
 CURIOUS_STOP_DURATION_SECONDS_DEFAULT = 5.0
+CURIOSITY_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 10.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
 HR_DISTANCE_MAX = 2.0
@@ -151,6 +152,11 @@ class Human:
         self.curiosity_duration = round(self.curiosity_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.curiosity_timer = 0
         self.curiosity_recovery_mode = HumanMode.FOLLOWING
+        self.curiosity_retrigger_cooldown_seconds = float(CURIOSITY_RETRIGGER_COOLDOWN_SECONDS_DEFAULT)
+        self.curiosity_retrigger_cooldown_steps = round(
+            self.curiosity_retrigger_cooldown_seconds / DEFAULT_SIM_TIMESTEP_SECONDS
+        )
+        self.curiosity_retrigger_cooldown_steps_remaining = 0
 
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
@@ -187,6 +193,8 @@ class Human:
         if prev_mode == HumanMode.OVERWHELMED:
             self.reset_overwhelmed_state()
         self.mode = mode
+        if prev_mode == HumanMode.CURIOSITY and mode != HumanMode.CURIOSITY:
+            self.curiosity_retrigger_cooldown_steps_remaining = int(self.curiosity_retrigger_cooldown_steps)
         if mode == HumanMode.DISTRACTED:
             self.distracted_timer = 0
             self.distracted_elapsed_steps = 0
@@ -204,6 +212,7 @@ class Human:
     def reset_curiosity_state(self):
         self.curiosity_timer = 0
         self.curiosity_recovery_mode = HumanMode.FOLLOWING
+        self.curiosity_retrigger_cooldown_steps_remaining = 0
 
     def reset_episode_state(self):
         self.mode = None
@@ -224,7 +233,7 @@ class Human:
 
         self.max_speed = float(self.base_max_speed)
         self.reset_following_duration()
-        self.reset_listening_session_state()
+        self.listening_steps = 0
         self.reset_curiosity_state()
         self.reset_overwhelmed_state()
 
@@ -262,22 +271,20 @@ class Human:
         self.impatient_front_offset = float(impatient_front_offset)
         self.listening_impatient_glance_steps = float((listening_impatient_glance_seconds) / dt)
         self.curiosity_duration = round(self.curiosity_duration_seconds / dt)
+        self.curiosity_retrigger_cooldown_steps = round(self.curiosity_retrigger_cooldown_seconds / dt)
+        self.curiosity_retrigger_cooldown_steps_remaining = min(
+            int(self.curiosity_retrigger_cooldown_steps_remaining),
+            int(self.curiosity_retrigger_cooldown_steps),
+        )
 
     def reset_following_duration(self):
         self.following_steps = 0
-
-    def reset_listening_session_state(self):
-        self.listening_steps = 0
 
     def update_following_duration(self, eligible_following: bool):
         if eligible_following:
             self.following_steps += 1
         else:
             self.reset_following_duration()
-
-    def update_listening_session_progress(self, active: bool):
-        if active:
-            self.listening_steps += 1
 
     def start_overwhelmed(self, robot_xy, current_xy, recovery_mode: str = HumanMode.FOLLOWING):
         current_xy = np.array(current_xy, dtype=np.float32)

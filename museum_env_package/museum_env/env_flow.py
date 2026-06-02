@@ -352,7 +352,7 @@ def maybe_start_listening_question(env, events, timing_mode: str, world_frame) -
 
 def _reset_human_listening_sessions(env) -> None:
     for human in env.humans:
-        human.reset_listening_session_state()
+        human.listening_steps = 0
 
 
 def finish_listening_wait(env, events, world_frame) -> None:
