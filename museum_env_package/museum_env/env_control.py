@@ -7,9 +7,6 @@ from typing import Optional
 import numpy as np
 
 from .env_constants import (
-    FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS,
-    FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS,
-    FOLLOWING_SLOWDOWN_SPEED_SCALE,
     FOLLOW_RADIUS_DEFAULT,
     LISTENING_REPULSION_SCALE,
     ROBOT_FRONT_BLOCKING_TRIGGER_METERS,
@@ -709,7 +706,7 @@ def apply_following_crowd_regulation_if_needed(
         reset_following_wait_episode(env)
         return adjusted_action, should_start_callback
     max_hr_distance = float(np.max(distances))
-    if (not grace_active) and max_hr_distance > float(FOLLOWING_CALLBACK_DISTANCE_THRESHOLD_METERS):
+    if (not grace_active) and max_hr_distance > float(env.policy_params.callback_distance_m):
         env.robot.mode = RobotMode.STOP
         env._following_wait_elapsed_steps += 1
         if (
@@ -719,10 +716,10 @@ def apply_following_crowd_regulation_if_needed(
             should_start_callback = True
         return np.zeros(3, dtype=np.float32), should_start_callback
     reset_following_wait_episode(env)
-    if max_hr_distance <= float(FOLLOWING_SLOWDOWN_DISTANCE_THRESHOLD_METERS):
+    if max_hr_distance <= float(env.policy_params.slow_down_distance_m):
         return adjusted_action, should_start_callback
 
     # Above the slowdown threshold we keep moving, but deliberately soften the
     # planar command so the crowd has a chance to compress before a callback.
-    adjusted_action[:2] *= float(FOLLOWING_SLOWDOWN_SPEED_SCALE)
+    adjusted_action[:2] *= float(env.policy_params.slowdown_speed_scale)
     return adjusted_action, should_start_callback

@@ -8,6 +8,7 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 
+from .policy_search_params import PolicySearchParams
 from . import env_control, env_flow
 from .env_constants import (
     ACTION_HIGH,
@@ -28,7 +29,6 @@ from .env_constants import (
     DEFAULT_MAP_NAME,
     FOLLOWING_CALLBACK_CUE_SECONDS,
     FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG,
-    FOLLOWING_CALLBACK_WAIT_SECONDS,
     FOLLOW_FAN_HALF_ANGLE_DEG,
     HUMAN_WALL_FOOTPRINT_RADIUS,
     HUMAN_FOLLOW_DISTANCE_DEFAULT,
@@ -142,6 +142,8 @@ class MuseumEnv(gym.Env):
         self.render_width = 1920
         self.render_height = 1080
 
+        self.policy_params = PolicySearchParams()
+
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -181,8 +183,8 @@ class MuseumEnv(gym.Env):
         self.listen_question_pause_seconds = float(LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT)
         self.listen_question_pause_steps = self._steps(self.listen_question_pause_seconds)
         self.listen_distance_shorten_steps = self._steps(LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN)
-        self.following_callback_wait_steps = self._steps(FOLLOWING_CALLBACK_WAIT_SECONDS)
         self.following_callback_cue_steps = self._steps(FOLLOWING_CALLBACK_CUE_SECONDS)
+        self._sync_policy_parameter_state()
         self.following_callback_resume_grace_steps = self._steps(5.0)
         self.following_callback_front_sector_half_angle = np.deg2rad(
             FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG
@@ -283,6 +285,18 @@ class MuseumEnv(gym.Env):
 
     def _steps(self, seconds: float) -> int:
         return max(1, int(round(float(seconds) / self.dt)))
+
+    def _sync_policy_parameter_state(self) -> None:
+        """Project the current episode policy parameters into runtime step fields."""
+        self.following_callback_wait_steps = self._steps(
+            self.policy_params.callback_wait_seconds
+        )
+
+    def set_policy_parameters(self, theta) -> None:
+        """Apply one sampled high-level robot policy for the current episode."""
+        self.policy_params = PolicySearchParams.from_theta(theta)
+        self._sync_policy_parameter_state()
+
 
     def _robot_xy_from_data(self) -> np.ndarray:
         return np.array(
