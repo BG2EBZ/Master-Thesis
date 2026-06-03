@@ -18,11 +18,18 @@ Key fields to watch while debugging:
 - `info["robot"]["callback_phase"]`: `turn`, `cue`, or `None`
 - `info["events"]["final_listen_ready"]`: terminal success flag
 
+## Reward behavior
+
+- intermediate `step()` calls now return `reward = 0.0`
+- the final reward is emitted only on completion or timeout
+- reward components are internal and are not exposed through `info`
+
 Example:
 
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
+print(reward)
 print(info["phase"])
 print(info["robot"])
 print(info["crowd"]["distracted_indices"])

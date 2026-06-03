@@ -185,6 +185,7 @@ def apply_fuzzy_transition(
         human.distracted_source = distracted_source
         human.distracted_recovery_mode = recovery_mode
         human.set_mode(HumanMode.DISTRACTED)
+        env._record_episode_trigger("distracted")
         msg = f">>> {human.name} became DISTRACTED!"
         if context == "listening":
             msg = f">>> {human.name} became DISTRACTED while listening!"
@@ -193,6 +194,7 @@ def apply_fuzzy_transition(
 
     if dominant_state == "impatient":
         human.start_impatient(recovery_mode=recovery_mode)
+        env._record_episode_trigger("impatient")
         msg = f">>> {human.name} became IMPATIENT!"
         if recovery_mode == HumanMode.LISTENING:
             msg = f">>> {human.name} became IMPATIENT while listening!"
@@ -206,6 +208,7 @@ def apply_fuzzy_transition(
             current_xy=current_xy,
             recovery_mode=recovery_mode,
         )
+        env._record_episode_trigger("overwhelmed")
         msg = f">>> {human.name} became OVERWHELMED!"
         if context == "listening":
             msg = f">>> {human.name} became OVERWHELMED while listening!"

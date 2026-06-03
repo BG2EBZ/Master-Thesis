@@ -71,6 +71,7 @@ from .env_reporting import (
 )
 from .env_runtime import build_human_goals, build_world_frame, compute_reached_goal_indices
 from .env_state import (
+    EpisodeMetrics,
     ListeningState,
     PostExplanationState,
     RobotFrontBlockingState,
@@ -81,6 +82,7 @@ from .env_state import (
 from .human import Human, HumanMode, HumanProfile, LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT
 from .map_layouts import MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
+from .reward import DEFAULT_REWARD_CONFIG, RewardConfig, compute_episode_reward
 from .robot import Robot
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,7 @@ class MuseumEnv(gym.Env):
         listen_question_after_explanation_probability: float = (
             LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT
         ),
+        reward_config: Optional[RewardConfig] = None,
         n_humans: int = 15,
     ):
         super().__init__()
@@ -143,6 +146,7 @@ class MuseumEnv(gym.Env):
         self.render_height = 1080
 
         self.policy_params = PolicySearchParams()
+        self.reward_config = DEFAULT_REWARD_CONFIG if reward_config is None else reward_config
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -199,6 +203,7 @@ class MuseumEnv(gym.Env):
         self.post_explanation_state = PostExplanationState()
         self.robot_front_blocking_state = RobotFrontBlockingState()
         self.runtime_cache = RuntimeCache()
+        self.episode_metrics = EpisodeMetrics()
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         env_control.reset_following_wait_episode(self)
@@ -291,6 +296,18 @@ class MuseumEnv(gym.Env):
         self.following_callback_wait_steps = self._steps(
             self.policy_params.callback_wait_seconds
         )
+
+    def _record_episode_trigger(self, kind: str) -> None:
+        if kind == "overwhelmed":
+            self.episode_metrics.overwhelmed_triggers += 1
+            return
+        if kind == "impatient":
+            self.episode_metrics.impatient_triggers += 1
+            return
+        if kind == "distracted":
+            self.episode_metrics.distracted_triggers += 1
+            return
+        raise ValueError(f"Unsupported episode trigger kind: {kind}")
 
     def set_policy_parameters(self, theta) -> None:
         """Apply one sampled high-level robot policy for the current episode."""
@@ -452,6 +469,7 @@ class MuseumEnv(gym.Env):
         self.listening_state.reset()
         self.post_explanation_state.reset()
         self.runtime_cache.reset()
+        self.episode_metrics.reset()
         self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
@@ -555,7 +573,16 @@ class MuseumEnv(gym.Env):
             perceived_distracted_indices=distracted_indices,
         )
         env_control.advance_robot_front_blocking_runtime(self)
-        reward = -float(info["robot"]["dist_to_goal"])
+        if terminated or truncated:
+            reward, _ = compute_episode_reward(
+                completed=terminated,
+                truncated=truncated,
+                duration_seconds=float(self.step_count) * float(self.dt),
+                metrics=self.episode_metrics,
+                config=self.reward_config,
+            )
+        else:
+            reward = 0.0
         return self._build_observation(post_frame), reward, terminated, truncated, info
 
     def render(self):

@@ -241,6 +241,18 @@ class RuntimeCache:
 
 
 @dataclass
+class EpisodeMetrics:
+    overwhelmed_triggers: int = 0
+    impatient_triggers: int = 0
+    distracted_triggers: int = 0
+
+    def reset(self) -> None:
+        self.overwhelmed_triggers = 0
+        self.impatient_triggers = 0
+        self.distracted_triggers = 0
+
+
+@dataclass
 class StepEvents:
     entered_listen: bool = False
     started_listen_wait: bool = False

@@ -56,17 +56,25 @@
 
 The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback internals are no longer returned by default.
 
+## Reward semantics
+
+`MuseumEnv.step()` now uses episodic reward semantics:
+
+- intermediate steps return `0.0`
+- the final scalar reward is emitted only when the episode completes or times out
+- `info` keeps the same compact schema shown above
+
 Example:
 
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
 print(info["phase"]["listen"])
-print(info["robot"]["dist_to_goal"])
+print(reward)
 print(info["crowd"]["modes"])
 
-if info["events"]["final_listen_ready"]:
-    print("Episode completed")
+if terminated or truncated:
+    print("Final episode reward:", reward)
 ```
 
 ## Run scripts
