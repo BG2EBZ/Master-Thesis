@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -38,6 +39,9 @@ class FrontBlockingControlTests(unittest.TestCase):
             robot_front_blocking_state=RobotFrontBlockingState(),
             robot_pass_request_steps=20,
             dt=0.1,
+            model=None,
+            data=None,
+            robot_body_id=0,
             humans=[SimpleNamespace(profile=HumanProfile.NORMAL) for _ in range(n_humans)],
             _log_event=lambda _msg: None,
         )
@@ -90,6 +94,81 @@ class FrontBlockingControlTests(unittest.TestCase):
         self.assertIsNotNone(env.robot_front_blocking_state.bypass_turn_target_yaw)
         self.assertTrue(np.allclose(action[:2], np.zeros(2, dtype=np.float32)))
         self.assertNotEqual(float(action[2]), 0.0)
+
+    def test_front_blocking_prefers_left_side_when_left_ray_is_farther(self):
+        env = self._make_env()
+        env.robot_front_blocking_state.blocker_idx = 0
+        env.robot_front_blocking_state.speech_steps_remaining = 0
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.4, 0.1]])
+
+        with patch("museum_env.env_control.raycast_hit_distance", side_effect=[2.0, 0.5]):
+            env_control.apply_robot_front_blocking_stop_if_needed(
+                env,
+                np.array([0.3, 0.0, 0.1], dtype=np.float32),
+                world_frame,
+            )
+
+        self.assertLess(env.robot_front_blocking_state.bypass_direction_sign, 0.0)
+
+    def test_front_blocking_prefers_right_side_when_right_ray_is_farther(self):
+        env = self._make_env()
+        env.robot_front_blocking_state.blocker_idx = 0
+        env.robot_front_blocking_state.speech_steps_remaining = 0
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.4, 0.1]])
+
+        with patch("museum_env.env_control.raycast_hit_distance", side_effect=[0.5, 2.0]):
+            env_control.apply_robot_front_blocking_stop_if_needed(
+                env,
+                np.array([0.3, 0.0, 0.1], dtype=np.float32),
+                world_frame,
+            )
+
+        self.assertGreater(env.robot_front_blocking_state.bypass_direction_sign, 0.0)
+
+    def test_front_blocking_uses_angle_fallback_when_side_rays_tie(self):
+        env = self._make_env()
+        env.robot_front_blocking_state.blocker_idx = 0
+        env.robot_front_blocking_state.speech_steps_remaining = 0
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.4, 0.1]])
+
+        with patch("museum_env.env_control.raycast_hit_distance", side_effect=[1.0, 1.0]):
+            env_control.apply_robot_front_blocking_stop_if_needed(
+                env,
+                np.array([0.3, 0.0, 0.1], dtype=np.float32),
+                world_frame,
+            )
+
+        self.assertLess(env.robot_front_blocking_state.bypass_direction_sign, 0.0)
+
+    def test_front_blocking_prefers_open_side_when_one_side_has_no_hit(self):
+        env = self._make_env()
+        env.robot_front_blocking_state.blocker_idx = 0
+        env.robot_front_blocking_state.speech_steps_remaining = 0
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.4, 0.1]])
+
+        with patch("museum_env.env_control.raycast_hit_distance", side_effect=[None, 0.5]):
+            env_control.apply_robot_front_blocking_stop_if_needed(
+                env,
+                np.array([0.3, 0.0, 0.1], dtype=np.float32),
+                world_frame,
+            )
+
+        self.assertLess(env.robot_front_blocking_state.bypass_direction_sign, 0.0)
+
+    def test_front_blocking_uses_angle_fallback_when_both_sides_are_open(self):
+        env = self._make_env()
+        env.robot_front_blocking_state.blocker_idx = 0
+        env.robot_front_blocking_state.speech_steps_remaining = 0
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.4, 0.1]])
+
+        with patch("museum_env.env_control.raycast_hit_distance", side_effect=[None, None]):
+            env_control.apply_robot_front_blocking_stop_if_needed(
+                env,
+                np.array([0.3, 0.0, 0.1], dtype=np.float32),
+                world_frame,
+            )
+
+        self.assertLess(env.robot_front_blocking_state.bypass_direction_sign, 0.0)
 
     def test_front_blocking_starts_arc_after_turn_alignment(self):
         env = self._make_env()

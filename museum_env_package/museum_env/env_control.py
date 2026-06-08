@@ -24,10 +24,11 @@ from .human import (
     HumanMode,
 )
 from .robot import ROBOT_TURN_DONE_YAW_ERR, ROBOT_TURN_GAIN, ROBOT_YAW_RATE_LIMIT, RobotMode
-from .spatial_utils import wrap_to_pi
+from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
-_FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(60.0)
+_FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(180.0)
 _FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(12.0)
+_FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS = 1e-3
 
 
 def reset_following_wait_episode(env) -> None:
@@ -485,7 +486,7 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
         state.reset()
         return adjusted_action
 
-    _start_front_blocking_bypass(state, blocker_idx=int(blocker_idx), world_frame=world_frame)
+    _start_front_blocking_bypass(env, state, blocker_idx=int(blocker_idx), world_frame=world_frame)
     env._log_event(
         f">>> Robot started a 60 deg bypass arc around person{int(blocker_idx) + 1}."
     )
@@ -526,19 +527,61 @@ def _compute_robot_turn_action(*, current_yaw: float, target_yaw: float) -> np.n
     return action
 
 
-def _start_front_blocking_bypass(state, *, blocker_idx: int, world_frame) -> None:
+def _fallback_front_blocking_bypass_direction_sign(world_frame, blocker_idx: int) -> float:
+    """Keep the previous deterministic side choice when ray distances are inconclusive."""
+    relative_angle_deg = float(_compute_robot_relative_angle_deg(world_frame, int(blocker_idx)))
+    return -1.0 if relative_angle_deg >= 0.0 else 1.0
+
+
+def _select_front_blocking_bypass_direction_sign(env, *, blocker_idx: int, world_frame, start_angle: float) -> float:
+    """Choose bypass side by comparing left/right ray free distance from the robot pose."""
+    robot_yaw = float(world_frame.robot_pose[2])
+    left_dir = np.array([-np.sin(robot_yaw), np.cos(robot_yaw)], dtype=np.float32)
+    right_dir = -left_dir
+    left_hit_distance = raycast_hit_distance(env.model, env.data, env.robot_body_id, left_dir)
+    right_hit_distance = raycast_hit_distance(env.model, env.data, env.robot_body_id, right_dir)
+
+    if left_hit_distance is None and right_hit_distance is None:
+        return _fallback_front_blocking_bypass_direction_sign(world_frame, blocker_idx)
+    if left_hit_distance is None:
+        chosen_side_dir = left_dir
+    elif right_hit_distance is None:
+        chosen_side_dir = right_dir
+    elif float(left_hit_distance) > float(right_hit_distance) + _FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS:
+        chosen_side_dir = left_dir
+    elif float(right_hit_distance) > float(left_hit_distance) + _FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS:
+        chosen_side_dir = right_dir
+    else:
+        return _fallback_front_blocking_bypass_direction_sign(world_frame, blocker_idx)
+
+    positive_sign_dir = np.array(
+        [np.cos(float(start_angle) + (0.5 * np.pi)), np.sin(float(start_angle) + (0.5 * np.pi))],
+        dtype=np.float32,
+    )
+    negative_sign_dir = np.array(
+        [np.cos(float(start_angle) - (0.5 * np.pi)), np.sin(float(start_angle) - (0.5 * np.pi))],
+        dtype=np.float32,
+    )
+    return 1.0 if float(np.dot(positive_sign_dir, chosen_side_dir)) >= float(np.dot(negative_sign_dir, chosen_side_dir)) else -1.0
+
+
+def _start_front_blocking_bypass(env, state, *, blocker_idx: int, world_frame) -> None:
     """Initialize a 60-degree arc around the current blocker on the opposite side."""
     blocker_xy = np.asarray(world_frame.human_xy[int(blocker_idx)], dtype=np.float32)
     robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
     offset_xy = robot_xy - blocker_xy
-    relative_angle_deg = float(_compute_robot_relative_angle_deg(world_frame, int(blocker_idx)))
 
     state.blocker_idx = int(blocker_idx)
     state.bypass_active = True
     state.bypass_center_xy = blocker_xy.copy()
     state.bypass_radius = float(max(np.linalg.norm(offset_xy), 1e-6))
     state.bypass_start_angle = float(np.arctan2(offset_xy[1], offset_xy[0]))
-    state.bypass_direction_sign = -1.0 if relative_angle_deg >= 0.0 else 1.0
+    state.bypass_direction_sign = _select_front_blocking_bypass_direction_sign(
+        env=env,
+        blocker_idx=int(blocker_idx),
+        world_frame=world_frame,
+        start_angle=float(state.bypass_start_angle),
+    )
     state.bypass_turn_target_yaw = wrap_to_pi(
         float(state.bypass_start_angle) + (float(state.bypass_direction_sign) * (0.5 * np.pi))
     )
