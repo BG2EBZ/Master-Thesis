@@ -1,0 +1,306 @@
+<mujoco model="museum_shell">
+  <compiler angle="radian"/>
+
+  <option gravity="0 0 0"/>
+
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+    <quality offsamples="8"/>
+  </visual>
+
+  <worldbody>
+    <geom name="floor" size="30 30 0.1" type="plane" rgba="0.95 0.93 0.9 1"/>
+    <geom name="corridor_wall_left" size="0.15 5.15 1.5" pos="6.5 -5 1.5" type="box" rgba="0.85 0.85 0.85 1"/>
+    <geom name="corridor_wall_right" size="0.15 5.15 1.5" pos="10 -5 1.5" type="box" rgba="0.85 0.85 0.85 1"/>
+    <geom name="roomA_wall_top" size="5.15 0.15 1.5" pos="5 10 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomA_wall_left" size="0.15 5.15 1.5" pos="0 5 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomA_wall_right" size="0.15 5.15 1.5" pos="10 5 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomA_wall_bottom_left" size="3.4 0.15 1.5" pos="3.25 0 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomB_wall_left" size="0.15 2.65 1.5" pos="6.5 -12.5 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomB_wall_right" size="0.15 2.65 1.5" pos="12 -12.5 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomB_wall_bottom" size="2.9 0.15 1.5" pos="9.25 -15 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="roomB_wall_top_right" size="1.15 0.15 1.5" pos="11 -10 1.5" type="box" rgba="0.88 0.88 0.88 1"/>
+    <geom name="exhibit_roomA_top_left_frame" size="0.78 0.028 0.34" pos="2.25 9.815 1.48" type="box" contype="0" conaffinity="0" rgba="0.24 0.17 0.1 1"/>
+    <geom name="exhibit_roomA_top_left_canvas" size="0.66 0.01 0.25" pos="2.25 9.785 1.48" type="box" contype="0" conaffinity="0" rgba="0.24 0.39 0.55 1"/>
+    <geom name="exhibit_roomA_top_left_detail" size="0.18 0.006 0.08" pos="2.43 9.772 1.54" type="box" contype="0" conaffinity="0" rgba="0.84 0.67 0.31 1"/>
+    <geom name="exhibit_roomA_top_left_plaque" size="0.18 0.008 0.04" pos="2.25 9.79 0.9" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomA_top_right_frame" size="0.78 0.028 0.34" pos="7.55 9.815 1.48" type="box" contype="0" conaffinity="0" rgba="0.18 0.18 0.18 1"/>
+    <geom name="exhibit_roomA_top_right_canvas" size="0.66 0.01 0.25" pos="7.55 9.785 1.48" type="box" contype="0" conaffinity="0" rgba="0.5 0.28 0.24 1"/>
+    <geom name="exhibit_roomA_top_right_detail" size="0.16 0.006 0.1" pos="7.32 9.772 1.41" type="box" contype="0" conaffinity="0" rgba="0.9 0.79 0.56 1"/>
+    <geom name="exhibit_roomA_top_right_plaque" size="0.18 0.008 0.04" pos="7.55 9.79 0.9" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomA_left_frame" size="0.028 0.32 0.5" pos="0.185 5 1.47" type="box" contype="0" conaffinity="0" rgba="0.27 0.18 0.11 1"/>
+    <geom name="exhibit_roomA_left_canvas" size="0.01 0.24 0.4" pos="0.214 5 1.47" type="box" contype="0" conaffinity="0" rgba="0.2 0.5 0.4 1"/>
+    <geom name="exhibit_roomA_left_detail" size="0.006 0.08 0.13" pos="0.226 4.88 1.58" type="box" contype="0" conaffinity="0" rgba="0.9 0.87 0.77 1"/>
+    <geom name="exhibit_roomA_left_plaque" size="0.008 0.12 0.04" pos="0.208 5 0.86" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomA_right_frame" size="0.028 0.32 0.5" pos="9.815 3.35 1.47" type="box" contype="0" conaffinity="0" rgba="0.18 0.18 0.18 1"/>
+    <geom name="exhibit_roomA_right_canvas" size="0.01 0.24 0.4" pos="9.786 3.35 1.47" type="box" contype="0" conaffinity="0" rgba="0.46 0.24 0.49 1"/>
+    <geom name="exhibit_roomA_right_detail" size="0.006 0.1 0.14" pos="9.774 3.49 1.36" type="box" contype="0" conaffinity="0" rgba="0.79 0.56 0.26 1"/>
+    <geom name="exhibit_roomA_right_plaque" size="0.008 0.12 0.04" pos="9.792 3.35 0.86" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomA_right_upper_frame" size="0.028 0.32 0.5" pos="9.815 6.65 1.47" type="box" contype="0" conaffinity="0" rgba="0.24 0.17 0.1 1"/>
+    <geom name="exhibit_roomA_right_upper_canvas" size="0.01 0.24 0.4" pos="9.786 6.65 1.47" type="box" contype="0" conaffinity="0" rgba="0.23 0.43 0.58 1"/>
+    <geom name="exhibit_roomA_right_upper_detail" size="0.006 0.09 0.12" pos="9.774 6.53 1.58" type="box" contype="0" conaffinity="0" rgba="0.89 0.82 0.62 1"/>
+    <geom name="exhibit_roomA_right_upper_plaque" size="0.008 0.12 0.04" pos="9.792 6.65 0.86" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomA_bottom_frame" size="0.82 0.028 0.3" pos="3.15 0.185 1.46" type="box" contype="0" conaffinity="0" rgba="0.25 0.17 0.09 1"/>
+    <geom name="exhibit_roomA_bottom_canvas" size="0.7 0.01 0.22" pos="3.15 0.214 1.46" type="box" contype="0" conaffinity="0" rgba="0.71 0.42 0.24 1"/>
+    <geom name="exhibit_roomA_bottom_detail" size="0.18 0.006 0.07" pos="2.92 0.226 1.42" type="box" contype="0" conaffinity="0" rgba="0.19 0.22 0.32 1"/>
+    <geom name="exhibit_roomA_bottom_plaque" size="0.18 0.008 0.04" pos="3.15 0.208 0.88" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_corridor_left_upper_frame" size="0.028 0.34 0.5" pos="6.685 -3.25 1.46" type="box" contype="0" conaffinity="0" rgba="0.22 0.24 0.28 1"/>
+    <geom name="exhibit_corridor_left_upper_panel" size="0.01 0.28 0.42" pos="6.714 -3.25 1.46" type="box" contype="0" conaffinity="0" rgba="0.94 0.92 0.88 1"/>
+    <geom name="exhibit_corridor_left_upper_title" size="0.006 0.28 0.07" pos="6.726 -3.25 1.78" type="box" contype="0" conaffinity="0" rgba="0.24 0.4 0.57 1"/>
+    <geom name="exhibit_corridor_left_upper_plaque" size="0.008 0.14 0.04" pos="6.708 -3.25 0.84" type="box" contype="0" conaffinity="0" rgba="0.66 0.61 0.5 1"/>
+    <geom name="exhibit_corridor_left_lower_frame" size="0.028 0.34 0.5" pos="6.685 -7.35 1.46" type="box" contype="0" conaffinity="0" rgba="0.22 0.24 0.28 1"/>
+    <geom name="exhibit_corridor_left_lower_panel" size="0.01 0.28 0.42" pos="6.714 -7.35 1.46" type="box" contype="0" conaffinity="0" rgba="0.94 0.92 0.88 1"/>
+    <geom name="exhibit_corridor_left_lower_title" size="0.006 0.28 0.07" pos="6.726 -7.35 1.78" type="box" contype="0" conaffinity="0" rgba="0.53 0.3 0.21 1"/>
+    <geom name="exhibit_corridor_left_lower_plaque" size="0.008 0.14 0.04" pos="6.708 -7.35 0.84" type="box" contype="0" conaffinity="0" rgba="0.66 0.61 0.5 1"/>
+    <geom name="exhibit_corridor_right_upper_frame" size="0.028 0.34 0.5" pos="9.815 -4.65 1.46" type="box" contype="0" conaffinity="0" rgba="0.22 0.24 0.28 1"/>
+    <geom name="exhibit_corridor_right_upper_panel" size="0.01 0.28 0.42" pos="9.786 -4.65 1.46" type="box" contype="0" conaffinity="0" rgba="0.94 0.92 0.88 1"/>
+    <geom name="exhibit_corridor_right_upper_title" size="0.006 0.28 0.07" pos="9.774 -4.65 1.78" type="box" contype="0" conaffinity="0" rgba="0.28 0.46 0.35 1"/>
+    <geom name="exhibit_corridor_right_upper_plaque" size="0.008 0.14 0.04" pos="9.792 -4.65 0.84" type="box" contype="0" conaffinity="0" rgba="0.66 0.61 0.5 1"/>
+    <geom name="exhibit_corridor_right_lower_frame" size="0.028 0.34 0.5" pos="9.815 -8.35 1.46" type="box" contype="0" conaffinity="0" rgba="0.22 0.24 0.28 1"/>
+    <geom name="exhibit_corridor_right_lower_panel" size="0.01 0.28 0.42" pos="9.786 -8.35 1.46" type="box" contype="0" conaffinity="0" rgba="0.94 0.92 0.88 1"/>
+    <geom name="exhibit_corridor_right_lower_title" size="0.006 0.28 0.07" pos="9.774 -8.35 1.78" type="box" contype="0" conaffinity="0" rgba="0.45 0.25 0.5 1"/>
+    <geom name="exhibit_corridor_right_lower_plaque" size="0.008 0.14 0.04" pos="9.792 -8.35 0.84" type="box" contype="0" conaffinity="0" rgba="0.66 0.61 0.5 1"/>
+    <geom name="exhibit_roomB_left_frame" size="0.028 0.3 0.48" pos="6.685 -12.95 1.46" type="box" contype="0" conaffinity="0" rgba="0.25 0.17 0.1 1"/>
+    <geom name="exhibit_roomB_left_canvas" size="0.01 0.22 0.38" pos="6.714 -12.95 1.46" type="box" contype="0" conaffinity="0" rgba="0.23 0.34 0.54 1"/>
+    <geom name="exhibit_roomB_left_detail" size="0.006 0.08 0.11" pos="6.726 -12.84 1.6" type="box" contype="0" conaffinity="0" rgba="0.9 0.79 0.53 1"/>
+    <geom name="exhibit_roomB_left_plaque" size="0.008 0.12 0.04" pos="6.708 -12.95 0.84" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomB_right_frame" size="0.028 0.3 0.48" pos="11.815 -12.5 1.46" type="box" contype="0" conaffinity="0" rgba="0.18 0.18 0.18 1"/>
+    <geom name="exhibit_roomB_right_canvas" size="0.01 0.22 0.38" pos="11.786 -12.5 1.46" type="box" contype="0" conaffinity="0" rgba="0.58 0.31 0.23 1"/>
+    <geom name="exhibit_roomB_right_detail" size="0.006 0.1 0.13" pos="11.774 -12.62 1.34" type="box" contype="0" conaffinity="0" rgba="0.86 0.84 0.74 1"/>
+    <geom name="exhibit_roomB_right_plaque" size="0.008 0.12 0.04" pos="11.792 -12.5 0.84" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <geom name="exhibit_roomB_bottom_frame" size="0.72 0.028 0.28" pos="9.25 -14.815 1.45" type="box" contype="0" conaffinity="0" rgba="0.24 0.17 0.1 1"/>
+    <geom name="exhibit_roomB_bottom_canvas" size="0.6 0.01 0.2" pos="9.25 -14.786 1.45" type="box" contype="0" conaffinity="0" rgba="0.27 0.47 0.37 1"/>
+    <geom name="exhibit_roomB_bottom_detail" size="0.14 0.006 0.06" pos="9.05 -14.774 1.49" type="box" contype="0" conaffinity="0" rgba="0.77 0.55 0.25 1"/>
+    <geom name="exhibit_roomB_bottom_plaque" size="0.16 0.008 0.04" pos="9.25 -14.792 0.87" type="box" contype="0" conaffinity="0" rgba="0.62 0.55 0.42 1"/>
+    <camera name="cam_overview" pos="6 -14 7" quat="0.881017 0.473085 0 0"/>
+    <body name="robot" pos="5 5 0.06">
+      <joint name="robot_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100"/>
+      <joint name="robot_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100"/>
+      <joint name="robot_yaw" pos="0 0 0" axis="0 0 1" damping="1"/>
+      <geom name="robot_base" size="0.2 0.06" type="cylinder" friction="0.2 0.01 0.001" mass="20" rgba="0.85 0.85 0.85 1"/>
+      <geom name="robot_nose" size="0.03 0.06 0.03" pos="0.18 0 0.03" type="box" contype="0" conaffinity="0" rgba="0.95 0.25 0.25 1"/>
+      <geom name="robot_speaking_halo" size="0.34 0.004" pos="0 0 -0.055" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="robot_site" pos="0 0 0.06" size="0.02" rgba="1 0 0 1"/>
+      <site name="explanation" pos="0 0 0.72" group="3" rgba="1 1 1 1"/>
+      <site name="answer question" pos="0 0 0.75" group="1" rgba="1 1 1 1"/>
+      <site name="please rejoin" pos="0 0 0.78" group="4" rgba="1 1 1 1"/>
+      <site name="Please let me pass." pos="0 0 0.84" group="5" rgba="1 1 1 1"/>
+    </body>
+    <body name="person1" pos="0 0 0.125">
+      <joint name="person1_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person1_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person1_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person1_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.25 0.75 0.35 1"/>
+      <geom name="person1_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person1_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person1_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person1_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p1" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person2" pos="0 0 0.125">
+      <joint name="person2_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person2_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person2_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person2_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.2 0.7 0.3 1"/>
+      <geom name="person2_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person2_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person2_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person2_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p2" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person3" pos="0 0 0.125">
+      <joint name="person3_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person3_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person3_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person3_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.22 0.72 0.33 1"/>
+      <geom name="person3_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person3_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person3_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person3_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p3" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person4" pos="0 0 0.125">
+      <joint name="person4_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person4_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person4_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person4_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.24 0.74 0.35 1"/>
+      <geom name="person4_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person4_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person4_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person4_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p4" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person5" pos="0 0 0.125">
+      <joint name="person5_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person5_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person5_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person5_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.26 0.76 0.37 1"/>
+      <geom name="person5_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person5_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person5_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person5_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p5" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person6" pos="0 0 0.125">
+      <joint name="person6_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person6_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person6_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person6_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.28 0.78 0.39 1"/>
+      <geom name="person6_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person6_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person6_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person6_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p6" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person7" pos="0 0 0.125">
+      <joint name="person7_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person7_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person7_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person7_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.3 0.8 0.41 1"/>
+      <geom name="person7_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person7_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person7_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person7_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p7" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person8" pos="0 0 0.125">
+      <joint name="person8_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person8_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person8_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person8_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.32 0.82 0.43 1"/>
+      <geom name="person8_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person8_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person8_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person8_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p8" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person9" pos="0 0 0.125">
+      <joint name="person9_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person9_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person9_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person9_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.34 0.84 0.45 1"/>
+      <geom name="person9_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person9_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person9_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person9_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p9" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person10" pos="0 0 0.125">
+      <joint name="person10_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person10_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person10_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person10_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.36 0.86 0.47 1"/>
+      <geom name="person10_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person10_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person10_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person10_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p10" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person11" pos="0 0 0.125">
+      <joint name="person11_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person11_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person11_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person11_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.38 0.88 0.49 1"/>
+      <geom name="person11_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person11_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person11_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person11_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p11" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person12" pos="0 0 0.125">
+      <joint name="person12_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person12_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person12_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person12_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.4 0.9 0.51 1"/>
+      <geom name="person12_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person12_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person12_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person12_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p12" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person13" pos="0 0 0.125">
+      <joint name="person13_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person13_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person13_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person13_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.42 0.92 0.53 1"/>
+      <geom name="person13_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person13_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person13_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person13_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p13" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person14" pos="0 0 0.125">
+      <joint name="person14_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person14_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person14_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person14_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.44 0.94 0.55 1"/>
+      <geom name="person14_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person14_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person14_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person14_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p14" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+    <body name="person15" pos="0 0 0.125">
+      <joint name="person15_x" pos="0 0 0" axis="1 0 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person15_y" pos="0 0 0" axis="0 1 0" type="slide" damping="100" frictionloss="20"/>
+      <joint name="person15_yaw" pos="0 0 0" axis="0 0 1" damping="0.1"/>
+      <geom name="person15_torso" size="0.125 0.1" pos="0 0 0.125" quat="0.707107 0 0 0.707107" type="capsule" mass="60" rgba="0.46 0.96 0.57 1"/>
+      <geom name="person15_head" size="0.09" pos="0 0 0.36" contype="0" conaffinity="0" rgba="0.95 0.85 0.75 1"/>
+      <geom name="person15_nose" size="0.02 0.03 0.02" pos="0.18 0 0.36" type="box" contype="0" conaffinity="0" rgba="0.95 0.35 0.35 1"/>
+      <geom name="person15_speaking_halo" size="0.32 0.004" pos="0 0 -0.115" type="cylinder" contype="0" conaffinity="0" rgba="1 0.9 0.2 0"/>
+      <site name="person15_site" pos="0 0 0.125" size="0.02" rgba="0 1 0 1"/>
+      <site name="p15" pos="0 0 0.52" group="2" rgba="1 1 1 1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <general name="motor_x" joint="robot_x" ctrlrange="-1.5 1.5" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="motor_y" joint="robot_y" ctrlrange="-1.5 1.5" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="motor_yaw" joint="robot_yaw" ctrlrange="-10 10" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person1_motor_x" joint="person1_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person1_motor_y" joint="person1_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person1_motor_yaw" joint="person1_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person2_motor_x" joint="person2_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person2_motor_y" joint="person2_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person2_motor_yaw" joint="person2_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person3_motor_x" joint="person3_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person3_motor_y" joint="person3_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person3_motor_yaw" joint="person3_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person4_motor_x" joint="person4_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person4_motor_y" joint="person4_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person4_motor_yaw" joint="person4_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person5_motor_x" joint="person5_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person5_motor_y" joint="person5_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person5_motor_yaw" joint="person5_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person6_motor_x" joint="person6_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person6_motor_y" joint="person6_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person6_motor_yaw" joint="person6_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person7_motor_x" joint="person7_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person7_motor_y" joint="person7_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person7_motor_yaw" joint="person7_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person8_motor_x" joint="person8_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person8_motor_y" joint="person8_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person8_motor_yaw" joint="person8_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person9_motor_x" joint="person9_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person9_motor_y" joint="person9_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person9_motor_yaw" joint="person9_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person10_motor_x" joint="person10_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person10_motor_y" joint="person10_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person10_motor_yaw" joint="person10_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person11_motor_x" joint="person11_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person11_motor_y" joint="person11_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person11_motor_yaw" joint="person11_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person12_motor_x" joint="person12_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person12_motor_y" joint="person12_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person12_motor_yaw" joint="person12_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person13_motor_x" joint="person13_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person13_motor_y" joint="person13_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person13_motor_yaw" joint="person13_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person14_motor_x" joint="person14_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person14_motor_y" joint="person14_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person14_motor_yaw" joint="person14_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person15_motor_x" joint="person15_x" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person15_motor_y" joint="person15_y" ctrlrange="-1.67 1.67" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+    <general name="person15_motor_yaw" joint="person15_yaw" ctrlrange="-20 20" biastype="affine" gainprm="300" biasprm="0 0 -300"/>
+  </actuator>
+</mujoco>

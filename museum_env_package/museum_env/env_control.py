@@ -31,7 +31,6 @@ _FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(10.0)
 _FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS = 1e-3
 _FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS = 0.7
 _FRONT_BLOCKING_HUMAN_AVOIDANCE_GAIN = 0.5
-_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS = 5.0
 
 
 def reset_following_wait_episode(env) -> None:
@@ -125,20 +124,20 @@ def record_fuzzy_debug(env, idx: int, context: str, fuzzy_debug: dict) -> None:
     debug_state.refresh_counter = int(env.runtime_cache.refresh_counter)
 
 
-def maybe_log_following_ahead_entry(env, idx: int, fuzzy_debug: dict) -> None:
-    """Log when a following human newly enters the fuzzy `ahead` region."""
-    debug_state = env.fuzzy_debug[idx]
-    ahead_active = bool(fuzzy_debug.get("ahead_active", False))
-    if debug_state.context != "following":
-        previous_ahead_active = False
-    else:
-        previous_ahead_active = bool(debug_state.ahead_active)
-    if (not previous_ahead_active) and ahead_active:
-        human = env.humans[idx]
-        angle_deg = float(fuzzy_debug["inputs"]["angle"])
-        env._log_event(
-            f">>> {human.name} entered FOLLOWING ahead region (angle={angle_deg:.1f} deg)."
-        )
+# def maybe_log_following_ahead_entry(env, idx: int, fuzzy_debug: dict) -> None:
+#     """Log when a following human newly enters the fuzzy `ahead` region."""
+#     debug_state = env.fuzzy_debug[idx]
+#     ahead_active = bool(fuzzy_debug.get("ahead_active", False))
+#     if debug_state.context != "following":
+#         previous_ahead_active = False
+#     else:
+#         previous_ahead_active = bool(debug_state.ahead_active)
+#     if (not previous_ahead_active) and ahead_active:
+#         human = env.humans[idx]
+#         angle_deg = float(fuzzy_debug["inputs"]["angle"])
+#         # env._log_event(
+#         #     f">>> {human.name} entered FOLLOWING ahead region (angle={angle_deg:.1f} deg)."
+#         # )
 
 
 def apply_fuzzy_transition(
@@ -630,10 +629,6 @@ def _compute_front_blocking_human_avoidance_offset(state, *, world_frame) -> np.
     avoidance_norm = float(np.linalg.norm(avoidance_xy))
     if avoidance_norm <= 1e-6:
         return np.zeros(2, dtype=np.float32)
-    if avoidance_norm > _FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS:
-        avoidance_xy = (
-            avoidance_xy / avoidance_norm * float(_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS)
-        )
     return np.asarray(avoidance_xy, dtype=np.float32)
 
 
