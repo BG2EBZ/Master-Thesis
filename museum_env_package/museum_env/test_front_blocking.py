@@ -228,7 +228,7 @@ class FrontBlockingControlTests(unittest.TestCase):
         self.assertLess(float(offset[0]), 0.0)
         self.assertAlmostEqual(float(offset[1]), 0.0, places=5)
 
-    def test_bypass_human_avoidance_offset_includes_blocker_when_nearby(self):
+    def test_bypass_human_avoidance_offset_ignores_blocker_when_nearby(self):
         state = RobotFrontBlockingState(
             blocker_idx=0,
             bypass_active=True,
@@ -244,7 +244,7 @@ class FrontBlockingControlTests(unittest.TestCase):
             world_frame=world_frame,
         )
 
-        self.assertGreater(float(np.linalg.norm(offset)), 0.0)
+        self.assertTrue(np.allclose(offset, np.zeros(2, dtype=np.float32)))
 
     def test_bypass_action_is_deflected_when_nearby_human_blocks_arc_path(self):
         env = self._make_env(n_humans=2)

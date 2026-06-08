@@ -603,7 +603,6 @@ def _front_blocking_bypass_progress(state, *, world_frame) -> float:
 
 def _compute_front_blocking_human_avoidance_offset(state, *, world_frame) -> np.ndarray:
     """Return a bounded XY repulsion offset from nearby humans during bypass."""
-    del state
     robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
     human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
     if human_xy.size == 0:
@@ -614,7 +613,10 @@ def _compute_front_blocking_human_avoidance_offset(state, *, world_frame) -> np.
         [np.cos(float(world_frame.robot_pose[2])), np.sin(float(world_frame.robot_pose[2]))],
         dtype=np.float32,
     )
-    for person_xy in human_xy:
+    blocker_idx = state.blocker_idx
+    for idx, person_xy in enumerate(human_xy):
+        if blocker_idx is not None and int(idx) == int(blocker_idx):
+            continue
         diff_xy = robot_xy - np.asarray(person_xy, dtype=np.float32)
         dist = float(np.linalg.norm(diff_xy))
         if dist >= _FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS:
