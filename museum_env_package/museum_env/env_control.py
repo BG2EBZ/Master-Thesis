@@ -23,13 +23,11 @@ from .human import (
     DISTRACTED_SOURCE_LISTENING,
     HumanMode,
 )
-from .robot import ROBOT_YAW_RATE_LIMIT, RobotMode
+from .robot import ROBOT_TURN_DONE_YAW_ERR, ROBOT_TURN_GAIN, ROBOT_YAW_RATE_LIMIT, RobotMode
 from .spatial_utils import wrap_to_pi
 
-_FRONT_BLOCKING_CURIOSITY_REJOIN_PROB = 0.5
-_FRONT_BLOCKING_BYPASS_SIDE_OFFSET_METERS = 0.75
-_FRONT_BLOCKING_BYPASS_FORWARD_OFFSET_METERS = 0.45
-_FRONT_BLOCKING_BYPASS_REACHED_THRESHOLD_METERS = 0.20
+_FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(60.0)
+_FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(12.0)
 
 
 def reset_following_wait_episode(env) -> None:
@@ -62,13 +60,9 @@ def _compute_robot_relative_angle_deg(world_frame, idx: int) -> float:
     """Return one human's robot-relative bearing in degrees."""
     robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
     human_xy = np.asarray(world_frame.human_xy[idx], dtype=np.float32)
-    robot_yaw = float(world_frame.robot_pose[2])
+    robot_yaw = world_frame.robot_pose[2]
     diff_xy = human_xy - robot_xy
-    return float(
-        np.rad2deg(
-            wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw)
-        )
-    )
+    return np.rad2deg(wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw))
 
 
 def should_evaluate_fuzzy(env, idx: int, context: str) -> bool:
@@ -425,6 +419,7 @@ def get_nearest_front_blocking_human_idx(env, world_frame) -> Optional[int]:
 
     best_idx = None
     best_distance = float("inf")
+    # traverse all humans
     for idx, distance in enumerate(distances):
         if float(distance) >= float(ROBOT_FRONT_BLOCKING_TRIGGER_METERS):
             continue
@@ -448,67 +443,66 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
     if env.robot.mode != RobotMode.MOVE:
         state.reset()
         return adjusted_action
-
-    if not state.active:
+    
+    # First check blocking or not
+    if state.blocker_idx is None and not state.bypass_active:
         blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
         if blocker_idx is None:
             return adjusted_action
 
         state.blocker_idx = int(blocker_idx)
-        _maybe_apply_front_blocking_pass_request_response(env, blocker_idx=int(blocker_idx))
-        state.active = True
         state.speech_steps_remaining = int(env.robot_pass_request_steps)
-        state.bypass_active = False
-        state.bypass_target_xy = None
-        state.bypass_side_sign = 0.0
+        env._log_event(
+            f">>> Robot requested passage from person{int(blocker_idx) + 1} and is waiting "
+            f"{env.robot_pass_request_steps * env.dt:.1f}s."
+        )
 
-    blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
-
+    # Stop 2 seconds to wait for the response
     if int(state.speech_steps_remaining) > 0:
-        adjusted_action[:2] = 0.0
+        adjusted_action[:] = 0.0
         env.robot.mode = RobotMode.STOP
         return adjusted_action
 
+    if state.bypass_active:
+        if state.bypass_turn_target_yaw is not None:
+            turn_action = _compute_robot_turn_action(
+                current_yaw=float(world_frame.robot_pose[2]),
+                target_yaw=float(state.bypass_turn_target_yaw),
+            )
+            if float(turn_action[2]) != 0.0:
+                env.robot.mode = RobotMode.STOP
+                return turn_action
+            state.bypass_turn_target_yaw = None
+        if _front_blocking_bypass_progress(state, world_frame=world_frame) >= float(
+            _FRONT_BLOCKING_BYPASS_ARC_RADIANS
+        ):
+            state.reset()
+            return adjusted_action
+        return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
+
+    blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
     if blocker_idx is None:
         state.reset()
         return adjusted_action
 
-    state.blocker_idx = int(blocker_idx)
-
-    if state.bypass_active:
-        if _front_blocking_bypass_reached(env, state=state, world_frame=world_frame):
-            state.bypass_active = False
-            state.bypass_target_xy = None
-            state.bypass_side_sign = 0.0
-            return adjusted_action
-
-        env.robot.mode = RobotMode.MOVE
-        return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
-
-    bypass_target_xy, bypass_side_sign = _select_front_blocking_bypass_target(
-        env,
-        blocker_idx=int(blocker_idx),
-        world_frame=world_frame,
+    _start_front_blocking_bypass(state, blocker_idx=int(blocker_idx), world_frame=world_frame)
+    env._log_event(
+        f">>> Robot started a 60 deg bypass arc around person{int(blocker_idx) + 1}."
     )
-    if bypass_target_xy is not None:
-        state.bypass_active = True
-        state.bypass_target_xy = np.asarray(bypass_target_xy, dtype=np.float32)
-        state.bypass_side_sign = float(bypass_side_sign)
-        env.robot.mode = RobotMode.MOVE
-        return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
+    if state.bypass_turn_target_yaw is not None:
+        turn_action = _compute_robot_turn_action(
+            current_yaw=float(world_frame.robot_pose[2]),
+            target_yaw=float(state.bypass_turn_target_yaw),
+        )
+        if float(turn_action[2]) != 0.0:
+            env.robot.mode = RobotMode.STOP
+            return turn_action
+        state.bypass_turn_target_yaw = None
+    return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
 
-    adjusted_action[:2] = 0.0
-    env.robot.mode = RobotMode.STOP
-    return adjusted_action
 
-
-def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
-    """Follow the temporary bypass target using the robot waypoint controller gains."""
-    if state.bypass_target_xy is None:
-        return np.zeros(3, dtype=np.float32)
-
-    robot_pose = world_frame.robot_pose
-    target_xy = np.asarray(state.bypass_target_xy, dtype=np.float32)
+def _compute_robot_seek_action(env, *, robot_pose, target_xy) -> np.ndarray:
+    """Track one temporary XY target using the robot's existing move controller gains."""
     dx = float(target_xy[0]) - float(robot_pose[0])
     dy = float(target_xy[1]) - float(robot_pose[1])
     dist = float(np.hypot(dx, dy) + 1e-8)
@@ -522,54 +516,63 @@ def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
     return np.array([vx, vy, yaw_rate], dtype=np.float32)
 
 
-def _maybe_apply_front_blocking_pass_request_response(env, *, blocker_idx: int) -> None:
-    """Resolve a one-shot pass-request response when a new front-blocking episode begins."""
-    if not (0 <= int(blocker_idx) < len(env.humans)):
-        return
-
-    blocker = env.humans[int(blocker_idx)]
-    if float(env.np_random.random()) < _FRONT_BLOCKING_CURIOSITY_REJOIN_PROB:
-        blocker.set_mode(HumanMode.FOLLOWING)
-        env._log_event(f">>> {blocker.name} responded to pass request and rejoined (following).")
-        return
-
-    env._log_event(f">>> {blocker.name} ignored pass request and stayed {blocker.mode}.")
+def _compute_robot_turn_action(*, current_yaw: float, target_yaw: float) -> np.ndarray:
+    """Rotate in place until the robot faces the desired bypass tangent."""
+    yaw_err = wrap_to_pi(float(target_yaw) - float(current_yaw))
+    action = np.zeros(3, dtype=np.float32)
+    if abs(yaw_err) < ROBOT_TURN_DONE_YAW_ERR:
+        return action
+    action[2] = float(np.clip(ROBOT_TURN_GAIN * yaw_err, -ROBOT_YAW_RATE_LIMIT, ROBOT_YAW_RATE_LIMIT))
+    return action
 
 
-def _front_blocking_bypass_reached(env, *, state, world_frame) -> bool:
-    """Return whether the robot has reached the temporary bypass target."""
-    del env
-    if state.bypass_target_xy is None:
-        return True
-    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
-    target_xy = np.asarray(state.bypass_target_xy, dtype=np.float32)
-    return bool(
-        np.linalg.norm(target_xy - robot_xy) <= float(_FRONT_BLOCKING_BYPASS_REACHED_THRESHOLD_METERS)
-    )
-
-def _select_front_blocking_bypass_target(env, *, blocker_idx: int, world_frame) -> tuple[Optional[np.ndarray], float]:
-    """Pick a fixed left-side temporary bypass target around the blocker."""
-    if not (0 <= int(blocker_idx) < len(env.humans)):
-        return None, 0.0
-
+def _start_front_blocking_bypass(state, *, blocker_idx: int, world_frame) -> None:
+    """Initialize a 60-degree arc around the current blocker on the opposite side."""
     blocker_xy = np.asarray(world_frame.human_xy[int(blocker_idx)], dtype=np.float32)
     robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
-    waypoint_xy = np.asarray(env.robot.get_current_waypoint(), dtype=np.float32)
-    guide_xy = waypoint_xy - robot_xy
-    guide_norm = float(np.linalg.norm(guide_xy))
-    if guide_norm <= 1e-8:
-        return None, 0.0
+    offset_xy = robot_xy - blocker_xy
+    relative_angle_deg = float(_compute_robot_relative_angle_deg(world_frame, int(blocker_idx)))
 
-    guide_dir = guide_xy / guide_norm
-    side_dir = np.array([-guide_dir[1], guide_dir[0]], dtype=np.float32)
+    state.blocker_idx = int(blocker_idx)
+    state.bypass_active = True
+    state.bypass_center_xy = blocker_xy.copy()
+    state.bypass_radius = float(max(np.linalg.norm(offset_xy), 1e-6))
+    state.bypass_start_angle = float(np.arctan2(offset_xy[1], offset_xy[0]))
+    state.bypass_direction_sign = -1.0 if relative_angle_deg >= 0.0 else 1.0
+    state.bypass_turn_target_yaw = wrap_to_pi(
+        float(state.bypass_start_angle) + (float(state.bypass_direction_sign) * (0.5 * np.pi))
+    )
 
-    candidate_xy = np.asarray(
-        blocker_xy
-        + (float(_FRONT_BLOCKING_BYPASS_SIDE_OFFSET_METERS) * side_dir)
-        + (float(_FRONT_BLOCKING_BYPASS_FORWARD_OFFSET_METERS) * guide_dir),
+
+def _front_blocking_bypass_progress(state, *, world_frame) -> float:
+    """Return the signed angular progress made along the active bypass arc."""
+    center_xy = np.asarray(state.bypass_center_xy, dtype=np.float32)
+    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+    current_angle = float(np.arctan2(robot_xy[1] - center_xy[1], robot_xy[0] - center_xy[0]))
+    progress = float(state.bypass_direction_sign) * wrap_to_pi(
+        current_angle - float(state.bypass_start_angle)
+    )
+    return max(0.0, progress)
+
+
+def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
+    """Follow the current bypass arc using a short lookahead target on the same circle."""
+    center_xy = np.asarray(state.bypass_center_xy, dtype=np.float32)
+    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+    current_angle = float(np.arctan2(robot_xy[1] - center_xy[1], robot_xy[0] - center_xy[0]))
+    progress = _front_blocking_bypass_progress(state, world_frame=world_frame)
+    remaining_angle = max(0.0, float(_FRONT_BLOCKING_BYPASS_ARC_RADIANS) - progress)
+    lookahead_angle = min(float(_FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS), remaining_angle)
+    target_angle = current_angle + float(state.bypass_direction_sign) * lookahead_angle
+    target_xy = center_xy + float(state.bypass_radius) * np.array(
+        [np.cos(target_angle), np.sin(target_angle)],
         dtype=np.float32,
     )
-    return candidate_xy, 1.0
+    return _compute_robot_seek_action(
+        env,
+        robot_pose=world_frame.robot_pose,
+        target_xy=target_xy,
+    )
 
 
 def advance_robot_front_blocking_runtime(env) -> None:
