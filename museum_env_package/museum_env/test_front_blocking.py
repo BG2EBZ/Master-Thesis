@@ -193,6 +193,84 @@ class FrontBlockingControlTests(unittest.TestCase):
         self.assertIsNone(env.robot_front_blocking_state.bypass_turn_target_yaw)
         self.assertFalse(np.allclose(action[:2], np.zeros(2, dtype=np.float32)))
 
+    def test_bypass_human_avoidance_offset_is_zero_when_all_humans_are_far(self):
+        state = RobotFrontBlockingState(
+            bypass_active=True,
+            bypass_center_xy=np.array([0.4, 0.1], dtype=np.float32),
+            bypass_radius=float(np.hypot(0.4, 0.1)),
+            bypass_start_angle=float(np.arctan2(-0.1, -0.4)),
+            bypass_direction_sign=-1.0,
+        )
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[3.0, 3.0], [-3.0, -3.0]])
+
+        offset = env_control._compute_front_blocking_human_avoidance_offset(
+            state,
+            world_frame=world_frame,
+        )
+
+        self.assertTrue(np.allclose(offset, np.zeros(2, dtype=np.float32)))
+
+    def test_bypass_human_avoidance_offset_deflects_away_from_nearby_human(self):
+        state = RobotFrontBlockingState(
+            bypass_active=True,
+            bypass_center_xy=np.array([0.4, 0.1], dtype=np.float32),
+            bypass_radius=float(np.hypot(0.4, 0.1)),
+            bypass_start_angle=float(np.arctan2(-0.1, -0.4)),
+            bypass_direction_sign=-1.0,
+        )
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.25, 0.0]])
+
+        offset = env_control._compute_front_blocking_human_avoidance_offset(
+            state,
+            world_frame=world_frame,
+        )
+
+        self.assertLess(float(offset[0]), 0.0)
+        self.assertAlmostEqual(float(offset[1]), 0.0, places=5)
+
+    def test_bypass_human_avoidance_offset_includes_blocker_when_nearby(self):
+        state = RobotFrontBlockingState(
+            blocker_idx=0,
+            bypass_active=True,
+            bypass_center_xy=np.array([0.4, 0.1], dtype=np.float32),
+            bypass_radius=float(np.hypot(0.4, 0.1)),
+            bypass_start_angle=float(np.arctan2(-0.1, -0.4)),
+            bypass_direction_sign=-1.0,
+        )
+        world_frame = _make_world_frame((0.0, 0.0, 0.0), [[0.25, 0.0]])
+
+        offset = env_control._compute_front_blocking_human_avoidance_offset(
+            state,
+            world_frame=world_frame,
+        )
+
+        self.assertGreater(float(np.linalg.norm(offset)), 0.0)
+
+    def test_bypass_action_is_deflected_when_nearby_human_blocks_arc_path(self):
+        env = self._make_env(n_humans=2)
+        state = env.robot_front_blocking_state
+        state.bypass_active = True
+        state.bypass_center_xy = np.array([0.4, 0.1], dtype=np.float32)
+        state.bypass_radius = float(np.hypot(0.4, 0.1))
+        state.bypass_start_angle = float(np.arctan2(-0.1, -0.4))
+        state.bypass_direction_sign = -1.0
+        aligned_yaw = float(state.bypass_start_angle + (state.bypass_direction_sign * (0.5 * np.pi)))
+        baseline_frame = _make_world_frame((0.0, 0.0, aligned_yaw), [[3.0, 3.0], [-3.0, -3.0]])
+        crowded_frame = _make_world_frame((0.0, 0.0, aligned_yaw), [[0.25, 0.0], [3.0, 3.0]])
+
+        baseline_action = env_control._compute_robot_bypass_action(
+            env,
+            state=state,
+            world_frame=baseline_frame,
+        )
+        crowded_action = env_control._compute_robot_bypass_action(
+            env,
+            state=state,
+            world_frame=crowded_frame,
+        )
+
+        self.assertNotAlmostEqual(float(baseline_action[2]), float(crowded_action[2]), places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

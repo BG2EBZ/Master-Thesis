@@ -26,9 +26,12 @@ from .human import (
 from .robot import ROBOT_TURN_DONE_YAW_ERR, ROBOT_TURN_GAIN, ROBOT_YAW_RATE_LIMIT, RobotMode
 from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
-_FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(180.0)
+_FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(90.0)
 _FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(12.0)
 _FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS = 1e-3
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS = 0.8
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_GAIN = 1.0
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS = 0.5
 
 
 def reset_following_wait_episode(env) -> None:
@@ -598,8 +601,47 @@ def _front_blocking_bypass_progress(state, *, world_frame) -> float:
     return max(0.0, progress)
 
 
+def _compute_front_blocking_human_avoidance_offset(state, *, world_frame) -> np.ndarray:
+    """Return a bounded XY repulsion offset from nearby humans during bypass."""
+    del state
+    robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
+    human_xy = np.asarray(world_frame.human_xy, dtype=np.float32)
+    if human_xy.size == 0:
+        return np.zeros(2, dtype=np.float32)
+
+    avoidance_xy = np.zeros(2, dtype=np.float32)
+    fallback_dir = np.array(
+        [np.cos(float(world_frame.robot_pose[2])), np.sin(float(world_frame.robot_pose[2]))],
+        dtype=np.float32,
+    )
+    for person_xy in human_xy:
+        diff_xy = robot_xy - np.asarray(person_xy, dtype=np.float32)
+        dist = float(np.linalg.norm(diff_xy))
+        if dist >= _FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS:
+            continue
+        if dist <= 1e-6:
+            away_dir = fallback_dir
+        else:
+            away_dir = diff_xy / dist
+        strength = float(
+            _FRONT_BLOCKING_HUMAN_AVOIDANCE_GAIN
+            * (_FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS - dist)
+            / _FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS
+        )
+        avoidance_xy += np.asarray(strength * away_dir, dtype=np.float32)
+
+    avoidance_norm = float(np.linalg.norm(avoidance_xy))
+    if avoidance_norm <= 1e-6:
+        return np.zeros(2, dtype=np.float32)
+    if avoidance_norm > _FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS:
+        avoidance_xy = (
+            avoidance_xy / avoidance_norm * float(_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS)
+        )
+    return np.asarray(avoidance_xy, dtype=np.float32)
+
+
 def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
-    """Follow the current bypass arc using a short lookahead target on the same circle."""
+    """Follow the current bypass arc and lightly deflect away from nearby humans."""
     center_xy = np.asarray(state.bypass_center_xy, dtype=np.float32)
     robot_xy = np.asarray(world_frame.robot_xy, dtype=np.float32)
     current_angle = float(np.arctan2(robot_xy[1] - center_xy[1], robot_xy[0] - center_xy[0]))
@@ -609,6 +651,10 @@ def _compute_robot_bypass_action(env, *, state, world_frame) -> np.ndarray:
     target_angle = current_angle + float(state.bypass_direction_sign) * lookahead_angle
     target_xy = center_xy + float(state.bypass_radius) * np.array(
         [np.cos(target_angle), np.sin(target_angle)],
+        dtype=np.float32,
+    )
+    target_xy = np.asarray(
+        target_xy + _compute_front_blocking_human_avoidance_offset(state, world_frame=world_frame),
         dtype=np.float32,
     )
     return _compute_robot_seek_action(
