@@ -242,15 +242,6 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
         hr_distance_min=human.hr_distance_min,
         hr_distance_max=human.hr_distance_max,
     )
-    guide_norm = float(np.linalg.norm(to_target_xy))
-    if guide_norm > NORM_EPS:
-        guide_dir = to_target_xy / guide_norm
-        if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
-            fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
-            if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
-                v_total = np.asarray(fallback_v_xy, dtype=np.float32)
-            else:
-                v_total = np.zeros(2, dtype=np.float32)
 
     yaw_err = wrap_to_pi(desired_yaw - yaw)
     return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)

@@ -196,7 +196,7 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
         ctrl.Rule(hhd["far"] & hrd["far"] & density["low"], distracted["high"]),
         ctrl.Rule(hhd["medium"] & hrd["far"] & density["low"], distracted["high"]),
         ctrl.Rule(hhd["far"] & hrd["medium"] & density["low"], distracted["high"]),
-        ctrl.Rule(hhd["medium"] & hrd["medium"] & density["low"], distracted["high"]),
+        # ctrl.Rule(hhd["medium"] & hrd["medium"] & density["low"], distracted["high"]),
 
         # Impatient rules
         ctrl.Rule(hhd["close"] & hrd["close"] & density["low"], impatient["high"]),

@@ -27,11 +27,11 @@ from .robot import ROBOT_TURN_DONE_YAW_ERR, ROBOT_TURN_GAIN, ROBOT_YAW_RATE_LIMI
 from .spatial_utils import raycast_hit_distance, wrap_to_pi
 
 _FRONT_BLOCKING_BYPASS_ARC_RADIANS = np.deg2rad(90.0)
-_FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(12.0)
+_FRONT_BLOCKING_BYPASS_LOOKAHEAD_RADIANS = np.deg2rad(10.0)
 _FRONT_BLOCKING_SIDE_RAY_TIE_TOLERANCE_METERS = 1e-3
-_FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS = 0.8
-_FRONT_BLOCKING_HUMAN_AVOIDANCE_GAIN = 1.0
-_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS = 0.5
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_RADIUS_METERS = 0.7
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_GAIN = 0.5
+_FRONT_BLOCKING_HUMAN_AVOIDANCE_MAX_METERS = 5.0
 
 
 def reset_following_wait_episode(env) -> None:
@@ -557,14 +557,9 @@ def _select_front_blocking_bypass_direction_sign(env, *, blocker_idx: int, world
     else:
         return _fallback_front_blocking_bypass_direction_sign(world_frame, blocker_idx)
 
-    positive_sign_dir = np.array(
-        [np.cos(float(start_angle) + (0.5 * np.pi)), np.sin(float(start_angle) + (0.5 * np.pi))],
-        dtype=np.float32,
-    )
-    negative_sign_dir = np.array(
-        [np.cos(float(start_angle) - (0.5 * np.pi)), np.sin(float(start_angle) - (0.5 * np.pi))],
-        dtype=np.float32,
-    )
+    positive_sign_dir = np.array([np.cos(float(start_angle) + (0.5 * np.pi)), np.sin(float(start_angle) + (0.5 * np.pi))],dtype=np.float32,)
+    negative_sign_dir = np.array([np.cos(float(start_angle) - (0.5 * np.pi)), np.sin(float(start_angle) - (0.5 * np.pi))],dtype=np.float32,)
+    
     return 1.0 if float(np.dot(positive_sign_dir, chosen_side_dir)) >= float(np.dot(negative_sign_dir, chosen_side_dir)) else -1.0
 
 
