@@ -233,8 +233,7 @@ def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, w
             profile=human.profile,
         )
     )
-    if context == "following":
-        maybe_log_following_ahead_entry(env, idx=idx, fuzzy_debug=fuzzy_debug)
+    
     record_fuzzy_debug(env, idx, context=context, fuzzy_debug=fuzzy_debug)
     apply_fuzzy_transition(
         env,
@@ -438,6 +437,18 @@ def get_nearest_front_blocking_human_idx(env, world_frame) -> Optional[int]:
     return best_idx
 
 
+def _start_front_blocking_pass_request(env, state, *, blocker_idx: int, reset_state: bool = False) -> None:
+    """Enter the spoken pass-request wait state for the current blocker."""
+    if reset_state:
+        state.reset()
+    state.blocker_idx = int(blocker_idx)
+    state.speech_steps_remaining = int(env.robot_pass_request_steps)
+    env._log_event(
+        f">>> Robot requested passage from person{int(blocker_idx) + 1} and is waiting "
+        f"{env.robot_pass_request_steps * env.dt:.1f}s."
+    )
+
+
 def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) -> np.ndarray:
     """Stop the robot when someone blocks the ahead region at close range."""
     adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
@@ -453,12 +464,7 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
         if blocker_idx is None:
             return adjusted_action
 
-        state.blocker_idx = int(blocker_idx)
-        state.speech_steps_remaining = int(env.robot_pass_request_steps)
-        env._log_event(
-            f">>> Robot requested passage from person{int(blocker_idx) + 1} and is waiting "
-            f"{env.robot_pass_request_steps * env.dt:.1f}s."
-        )
+        _start_front_blocking_pass_request(env, state, blocker_idx=int(blocker_idx))
 
     # Stop 2 seconds to wait for the response
     if int(state.speech_steps_remaining) > 0:
@@ -476,6 +482,18 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
                 env.robot.mode = RobotMode.STOP
                 return turn_action
             state.bypass_turn_target_yaw = None
+            blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
+            # Check if there's still a blocker after turn
+            if blocker_idx is not None:
+                _start_front_blocking_pass_request(
+                    env,
+                    state,
+                    blocker_idx=int(blocker_idx),
+                    reset_state=True,
+                )
+                adjusted_action[:] = 0.0
+                env.robot.mode = RobotMode.STOP
+                return adjusted_action
         if _front_blocking_bypass_progress(state, world_frame=world_frame) >= float(
             _FRONT_BLOCKING_BYPASS_ARC_RADIANS
         ):

@@ -193,6 +193,38 @@ class FrontBlockingControlTests(unittest.TestCase):
         self.assertIsNone(env.robot_front_blocking_state.bypass_turn_target_yaw)
         self.assertFalse(np.allclose(action[:2], np.zeros(2, dtype=np.float32)))
 
+    def test_front_blocking_rechecks_after_turn_alignment_and_restarts_wait_if_still_blocked(self):
+        env = self._make_env(n_humans=2)
+        state = env.robot_front_blocking_state
+        state.blocker_idx = 0
+        state.bypass_active = True
+        state.bypass_center_xy = np.array([0.4, 0.1], dtype=np.float32)
+        state.bypass_radius = float(np.hypot(0.4, 0.1))
+        state.bypass_start_angle = float(np.arctan2(-0.1, -0.4))
+        state.bypass_direction_sign = -1.0
+        state.bypass_turn_target_yaw = float(
+            state.bypass_start_angle + (state.bypass_direction_sign * (0.5 * np.pi))
+        )
+        aligned_yaw = float(state.bypass_turn_target_yaw)
+        ahead_xy = np.array(
+            [0.3 * np.cos(aligned_yaw), 0.3 * np.sin(aligned_yaw)],
+            dtype=np.float32,
+        )
+        world_frame = _make_world_frame((0.0, 0.0, aligned_yaw), [[0.4, 0.1], ahead_xy])
+
+        action = env_control.apply_robot_front_blocking_stop_if_needed(
+            env,
+            np.array([0.3, 0.0, 0.1], dtype=np.float32),
+            world_frame,
+        )
+
+        self.assertTrue(np.allclose(action, np.zeros(3, dtype=np.float32)))
+        self.assertEqual(env.robot.mode, RobotMode.STOP)
+        self.assertEqual(env.robot_front_blocking_state.blocker_idx, 1)
+        self.assertEqual(env.robot_front_blocking_state.speech_steps_remaining, 20)
+        self.assertFalse(env.robot_front_blocking_state.bypass_active)
+        self.assertIsNone(env.robot_front_blocking_state.bypass_turn_target_yaw)
+
     def test_bypass_human_avoidance_offset_is_zero_when_all_humans_are_far(self):
         state = RobotFrontBlockingState(
             bypass_active=True,
