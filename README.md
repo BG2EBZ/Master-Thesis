@@ -26,6 +26,13 @@
 
 - `step`
 - `terminated_reason`
+- terminal-only on the final step:
+- `duration_seconds`
+- `overwhelmed_triggers`
+- `impatient_triggers`
+- `distracted_triggers`
+- `return`
+- `reward_components`
 
 `info["phase"]` contains the current orchestration phase:
 
@@ -62,7 +69,8 @@ The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback inter
 
 - intermediate steps return `0.0`
 - the final scalar reward is emitted only when the episode completes or times out
-- `info` keeps the same compact schema shown above
+- `info` keeps the same compact top-level schema shown above
+- final-step reward breakdown is exposed under `info["episode"]["reward_components"]`
 
 Example:
 

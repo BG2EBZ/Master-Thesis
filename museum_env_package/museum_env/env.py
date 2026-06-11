@@ -575,12 +575,23 @@ class MuseumEnv(gym.Env):
         )
         env_control.advance_robot_front_blocking_runtime(self)
         if terminated or truncated:
-            reward, _ = compute_episode_reward(
+            duration_seconds = float(self.step_count) * float(self.dt)
+            reward, reward_components = compute_episode_reward(
                 completed=terminated,
                 truncated=truncated,
-                duration_seconds=float(self.step_count) * float(self.dt),
+                duration_seconds=duration_seconds,
                 metrics=self.episode_metrics,
                 config=self.reward_config,
+            )
+            info["episode"].update(
+                {
+                    "duration_seconds": duration_seconds,
+                    "overwhelmed_triggers": int(self.episode_metrics.overwhelmed_triggers),
+                    "impatient_triggers": int(self.episode_metrics.impatient_triggers),
+                    "distracted_triggers": int(self.episode_metrics.distracted_triggers),
+                    "return": float(reward),
+                    "reward_components": reward_components,
+                }
             )
         else:
             reward = 0.0

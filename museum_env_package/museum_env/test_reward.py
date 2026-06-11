@@ -96,6 +96,10 @@ class MuseumEnvRewardTests(unittest.TestCase):
                 sorted(info.keys()),
                 ["crowd", "episode", "events", "phase", "robot"],
             )
+            self.assertEqual(
+                sorted(info["episode"].keys()),
+                ["step", "terminated_reason"],
+            )
         finally:
             env.close()
 
@@ -109,9 +113,9 @@ class MuseumEnvRewardTests(unittest.TestCase):
                     events, "final_listen_ready", True
                 ),
             ):
-                _, reward, terminated, truncated, _info = env.step(None)
+                _, reward, terminated, truncated, info = env.step(None)
 
-            expected_reward, _ = compute_episode_reward(
+            expected_reward, expected_components = compute_episode_reward(
                 completed=True,
                 truncated=False,
                 duration_seconds=float(env.step_count) * float(env.dt),
@@ -121,6 +125,17 @@ class MuseumEnvRewardTests(unittest.TestCase):
             self.assertTrue(terminated)
             self.assertFalse(truncated)
             self.assertAlmostEqual(reward, expected_reward, places=6)
+            self.assertEqual(info["episode"]["terminated_reason"], "final_listen_ready")
+            self.assertAlmostEqual(
+                info["episode"]["duration_seconds"],
+                float(env.step_count) * float(env.dt),
+                places=6,
+            )
+            self.assertEqual(info["episode"]["overwhelmed_triggers"], 0)
+            self.assertEqual(info["episode"]["impatient_triggers"], 0)
+            self.assertEqual(info["episode"]["distracted_triggers"], 0)
+            self.assertAlmostEqual(info["episode"]["return"], expected_reward, places=6)
+            self.assertEqual(info["episode"]["reward_components"], expected_components)
         finally:
             env.close()
 
@@ -132,7 +147,7 @@ class MuseumEnvRewardTests(unittest.TestCase):
 
             _, reward, terminated, truncated, info = env.step(None)
 
-            expected_reward, _ = compute_episode_reward(
+            expected_reward, expected_components = compute_episode_reward(
                 completed=False,
                 truncated=True,
                 duration_seconds=float(env.step_count) * float(env.dt),
@@ -143,6 +158,7 @@ class MuseumEnvRewardTests(unittest.TestCase):
             self.assertTrue(truncated)
             self.assertEqual(info["episode"]["terminated_reason"], "max_steps")
             self.assertAlmostEqual(reward, expected_reward, places=6)
+            self.assertEqual(info["episode"]["reward_components"], expected_components)
         finally:
             env.close()
 
@@ -164,9 +180,9 @@ class MuseumEnvRewardTests(unittest.TestCase):
                     events, "final_listen_ready", True
                 ),
             ):
-                _, reward, terminated, truncated, _info = env.step(None)
+                _, reward, terminated, truncated, info = env.step(None)
 
-            expected_reward, _ = compute_episode_reward(
+            expected_reward, expected_components = compute_episode_reward(
                 completed=True,
                 truncated=False,
                 duration_seconds=float(env.step_count) * float(env.dt),
@@ -176,6 +192,9 @@ class MuseumEnvRewardTests(unittest.TestCase):
             self.assertTrue(terminated)
             self.assertFalse(truncated)
             self.assertAlmostEqual(reward, expected_reward, places=6)
+            self.assertEqual(info["episode"]["distracted_triggers"], 2)
+            self.assertEqual(info["episode"]["impatient_triggers"], 1)
+            self.assertEqual(info["episode"]["reward_components"], expected_components)
         finally:
             env.close()
 
