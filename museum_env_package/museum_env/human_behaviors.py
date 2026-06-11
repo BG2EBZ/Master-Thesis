@@ -697,11 +697,11 @@ def _initialize_distracted_target(
         return False
 
     # No valid focus target, so pick a random fallback yaw and corresponding target point.
-    deviation_deg = np.random.uniform(
+    deviation_deg = human.rng.uniform(
         DISTRACTED_YAW_DEVIATION_MIN_DEG,
         DISTRACTED_YAW_DEVIATION_MAX_DEG,
     )
-    deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
+    deviation_sign = -1.0 if human.rng.random() < 0.5 else 1.0
     deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
     fallback_yaw = wrap_to_pi(float(fallback_reference_yaw) + deviation_rad)
     if fallback_target_xy is None:

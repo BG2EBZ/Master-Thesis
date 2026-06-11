@@ -376,6 +376,7 @@ class MuseumEnv(gym.Env):
                 impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
+                rng=self.np_random,
             )
 
     def _sample_active_human_spawn_states(self, robot_xy) -> list[np.ndarray]:

@@ -1,6 +1,12 @@
 from __future__ import annotations
 import numpy as np
 from museum_env import MuseumEnv
+from museum_env.policy_search_params import PolicySearchParams
+
+
+def canonicalize_theta(theta: np.ndarray) -> np.ndarray:
+    """Project one raw sample into the valid policy parameter space."""
+    return PolicySearchParams.from_theta(theta).to_theta()
 
 
 def run_episode(env: MuseumEnv, theta: np.ndarray, seed: int) -> float:
@@ -31,19 +37,22 @@ def evaluate_theta(
 
     return float(np.mean(returns))
 
-
+# Expectation-maximization update for Gaussian distribution
 def update_distribution(
     theta_batch: np.ndarray,
     returns: np.ndarray,
     beta: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     shifted_returns = returns - np.max(returns)
+    # Mapping weights to [0, 1]
     weights = np.exp(beta * shifted_returns)
 
     sum_weights = float(np.sum(weights))
     sum_weights_sq = float(np.sum(weights**2))
+    # Unbiased variance estimator denominator
     denominator = sum_weights - (sum_weights_sq / sum_weights)
 
+    # Weighted mean and std computation
     mu = weights @ theta_batch / sum_weights
 
     delta_sq = (theta_batch - mu) ** 2
@@ -87,10 +96,14 @@ def main() -> None:
     evaluation_seeds = [11, 22, 33]
 
     for epoch in range(epochs):
-        theta_batch = rng.normal(
+        raw_theta_batch = rng.normal(
             loc=mu,
             scale=std,
             size=(samples_per_epoch, len(mu)),
+        )
+        theta_batch = np.array(
+            [canonicalize_theta(theta) for theta in raw_theta_batch],
+            dtype=np.float64,
         )
 
         returns = np.array(
