@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -80,6 +82,14 @@ class ThetaEvaluation:
     mean_distracted_triggers: float
 
 
+@dataclass(frozen=True)
+class ThetaEvaluationTask:
+    theta: np.ndarray
+    seeds: tuple[int, ...]
+    n_humans: int
+    print_explanations: bool
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -127,7 +137,13 @@ def _maybe_print_explanation_progress(
     return explanation_started_count, explanation_finished_count
 
 
-def run_episode(env: MuseumEnv, theta: np.ndarray, seed: int) -> EpisodeResult:
+def run_episode(
+    env: MuseumEnv,
+    theta: np.ndarray,
+    seed: int,
+    *,
+    print_explanations: bool = True,
+) -> EpisodeResult:
     env.set_policy_parameters(theta)
     _observation, _info = env.reset(seed=seed)
 
@@ -142,12 +158,15 @@ def run_episode(env: MuseumEnv, theta: np.ndarray, seed: int) -> EpisodeResult:
         _observation, reward, terminated, truncated, step_info = env.step(None)
         total_return += float(reward)
         final_info = step_info
-        explanation_started_count, explanation_finished_count = _maybe_print_explanation_progress(
-            env=env,
-            step_info=step_info,
-            explanation_started_count=explanation_started_count,
-            explanation_finished_count=explanation_finished_count,
-        )
+        if print_explanations:
+            explanation_started_count, explanation_finished_count = (
+                _maybe_print_explanation_progress(
+                    env=env,
+                    step_info=step_info,
+                    explanation_started_count=explanation_started_count,
+                    explanation_finished_count=explanation_finished_count,
+                )
+            )
 
     if final_info is None:
         raise RuntimeError("Episode finished without step info.")
@@ -187,9 +206,80 @@ def evaluate_theta(
     env: MuseumEnv,
     theta: np.ndarray,
     seeds: Sequence[int],
+    *,
+    print_explanations: bool = True,
 ) -> ThetaEvaluation:
-    episode_results = [run_episode(env, theta=theta, seed=seed) for seed in seeds]
+    episode_results = [
+        run_episode(
+            env,
+            theta=theta,
+            seed=seed,
+            print_explanations=print_explanations,
+        )
+        for seed in seeds
+    ]
     return aggregate_episode_results(episode_results)
+
+
+def _normalize_seeds(seeds: Sequence[int]) -> tuple[int, ...]:
+    return tuple(int(seed) for seed in seeds)
+
+
+def _get_max_workers(samples_per_epoch: int) -> int:
+    return max(1, min(int(samples_per_epoch), os.cpu_count() or 1))
+
+
+def _build_theta_evaluation_tasks(
+    theta_batch: Sequence[np.ndarray],
+    seeds: Sequence[int],
+    *,
+    n_humans: int,
+    print_explanations: bool,
+) -> list[ThetaEvaluationTask]:
+    normalized_seeds = _normalize_seeds(seeds)
+    return [
+        ThetaEvaluationTask(
+            theta=np.asarray(theta, dtype=np.float64),
+            seeds=normalized_seeds,
+            n_humans=int(n_humans),
+            print_explanations=bool(print_explanations),
+        )
+        for theta in theta_batch
+    ]
+
+
+def _evaluate_theta_task(task: ThetaEvaluationTask) -> ThetaEvaluation:
+    env = MuseumEnv(
+        render_mode=None,
+        enable_event_logs=False,
+        n_humans=task.n_humans,
+    )
+    try:
+        return evaluate_theta(
+            env,
+            theta=task.theta,
+            seeds=task.seeds,
+            print_explanations=task.print_explanations,
+        )
+    finally:
+        env.close()
+
+
+def _evaluate_theta_tasks_in_parallel(
+    tasks: Sequence[ThetaEvaluationTask],
+    *,
+    max_workers: int,
+    executor_cls=ProcessPoolExecutor,
+) -> list[ThetaEvaluation]:
+    if not tasks:
+        return []
+
+    resolved_max_workers = max(1, int(max_workers))
+    if resolved_max_workers == 1:
+        return [_evaluate_theta_task(task) for task in tasks]
+
+    with executor_cls(max_workers=resolved_max_workers) as executor:
+        return list(executor.map(_evaluate_theta_task, tasks))
 
 # Expectation-maximization update for Gaussian distribution
 def update_distribution(
@@ -344,55 +434,54 @@ def train(
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    env = MuseumEnv(
-        render_mode=None,
-        enable_event_logs=False,
-        n_humans=DEFAULT_N_HUMANS,
-    )
     rng = np.random.default_rng(seed=seed)
 
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
     metrics: list[dict[str, float | int]] = []
+    max_workers = _get_max_workers(samples_per_epoch)
 
-    try:
-        for epoch_idx in range(epochs):
-            raw_theta_batch = rng.normal(
-                loc=mu,
-                scale=std,
-                size=(samples_per_epoch, len(mu)),
-            )
-            theta_batch = np.array(
-                [canonicalize_theta(theta) for theta in raw_theta_batch],
-                dtype=np.float64,
-            )
+    for epoch_idx in range(epochs):
+        raw_theta_batch = rng.normal(
+            loc=mu,
+            scale=std,
+            size=(samples_per_epoch, len(mu)),
+        )
+        theta_batch = np.array(
+            [canonicalize_theta(theta) for theta in raw_theta_batch],
+            dtype=np.float64,
+        )
 
-            evaluations = [
-                evaluate_theta(env, theta=theta, seeds=DEFAULT_EVALUATION_SEEDS)
-                for theta in theta_batch
-            ]
-            returns = np.array(
-                [evaluation.mean_return for evaluation in evaluations],
-                dtype=np.float64,
-            )
+        evaluation_tasks = _build_theta_evaluation_tasks(
+            theta_batch,
+            DEFAULT_EVALUATION_SEEDS,
+            n_humans=DEFAULT_N_HUMANS,
+            print_explanations=max_workers == 1,
+        )
+        evaluations = _evaluate_theta_tasks_in_parallel(
+            evaluation_tasks,
+            max_workers=max_workers,
+        )
+        returns = np.array(
+            [evaluation.mean_return for evaluation in evaluations],
+            dtype=np.float64,
+        )
 
-            mu, std = update_distribution(
-                theta_batch=theta_batch,
-                returns=returns,
-                beta=DEFAULT_BETA,
-            )
+        mu, std = update_distribution(
+            theta_batch=theta_batch,
+            returns=returns,
+            beta=DEFAULT_BETA,
+        )
 
-            epoch_metrics = build_epoch_metrics(epoch_idx + 1, evaluations)
-            metrics.append(epoch_metrics)
-            print(
-                f"epoch={epoch_metrics['epoch']:02d} "
-                f"mean_return={float(epoch_metrics['mean_return']):.3f} "
-                f"best_return={float(epoch_metrics['best_return']):.3f} "
-                f"success_rate={float(epoch_metrics['success_rate']):.3f} "
-                f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
-            )
-    finally:
-        env.close()
+        epoch_metrics = build_epoch_metrics(epoch_idx + 1, evaluations)
+        metrics.append(epoch_metrics)
+        print(
+            f"epoch={epoch_metrics['epoch']:02d} "
+            f"mean_return={float(epoch_metrics['mean_return']):.3f} "
+            f"best_return={float(epoch_metrics['best_return']):.3f} "
+            f"success_rate={float(epoch_metrics['success_rate']):.3f} "
+            f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
+        )
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME

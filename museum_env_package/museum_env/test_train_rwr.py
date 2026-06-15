@@ -14,6 +14,9 @@ from museum_env.train_rwr import (
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
+    _build_theta_evaluation_tasks,
+    _evaluate_theta_tasks_in_parallel,
+    _get_max_workers,
     build_arg_parser,
     build_epoch_metrics,
     evaluate_theta,
@@ -97,6 +100,23 @@ class _FakeTrainingEnv:
 
     def close(self):
         return None
+
+
+class _FakeExecutor:
+    last_max_workers = None
+
+    def __init__(self, *, max_workers):
+        type(self).last_max_workers = int(max_workers)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        del exc_type, exc, tb
+        return False
+
+    def map(self, func, iterable):
+        return [func(item) for item in iterable]
 
 
 class TrainRwrTests(unittest.TestCase):
@@ -223,6 +243,50 @@ class TrainRwrTests(unittest.TestCase):
             ],
         )
 
+    def test_run_episode_can_suppress_explanation_progress_output(self):
+        env = _FakeEpisodeEnv(
+            steps=[
+                {
+                    "reward": 0.0,
+                    "terminated": False,
+                    "truncated": False,
+                    "info": {
+                        "events": {"started_listen_wait": True},
+                        "episode": {"step": 1, "terminated_reason": None},
+                    },
+                },
+                {
+                    "reward": -1.0,
+                    "terminated": True,
+                    "truncated": False,
+                    "info": {
+                        "events": {"completed_listen_wait": True},
+                        "episode": {
+                            "step": 2,
+                            "terminated_reason": "final_listen_ready",
+                            "duration_seconds": 4.0,
+                            "overwhelmed_triggers": 0,
+                            "impatient_triggers": 0,
+                            "distracted_triggers": 0,
+                            "return": -1.0,
+                            "reward_components": {},
+                        },
+                    },
+                },
+            ]
+        )
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            run_episode(
+                env,
+                theta=np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64),
+                seed=42,
+                print_explanations=False,
+            )
+
+        self.assertEqual(stdout.getvalue(), "")
+
     def test_evaluate_theta_aggregates_across_seeds(self):
         episode_results = [
             EpisodeResult(-5.0, 10.0, 1, 0, 2, True),
@@ -271,6 +335,65 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(float(metrics["best_return"]), -4.0, places=6)
         self.assertAlmostEqual(float(metrics["success_rate"]), 0.5, places=6)
 
+    def test_get_max_workers_caps_to_samples_per_epoch(self):
+        with patch("museum_env.train_rwr.os.cpu_count", return_value=8):
+            self.assertEqual(_get_max_workers(1), 1)
+            self.assertEqual(_get_max_workers(3), 3)
+            self.assertEqual(_get_max_workers(12), 8)
+
+    def test_build_theta_evaluation_tasks_normalizes_worker_payload(self):
+        tasks = _build_theta_evaluation_tasks(
+            theta_batch=[
+                np.array([1, 2, 3, 4], dtype=np.int64),
+                np.array([5.0, 6.0, 7.0, 8.0], dtype=np.float32),
+            ],
+            seeds=[11, 22],
+            n_humans=9,
+            print_explanations=False,
+        )
+
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0].seeds, (11, 22))
+        self.assertEqual(tasks[0].n_humans, 9)
+        self.assertFalse(tasks[0].print_explanations)
+        self.assertEqual(tasks[0].theta.dtype, np.float64)
+        self.assertEqual(tasks[1].theta.dtype, np.float64)
+
+    def test_evaluate_theta_tasks_in_parallel_preserves_input_order(self):
+        tasks = _build_theta_evaluation_tasks(
+            theta_batch=[
+                np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+                np.array([2.0, 0.0, 0.0, 0.0], dtype=np.float64),
+                np.array([3.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            ],
+            seeds=[42],
+            n_humans=15,
+            print_explanations=False,
+        )
+
+        def _fake_evaluate_task(task):
+            return ThetaEvaluation(
+                mean_return=float(task.theta[0]),
+                success_rate=0.5,
+                mean_duration_seconds=1.0,
+                mean_overwhelmed_triggers=0.0,
+                mean_impatient_triggers=0.0,
+                mean_distracted_triggers=0.0,
+            )
+
+        with patch("museum_env.train_rwr._evaluate_theta_task", side_effect=_fake_evaluate_task):
+            evaluations = _evaluate_theta_tasks_in_parallel(
+                tasks,
+                max_workers=2,
+                executor_cls=_FakeExecutor,
+            )
+
+        self.assertEqual(_FakeExecutor.last_max_workers, 2)
+        self.assertEqual(
+            [evaluation.mean_return for evaluation in evaluations],
+            [1.0, 2.0, 3.0],
+        )
+
     def test_build_arg_parser_exposes_minimal_cli_surface(self):
         parser = build_arg_parser()
         public_args = {action.dest for action in parser._actions if action.dest != "help"}
@@ -295,7 +418,7 @@ class TrainRwrTests(unittest.TestCase):
                         "--epochs",
                         "1",
                         "--samples-per-epoch",
-                        "2",
+                        "1",
                         "--seed",
                         "7",
                         "--output-dir",

@@ -199,8 +199,10 @@ def _build_rules(ft, hhd, hrd, density, angle, engaged, overwhelmed, distracted,
         # ctrl.Rule(hhd["medium"] & hrd["medium"] & density["low"], distracted["high"]),
 
         # Impatient rules
-        ctrl.Rule(hhd["close"] & hrd["close"] & density["low"], impatient["high"]),
-        ctrl.Rule(hhd["close"] & hrd["close"] & density["medium"], impatient["high"]),
+        ctrl.Rule(ft["long"] & hhd["close"] & hrd["close"] & density["low"], impatient["high"]),
+        ctrl.Rule(ft["long"] & hhd["close"] & hrd["close"] & density["medium"], impatient["high"]),
+        ctrl.Rule(ft["medium"] & hhd["close"] & hrd["close"] & density["low"], impatient["high"]),
+        ctrl.Rule(ft["medium"] & hhd["close"] & hrd["close"] & density["medium"], impatient["high"]),
 
         # Curiosity rules
         ctrl.Rule(hrd["close"] & angle["ahead"], curiosity["high"]),
