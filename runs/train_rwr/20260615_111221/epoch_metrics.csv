@@ -1,0 +1,2 @@
+epoch,batch_mean_return,batch_best_return,mean_success_rate,mean_duration_seconds,mean_overwhelmed_triggers,mean_impatient_triggers,mean_distracted_triggers,mean_reward_time,mean_reward_overwhelmed,mean_reward_impatient,mean_reward_distracted
+0,-27.1018,-27.1018,1.0,131.018,0.0,7.0,0.0,-13.1018,0.0,-14.0,0.0

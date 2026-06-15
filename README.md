@@ -90,3 +90,9 @@ if terminated or truncated:
 - Demo: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo`
 - Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train`
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder`
+- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python museum_env_package/museum_env/train_rwr.py --output-dir runs/rwr_minimal`
+
+The minimal RWR trainer writes:
+
+- `training_metrics.csv`
+- `training_metrics.png`
