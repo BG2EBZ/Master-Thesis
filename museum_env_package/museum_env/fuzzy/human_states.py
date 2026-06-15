@@ -59,9 +59,9 @@ def _normalize_context(context: str) -> str:
 
 def _define_normal_input_mfs(context: str, ft, hhd, hrd, density, angle) -> None:
     if context == "following":
-        ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 15, 25])
-        ft["medium"] = fuzz.trapmf(ft.universe, [15, 25, 35, 45])
-        ft["long"] = fuzz.trapmf(ft.universe, [35, 45, 60, 60])
+        ft["short"] = fuzz.trapmf(ft.universe, [0, 0, 20, 30])
+        ft["medium"] = fuzz.trapmf(ft.universe, [20, 30, 40, 50])
+        ft["long"] = fuzz.trapmf(ft.universe, [40, 50, 120, 120])
 
         hhd["close"] = fuzz.trapmf(hhd.universe, [0, 0, 0.5, 0.7])
         hhd["medium"] = fuzz.trapmf(hhd.universe, [0.5, 0.7, 1.0, 1.2])

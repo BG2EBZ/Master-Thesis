@@ -1,6 +1,8 @@
 import csv
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +10,7 @@ import numpy as np
 
 from museum_env.train_rwr import (
     DEFAULT_CSV_NAME,
+    DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
@@ -25,6 +28,8 @@ class _FakeEpisodeEnv:
         self._step_index = 0
         self.last_theta = None
         self.last_seed = None
+        self.step_count = 0
+        self.dt = 0.002
 
     def set_policy_parameters(self, theta):
         self.last_theta = np.asarray(theta, dtype=np.float64)
@@ -32,11 +37,13 @@ class _FakeEpisodeEnv:
     def reset(self, seed):
         self.last_seed = seed
         self._step_index = 0
+        self.step_count = 0
         return np.zeros(4, dtype=np.float32), {}
 
     def step(self, _action):
         step = self._steps[self._step_index]
         self._step_index += 1
+        self.step_count += 1
         return (
             np.zeros(4, dtype=np.float32),
             step["reward"],
@@ -74,6 +81,7 @@ class _FakeTrainingEnv:
             success,
             not success,
             {
+                "events": {},
                 "episode": {
                     "step": 1,
                     "terminated_reason": terminated_reason,
@@ -99,13 +107,17 @@ class TrainRwrTests(unittest.TestCase):
                     "reward": 0.0,
                     "terminated": False,
                     "truncated": False,
-                    "info": {"episode": {"step": 1, "terminated_reason": None}},
+                    "info": {
+                        "events": {},
+                        "episode": {"step": 1, "terminated_reason": None},
+                    },
                 },
                 {
                     "reward": -3.5,
                     "terminated": True,
                     "truncated": False,
                     "info": {
+                        "events": {},
                         "episode": {
                             "step": 2,
                             "terminated_reason": "final_listen_ready",
@@ -136,6 +148,79 @@ class TrainRwrTests(unittest.TestCase):
                 distracted_triggers=3,
                 success=True,
             ),
+        )
+
+    def test_run_episode_prints_timestamped_explanation_progress(self):
+        env = _FakeEpisodeEnv(
+            steps=[
+                {
+                    "reward": 0.0,
+                    "terminated": False,
+                    "truncated": False,
+                    "info": {
+                        "events": {"started_listen_wait": True},
+                        "episode": {"step": 1, "terminated_reason": None},
+                    },
+                },
+                {
+                    "reward": 0.0,
+                    "terminated": False,
+                    "truncated": False,
+                    "info": {
+                        "events": {"completed_listen_wait": True},
+                        "episode": {"step": 2, "terminated_reason": None},
+                    },
+                },
+                {
+                    "reward": 0.0,
+                    "terminated": False,
+                    "truncated": False,
+                    "info": {
+                        "events": {"started_listen_wait": True},
+                        "episode": {"step": 3, "terminated_reason": None},
+                    },
+                },
+                {
+                    "reward": -1.0,
+                    "terminated": True,
+                    "truncated": False,
+                    "info": {
+                        "events": {
+                            "completed_listen_wait": True,
+                            "final_listen_ready": True,
+                        },
+                        "episode": {
+                            "step": 4,
+                            "terminated_reason": "final_listen_ready",
+                            "duration_seconds": 8.0,
+                            "overwhelmed_triggers": 0,
+                            "impatient_triggers": 0,
+                            "distracted_triggers": 0,
+                            "return": -1.0,
+                            "reward_components": {},
+                        },
+                    },
+                },
+            ]
+        )
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            result = run_episode(
+                env,
+                theta=np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64),
+                seed=42,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [line.strip() for line in stdout.getvalue().splitlines() if line.strip()],
+            [
+                "[t=0.002s step=1] robot start explanation A",
+                "[t=0.004s step=2] robot finish explanation A",
+                "[t=0.006s step=3] robot start explanation B",
+                "[t=0.008s step=4] robot finish explanation B",
+            ],
         )
 
     def test_evaluate_theta_aggregates_across_seeds(self):
@@ -191,11 +276,14 @@ class TrainRwrTests(unittest.TestCase):
         public_args = {action.dest for action in parser._actions if action.dest != "help"}
 
         self.assertEqual(public_args, {"epochs", "samples_per_epoch", "seed", "output_dir"})
-        args = parser.parse_args(["--output-dir", "/tmp/rwr_out"])
+        args = parser.parse_args([])
         self.assertEqual(args.epochs, 30)
         self.assertEqual(args.samples_per_epoch, 30)
         self.assertEqual(args.seed, 42)
-        self.assertEqual(args.output_dir, Path("/tmp/rwr_out"))
+        self.assertEqual(args.output_dir, DEFAULT_OUTPUT_DIR)
+
+        override_args = parser.parse_args(["--output-dir", "/tmp/rwr_out"])
+        self.assertEqual(override_args.output_dir, Path("/tmp/rwr_out"))
 
     def test_main_writes_csv_and_plot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

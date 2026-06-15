@@ -1,0 +1,2 @@
+epoch,mean_return,best_return,success_rate,mean_duration_seconds,mean_overwhelmed_triggers,mean_impatient_triggers,mean_distracted_triggers
+1,-110.66040000000001,-110.66040000000001,1.0,146.604,1.0,40.0,6.0

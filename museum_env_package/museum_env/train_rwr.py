@@ -20,12 +20,14 @@ import numpy as np
 from museum_env import MuseumEnv
 from museum_env.policy_search_params import PolicySearchParams
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EPOCHS = 30
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.02
-DEFAULT_EVALUATION_SEEDS = (11, 22, 33)
+DEFAULT_EVALUATION_SEEDS = (42,)
 DEFAULT_N_HUMANS = 15
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / "rwr_minimal"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
 METRIC_FIELDNAMES = (
@@ -90,6 +92,41 @@ def canonicalize_theta(theta: np.ndarray) -> np.ndarray:
     return PolicySearchParams.from_theta(theta).to_theta()
 
 
+def _explanation_label(index: int) -> str:
+    normalized_index = max(1, int(index))
+    if normalized_index <= 26:
+        return chr(ord("A") + normalized_index - 1)
+    return str(normalized_index)
+
+
+def _maybe_print_explanation_progress(
+    *,
+    env: MuseumEnv,
+    step_info: dict,
+    explanation_started_count: int,
+    explanation_finished_count: int,
+) -> tuple[int, int]:
+    events = step_info.get("events", {})
+    if not isinstance(events, dict):
+        return explanation_started_count, explanation_finished_count
+
+    step = int(getattr(env, "step_count", 0))
+    dt = float(getattr(env, "dt", 0.0))
+    sim_time = float(step) * dt
+
+    if bool(events.get("started_listen_wait")):
+        explanation_started_count += 1
+        label = _explanation_label(explanation_started_count)
+        print(f"[t={sim_time:.3f}s step={step}] robot start explanation {label}")
+
+    if bool(events.get("completed_listen_wait")):
+        explanation_finished_count += 1
+        label = _explanation_label(explanation_finished_count)
+        print(f"[t={sim_time:.3f}s step={step}] robot finish explanation {label}")
+
+    return explanation_started_count, explanation_finished_count
+
+
 def run_episode(env: MuseumEnv, theta: np.ndarray, seed: int) -> EpisodeResult:
     env.set_policy_parameters(theta)
     _observation, _info = env.reset(seed=seed)
@@ -98,11 +135,19 @@ def run_episode(env: MuseumEnv, theta: np.ndarray, seed: int) -> EpisodeResult:
     terminated = False
     truncated = False
     final_info = None
+    explanation_started_count = 0
+    explanation_finished_count = 0
 
     while not (terminated or truncated):
         _observation, reward, terminated, truncated, step_info = env.step(None)
         total_return += float(reward)
         final_info = step_info
+        explanation_started_count, explanation_finished_count = _maybe_print_explanation_progress(
+            env=env,
+            step_info=step_info,
+            explanation_started_count=explanation_started_count,
+            explanation_finished_count=explanation_finished_count,
+        )
 
     if final_info is None:
         raise RuntimeError("Episode finished without step info.")
@@ -284,7 +329,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
+        default=DEFAULT_OUTPUT_DIR,
         help="Directory where training_metrics.csv and training_metrics.png are written.",
     )
     return parser
