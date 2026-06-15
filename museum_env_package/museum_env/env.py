@@ -54,6 +54,8 @@ from .env_constants import (
     MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
     MAX_HUMANS_CAPACITY,
     MAX_STEPS_DEFAULT,
+    PASS_REQUEST_RESPONSE_PROB_ND_DEFAULT,
+    PASS_REQUEST_RESPONSE_PROB_NORMAL_DEFAULT,
     POST_EXPLANATION_HOLD_RESUME_DISTANCE,
     POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD,
     REPULSION_GAIN_DEFAULT,
@@ -117,6 +119,8 @@ class MuseumEnv(gym.Env):
         callback_impatient_rejoin_prob_nd: float = CALLBACK_IMPATIENT_REJOIN_PROB_ND_DEFAULT,
         callback_impatient_ignore_prob_nd: float = CALLBACK_IMPATIENT_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
+        pass_request_response_prob_normal: float = PASS_REQUEST_RESPONSE_PROB_NORMAL_DEFAULT,
+        pass_request_response_prob_nd: float = PASS_REQUEST_RESPONSE_PROB_ND_DEFAULT,
         observation_update_period_seconds: float = 0.1,
         listen_question_probability: float = LISTEN_QUESTION_PROBABILITY_DEFAULT,
         listen_question_after_explanation_probability: float = (
@@ -198,6 +202,10 @@ class MuseumEnv(gym.Env):
         )
         self.post_explanation_resume_distance = float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
         self.robot_pass_request_steps = self._steps(ROBOT_PASS_REQUEST_SECONDS)
+        self.pass_request_response_profile_probs = {
+            HumanProfile.NORMAL: float(pass_request_response_prob_normal),
+            HumanProfile.NEURODIVERGENT: float(pass_request_response_prob_nd),
+        }
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()

@@ -449,6 +449,29 @@ def _start_front_blocking_pass_request(env, state, *, blocker_idx: int, reset_st
     )
 
 
+def apply_pass_request_response_if_needed(env) -> bool:
+    """Resolve the current front-blocking human's response after the wait ends."""
+    state = env.robot_front_blocking_state
+    blocker_idx = state.blocker_idx
+
+    blocker = env.humans[int(blocker_idx)]
+    response_prob = min(
+            1.0,
+            float(env.pass_request_response_profile_probs.get(blocker.profile, 0.0)),
+        )
+    if float(env.np_random.random()) >= response_prob:
+        env._log_event(f">>> {blocker.name} ignored the pass request and stayed {blocker.mode}.")
+        return False
+
+    restored_mode = HumanMode.LISTENING if env.listening_state.controller_active else HumanMode.FOLLOWING
+    blocker.set_mode(restored_mode)
+    env._log_event(
+        f">>> {blocker.name} responded to the pass request and rejoined ({restored_mode})."
+    )
+    state.reset()
+    return True
+
+
 def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) -> np.ndarray:
     """Stop the robot when someone blocks the ahead region at close range."""
     adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
@@ -470,6 +493,9 @@ def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) ->
     if int(state.speech_steps_remaining) > 0:
         adjusted_action[:] = 0.0
         env.robot.mode = RobotMode.STOP
+        return adjusted_action
+
+    if (not state.bypass_active) and apply_pass_request_response_if_needed(env):
         return adjusted_action
 
     if state.bypass_active:
