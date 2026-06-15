@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from museum_env.train_rwr import (
+from train_rwr import (
     DEFAULT_CSV_NAME,
+    DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
@@ -301,7 +302,7 @@ class TrainRwrTests(unittest.TestCase):
     def test_evaluate_theta_sample_aggregates_seeds_and_closes_env(self):
         theta = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
 
-        with patch("museum_env.train_rwr.MuseumEnv", _FakeTrainingEnv):
+        with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
             evaluation = _evaluate_theta_sample((theta, (1, 2, 3), 15, False))
 
         self.assertAlmostEqual(evaluation.mean_return, -0.1, places=6)
@@ -328,9 +329,9 @@ class TrainRwrTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch("museum_env.train_rwr.ProcessPoolExecutor", _FakeExecutor):
+            with patch("train_rwr.ProcessPoolExecutor", _FakeExecutor):
                 with patch(
-                    "museum_env.train_rwr._evaluate_theta_sample",
+                    "train_rwr._evaluate_theta_sample",
                     side_effect=_fake_evaluate_theta_sample,
                 ):
                     metrics = train(
@@ -353,7 +354,7 @@ class TrainRwrTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "artifacts"
 
-            with patch("museum_env.train_rwr.MuseumEnv", _FakeTrainingEnv):
+            with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
                 exit_code = main(
                     [
                         "--epochs",
@@ -382,6 +383,12 @@ class TrainRwrTests(unittest.TestCase):
             self.assertEqual(rows[0]["epoch"], "1")
             self.assertIn("mean_return", rows[0])
             self.assertIn("success_rate", rows[0])
+
+    def test_default_output_dir_stays_under_repo_root(self):
+        self.assertEqual(
+            DEFAULT_OUTPUT_DIR,
+            Path("/home/tianci/Polimi/workspace/Master-Thesis/runs/rwr_minimal"),
+        )
 
 
 if __name__ == "__main__":

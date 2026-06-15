@@ -3,14 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import matplotlib
 
@@ -22,7 +18,7 @@ import numpy as np
 from museum_env import MuseumEnv
 from museum_env.policy_search_params import PolicySearchParams
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_EPOCHS = 30
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
