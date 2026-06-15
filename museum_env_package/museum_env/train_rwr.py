@@ -82,59 +82,11 @@ class ThetaEvaluation:
     mean_distracted_triggers: float
 
 
-@dataclass(frozen=True)
-class ThetaEvaluationTask:
-    theta: np.ndarray
-    seeds: tuple[int, ...]
-    n_humans: int
-    print_explanations: bool
-
-
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
-
-
-def canonicalize_theta(theta: np.ndarray) -> np.ndarray:
-    """Project one raw sample into the valid policy parameter space."""
-    return PolicySearchParams.from_theta(theta).to_theta()
-
-
-def _explanation_label(index: int) -> str:
-    normalized_index = max(1, int(index))
-    if normalized_index <= 26:
-        return chr(ord("A") + normalized_index - 1)
-    return str(normalized_index)
-
-
-def _maybe_print_explanation_progress(
-    *,
-    env: MuseumEnv,
-    step_info: dict,
-    explanation_started_count: int,
-    explanation_finished_count: int,
-) -> tuple[int, int]:
-    events = step_info.get("events", {})
-    if not isinstance(events, dict):
-        return explanation_started_count, explanation_finished_count
-
-    step = int(getattr(env, "step_count", 0))
-    dt = float(getattr(env, "dt", 0.0))
-    sim_time = float(step) * dt
-
-    if bool(events.get("started_listen_wait")):
-        explanation_started_count += 1
-        label = _explanation_label(explanation_started_count)
-        print(f"[t={sim_time:.3f}s step={step}] robot start explanation {label}")
-
-    if bool(events.get("completed_listen_wait")):
-        explanation_finished_count += 1
-        label = _explanation_label(explanation_finished_count)
-        print(f"[t={sim_time:.3f}s step={step}] robot finish explanation {label}")
-
-    return explanation_started_count, explanation_finished_count
 
 
 def run_episode(
@@ -147,139 +99,78 @@ def run_episode(
     env.set_policy_parameters(theta)
     _observation, _info = env.reset(seed=seed)
 
-    total_return = 0.0
     terminated = False
     truncated = False
-    final_info = None
+    step_info = {}
     explanation_started_count = 0
     explanation_finished_count = 0
 
     while not (terminated or truncated):
-        _observation, reward, terminated, truncated, step_info = env.step(None)
-        total_return += float(reward)
-        final_info = step_info
+        observation, reward, terminated, truncated, step_info = env.step(None)
+
+        # Print stage trainsition if enabled.
         if print_explanations:
-            explanation_started_count, explanation_finished_count = (
-                _maybe_print_explanation_progress(
-                    env=env,
-                    step_info=step_info,
-                    explanation_started_count=explanation_started_count,
-                    explanation_finished_count=explanation_finished_count,
-                )
-            )
+            step = env.step_count
+            sim_time = step * env.dt
+            events = step_info["events"]
 
-    if final_info is None:
-        raise RuntimeError("Episode finished without step info.")
+            if events.get("started_listen_wait"):
+                explanation_started_count += 1
+                label = "A" if explanation_started_count == 1 else "B"
+                print(f"[t={sim_time:.3f}s step={step}] robot start explanation {label}")
 
-    episode_info = final_info["episode"]
-    terminated_reason = episode_info["terminated_reason"]
+            if events.get("completed_listen_wait"):
+                explanation_finished_count += 1
+                label = "A" if explanation_finished_count == 1 else "B"
+                print(f"[t={sim_time:.3f}s step={step}] robot finish explanation {label}")
+
+    episode_info = step_info["episode"]
 
     return EpisodeResult(
-        episode_return=float(episode_info.get("return", total_return)),
+        episode_return=float(episode_info["return"]),
         duration_seconds=float(episode_info["duration_seconds"]),
         overwhelmed_triggers=int(episode_info["overwhelmed_triggers"]),
         impatient_triggers=int(episode_info["impatient_triggers"]),
         distracted_triggers=int(episode_info["distracted_triggers"]),
-        success=terminated_reason == "final_listen_ready",
+        success=episode_info["terminated_reason"] == "final_listen_ready",
     )
 
 
-def aggregate_episode_results(results: Sequence[EpisodeResult]) -> ThetaEvaluation:
-    if not results:
-        raise ValueError("Expected at least one episode result.")
-
-    return ThetaEvaluation(
-        mean_return=float(np.mean([result.episode_return for result in results])),
-        success_rate=float(np.mean([result.success for result in results])),
-        mean_duration_seconds=float(np.mean([result.duration_seconds for result in results])),
-        mean_overwhelmed_triggers=float(
-            np.mean([result.overwhelmed_triggers for result in results])
-        ),
-        mean_impatient_triggers=float(np.mean([result.impatient_triggers for result in results])),
-        mean_distracted_triggers=float(
-            np.mean([result.distracted_triggers for result in results])
-        ),
-    )
-
-
-def evaluate_theta(
-    env: MuseumEnv,
-    theta: np.ndarray,
-    seeds: Sequence[int],
-    *,
-    print_explanations: bool = True,
-) -> ThetaEvaluation:
-    episode_results = [
-        run_episode(
-            env,
-            theta=theta,
-            seed=seed,
-            print_explanations=print_explanations,
-        )
-        for seed in seeds
-    ]
-    return aggregate_episode_results(episode_results)
-
-
-def _normalize_seeds(seeds: Sequence[int]) -> tuple[int, ...]:
-    return tuple(int(seed) for seed in seeds)
-
-
-def _get_max_workers(samples_per_epoch: int) -> int:
-    return max(1, min(int(samples_per_epoch), os.cpu_count() or 1))
-
-
-def _build_theta_evaluation_tasks(
-    theta_batch: Sequence[np.ndarray],
-    seeds: Sequence[int],
-    *,
-    n_humans: int,
-    print_explanations: bool,
-) -> list[ThetaEvaluationTask]:
-    normalized_seeds = _normalize_seeds(seeds)
-    return [
-        ThetaEvaluationTask(
-            theta=np.asarray(theta, dtype=np.float64),
-            seeds=normalized_seeds,
-            n_humans=int(n_humans),
-            print_explanations=bool(print_explanations),
-        )
-        for theta in theta_batch
-    ]
-
-
-def _evaluate_theta_task(task: ThetaEvaluationTask) -> ThetaEvaluation:
+def _evaluate_theta_sample(task: tuple[np.ndarray, tuple[int, ...], int, bool]) -> ThetaEvaluation:
+    theta, seeds, n_humans, print_explanations = task
     env = MuseumEnv(
         render_mode=None,
         enable_event_logs=False,
-        n_humans=task.n_humans,
+        n_humans=n_humans,
     )
+    # Multi-seed evaluation
     try:
-        return evaluate_theta(
-            env,
-            theta=task.theta,
-            seeds=task.seeds,
-            print_explanations=task.print_explanations,
-        )
+        episode_results = [
+            run_episode(
+                env,
+                theta=theta,
+                seed=seed,
+                print_explanations=print_explanations,
+            )
+            for seed in seeds
+        ]
     finally:
         env.close()
 
-
-def _evaluate_theta_tasks_in_parallel(
-    tasks: Sequence[ThetaEvaluationTask],
-    *,
-    max_workers: int,
-    executor_cls=ProcessPoolExecutor,
-) -> list[ThetaEvaluation]:
-    if not tasks:
-        return []
-
-    resolved_max_workers = max(1, int(max_workers))
-    if resolved_max_workers == 1:
-        return [_evaluate_theta_task(task) for task in tasks]
-
-    with executor_cls(max_workers=resolved_max_workers) as executor:
-        return list(executor.map(_evaluate_theta_task, tasks))
+    return ThetaEvaluation(
+        mean_return=float(np.mean([result.episode_return for result in episode_results])),
+        success_rate=float(np.mean([result.success for result in episode_results])),
+        mean_duration_seconds=float(np.mean([result.duration_seconds for result in episode_results])),
+        mean_overwhelmed_triggers=float(
+            np.mean([result.overwhelmed_triggers for result in episode_results])
+        ),
+        mean_impatient_triggers=float(
+            np.mean([result.impatient_triggers for result in episode_results])
+        ),
+        mean_distracted_triggers=float(
+            np.mean([result.distracted_triggers for result in episode_results])
+        ),
+    )
 
 # Expectation-maximization update for Gaussian distribution
 def update_distribution(
@@ -287,7 +178,6 @@ def update_distribution(
     returns: np.ndarray,
     beta: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Expectation-maximization update for the sampling Gaussian."""
     shifted_returns = returns - np.max(returns)
     # Mapping weights to [0, 1]
     weights = np.exp(beta * shifted_returns)
@@ -305,33 +195,6 @@ def update_distribution(
     return mu, std
 
 
-def build_epoch_metrics(
-    epoch: int,
-    evaluations: Sequence[ThetaEvaluation],
-) -> dict[str, float | int]:
-    if not evaluations:
-        raise ValueError("Expected at least one theta evaluation.")
-
-    return {
-        "epoch": int(epoch),
-        "mean_return": float(np.mean([item.mean_return for item in evaluations])),
-        "best_return": float(np.max([item.mean_return for item in evaluations])),
-        "success_rate": float(np.mean([item.success_rate for item in evaluations])),
-        "mean_duration_seconds": float(
-            np.mean([item.mean_duration_seconds for item in evaluations])
-        ),
-        "mean_overwhelmed_triggers": float(
-            np.mean([item.mean_overwhelmed_triggers for item in evaluations])
-        ),
-        "mean_impatient_triggers": float(
-            np.mean([item.mean_impatient_triggers for item in evaluations])
-        ),
-        "mean_distracted_triggers": float(
-            np.mean([item.mean_distracted_triggers for item in evaluations])
-        ),
-    }
-
-
 def write_metrics_csv(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
@@ -347,9 +210,6 @@ def plot_training_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
 ) -> None:
-    if not metrics:
-        raise ValueError("Expected at least one metrics row to plot.")
-
     epochs = [int(row["epoch"]) for row in metrics]
     mean_returns = [float(row["mean_return"]) for row in metrics]
     best_returns = [float(row["best_return"]) for row in metrics]
@@ -396,7 +256,92 @@ def plot_training_metrics(
     plt.close(fig)
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
+def train(
+    *,
+    epochs: int,
+    samples_per_epoch: int,
+    seed: int,
+    output_dir: Path,
+) -> list[dict[str, float | int]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(seed=seed)
+    mu = INITIAL_MU.copy()
+    std = INITIAL_STD.copy()
+    metrics: list[dict[str, float | int]] = []
+    max_workers = min(samples_per_epoch, os.cpu_count() or 1)
+    # Only print if running single-process
+    print_explanations = max_workers == 1
+
+    for epoch_idx in range(epochs):
+        raw_theta_batch = rng.normal(
+            loc=mu,
+            scale=std,
+            size=(samples_per_epoch, len(mu)),
+        )
+        theta_batch = np.array(
+            [PolicySearchParams.from_theta(theta).to_theta() for theta in raw_theta_batch],
+            dtype=np.float64,
+        )
+        tasks = [
+            (theta, DEFAULT_EVALUATION_SEEDS, DEFAULT_N_HUMANS, print_explanations)
+            for theta in theta_batch
+        ]
+
+        if max_workers == 1:
+            evaluations = [_evaluate_theta_sample(task) for task in tasks]
+        else:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                evaluations = list(executor.map(_evaluate_theta_sample, tasks))
+
+        returns = np.array(
+            [evaluation.mean_return for evaluation in evaluations],
+            dtype=np.float64,
+        )
+        mu, std = update_distribution(
+            theta_batch=theta_batch,
+            returns=returns,
+            beta=DEFAULT_BETA,
+        )
+
+        epoch_metrics = {
+            "epoch": int(epoch_idx + 1),
+            "mean_return": float(np.mean([item.mean_return for item in evaluations])),
+            "best_return": float(np.max([item.mean_return for item in evaluations])),
+            "success_rate": float(np.mean([item.success_rate for item in evaluations])),
+            "mean_duration_seconds": float(
+                np.mean([item.mean_duration_seconds for item in evaluations])
+            ),
+            "mean_overwhelmed_triggers": float(
+                np.mean([item.mean_overwhelmed_triggers for item in evaluations])
+            ),
+            "mean_impatient_triggers": float(
+                np.mean([item.mean_impatient_triggers for item in evaluations])
+            ),
+            "mean_distracted_triggers": float(
+                np.mean([item.mean_distracted_triggers for item in evaluations])
+            ),
+        }
+        metrics.append(epoch_metrics)
+        print(
+            f"epoch={epoch_metrics['epoch']:02d} "
+            f"mean_return={float(epoch_metrics['mean_return']):.3f} "
+            f"best_return={float(epoch_metrics['best_return']):.3f} "
+            f"success_rate={float(epoch_metrics['success_rate']):.3f} "
+            f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
+        )
+
+    csv_path = output_dir / DEFAULT_CSV_NAME
+    plot_path = output_dir / DEFAULT_PLOT_NAME
+    write_metrics_csv(metrics, csv_path)
+    plot_training_metrics(metrics, plot_path)
+
+    print(f"Saved metrics CSV to {csv_path}")
+    print(f"Saved metrics plot to {plot_path}")
+    return metrics
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train a minimal RWR policy search loop.")
     parser.add_argument(
         "--epochs",
@@ -422,79 +367,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_OUTPUT_DIR,
         help="Directory where training_metrics.csv and training_metrics.png are written.",
     )
-    return parser
-
-
-def train(
-    *,
-    epochs: int,
-    samples_per_epoch: int,
-    seed: int,
-    output_dir: Path,
-) -> list[dict[str, float | int]]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    rng = np.random.default_rng(seed=seed)
-
-    mu = INITIAL_MU.copy()
-    std = INITIAL_STD.copy()
-    metrics: list[dict[str, float | int]] = []
-    max_workers = _get_max_workers(samples_per_epoch)
-
-    for epoch_idx in range(epochs):
-        raw_theta_batch = rng.normal(
-            loc=mu,
-            scale=std,
-            size=(samples_per_epoch, len(mu)),
-        )
-        theta_batch = np.array(
-            [canonicalize_theta(theta) for theta in raw_theta_batch],
-            dtype=np.float64,
-        )
-
-        evaluation_tasks = _build_theta_evaluation_tasks(
-            theta_batch,
-            DEFAULT_EVALUATION_SEEDS,
-            n_humans=DEFAULT_N_HUMANS,
-            print_explanations=max_workers == 1,
-        )
-        evaluations = _evaluate_theta_tasks_in_parallel(
-            evaluation_tasks,
-            max_workers=max_workers,
-        )
-        returns = np.array(
-            [evaluation.mean_return for evaluation in evaluations],
-            dtype=np.float64,
-        )
-
-        mu, std = update_distribution(
-            theta_batch=theta_batch,
-            returns=returns,
-            beta=DEFAULT_BETA,
-        )
-
-        epoch_metrics = build_epoch_metrics(epoch_idx + 1, evaluations)
-        metrics.append(epoch_metrics)
-        print(
-            f"epoch={epoch_metrics['epoch']:02d} "
-            f"mean_return={float(epoch_metrics['mean_return']):.3f} "
-            f"best_return={float(epoch_metrics['best_return']):.3f} "
-            f"success_rate={float(epoch_metrics['success_rate']):.3f} "
-            f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
-        )
-
-    csv_path = output_dir / DEFAULT_CSV_NAME
-    plot_path = output_dir / DEFAULT_PLOT_NAME
-    write_metrics_csv(metrics, csv_path)
-    plot_training_metrics(metrics, plot_path)
-
-    print(f"Saved metrics CSV to {csv_path}")
-    print(f"Saved metrics plot to {plot_path}")
-    return metrics
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    args = parser.parse_args(argv)
     train(
         epochs=args.epochs,
         samples_per_epoch=args.samples_per_epoch,

@@ -10,18 +10,13 @@ import numpy as np
 
 from museum_env.train_rwr import (
     DEFAULT_CSV_NAME,
-    DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
-    _build_theta_evaluation_tasks,
-    _evaluate_theta_tasks_in_parallel,
-    _get_max_workers,
-    build_arg_parser,
-    build_epoch_metrics,
-    evaluate_theta,
+    _evaluate_theta_sample,
     main,
     run_episode,
+    train,
 )
 
 
@@ -57,19 +52,27 @@ class _FakeEpisodeEnv:
 
 
 class _FakeTrainingEnv:
+    instances = []
+
     def __init__(self, *args, **kwargs):
         del args, kwargs
         self.current_theta = None
         self.current_seed = None
+        self.closed = False
+        self.step_count = 0
+        self.dt = 0.002
+        type(self).instances.append(self)
 
     def set_policy_parameters(self, theta):
         self.current_theta = np.asarray(theta, dtype=np.float64)
 
     def reset(self, seed):
         self.current_seed = int(seed)
+        self.step_count = 0
         return np.zeros(4, dtype=np.float32), {}
 
     def step(self, _action):
+        self.step_count += 1
         reward = float(-np.sum((self.current_theta - np.array([2.5, 3.5, 2.0, 0.7])) ** 2))
         reward -= 0.05 * float(self.current_seed)
         success = bool(self.current_seed % 2 == 0)
@@ -94,16 +97,17 @@ class _FakeTrainingEnv:
                     "distracted_triggers": distracted,
                     "return": reward,
                     "reward_components": {},
-                }
+                },
             },
         )
 
     def close(self):
-        return None
+        self.closed = True
 
 
 class _FakeExecutor:
     last_max_workers = None
+    mapped_tasks = None
 
     def __init__(self, *, max_workers):
         type(self).last_max_workers = int(max_workers)
@@ -116,10 +120,17 @@ class _FakeExecutor:
         return False
 
     def map(self, func, iterable):
-        return [func(item) for item in iterable]
+        tasks = list(iterable)
+        type(self).mapped_tasks = tasks
+        return [func(task) for task in tasks]
 
 
 class TrainRwrTests(unittest.TestCase):
+    def setUp(self):
+        _FakeTrainingEnv.instances = []
+        _FakeExecutor.last_max_workers = None
+        _FakeExecutor.mapped_tasks = None
+
     def test_run_episode_extracts_terminal_metrics(self):
         env = _FakeEpisodeEnv(
             steps=[
@@ -147,7 +158,7 @@ class TrainRwrTests(unittest.TestCase):
                             "distracted_triggers": 3,
                             "return": -3.5,
                             "reward_components": {},
-                        }
+                        },
                     },
                 },
             ]
@@ -287,93 +298,28 @@ class TrainRwrTests(unittest.TestCase):
 
         self.assertEqual(stdout.getvalue(), "")
 
-    def test_evaluate_theta_aggregates_across_seeds(self):
-        episode_results = [
-            EpisodeResult(-5.0, 10.0, 1, 0, 2, True),
-            EpisodeResult(-7.0, 14.0, 0, 1, 1, False),
-            EpisodeResult(-4.0, 12.0, 2, 1, 0, True),
-        ]
+    def test_evaluate_theta_sample_aggregates_seeds_and_closes_env(self):
+        theta = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
 
-        with patch("museum_env.train_rwr.run_episode", side_effect=episode_results):
-            evaluation = evaluate_theta(
-                env=object(),
-                theta=np.array([1.0, 2.0, 3.0, 0.4], dtype=np.float64),
-                seeds=[11, 22, 33],
-            )
+        with patch("museum_env.train_rwr.MuseumEnv", _FakeTrainingEnv):
+            evaluation = _evaluate_theta_sample((theta, (1, 2, 3), 15, False))
 
-        self.assertAlmostEqual(evaluation.mean_return, -16.0 / 3.0, places=6)
-        self.assertAlmostEqual(evaluation.success_rate, 2.0 / 3.0, places=6)
-        self.assertAlmostEqual(evaluation.mean_duration_seconds, 12.0, places=6)
-        self.assertAlmostEqual(evaluation.mean_overwhelmed_triggers, 1.0, places=6)
-        self.assertAlmostEqual(evaluation.mean_impatient_triggers, 2.0 / 3.0, places=6)
-        self.assertAlmostEqual(evaluation.mean_distracted_triggers, 1.0, places=6)
+        self.assertAlmostEqual(evaluation.mean_return, -0.1, places=6)
+        self.assertAlmostEqual(evaluation.success_rate, 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(evaluation.mean_duration_seconds, 14.5, places=6)
+        self.assertAlmostEqual(evaluation.mean_overwhelmed_triggers, 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(evaluation.mean_impatient_triggers, 1.0, places=6)
+        self.assertAlmostEqual(evaluation.mean_distracted_triggers, 2.0 / 3.0, places=6)
+        self.assertEqual(len(_FakeTrainingEnv.instances), 1)
+        self.assertTrue(_FakeTrainingEnv.instances[0].closed)
 
-    def test_build_epoch_metrics_uses_fixed_field_names(self):
-        metrics = build_epoch_metrics(
-            epoch=3,
-            evaluations=[
-                ThetaEvaluation(-8.0, 0.0, 14.0, 1.0, 2.0, 3.0),
-                ThetaEvaluation(-4.0, 1.0, 10.0, 0.0, 1.0, 1.0),
-            ],
-        )
+    def test_train_parallel_branch_uses_executor_and_silent_payloads(self):
+        seen_tasks = []
 
-        self.assertEqual(
-            list(metrics.keys()),
-            [
-                "epoch",
-                "mean_return",
-                "best_return",
-                "success_rate",
-                "mean_duration_seconds",
-                "mean_overwhelmed_triggers",
-                "mean_impatient_triggers",
-                "mean_distracted_triggers",
-            ],
-        )
-        self.assertEqual(metrics["epoch"], 3)
-        self.assertAlmostEqual(float(metrics["mean_return"]), -6.0, places=6)
-        self.assertAlmostEqual(float(metrics["best_return"]), -4.0, places=6)
-        self.assertAlmostEqual(float(metrics["success_rate"]), 0.5, places=6)
-
-    def test_get_max_workers_caps_to_samples_per_epoch(self):
-        with patch("museum_env.train_rwr.os.cpu_count", return_value=8):
-            self.assertEqual(_get_max_workers(1), 1)
-            self.assertEqual(_get_max_workers(3), 3)
-            self.assertEqual(_get_max_workers(12), 8)
-
-    def test_build_theta_evaluation_tasks_normalizes_worker_payload(self):
-        tasks = _build_theta_evaluation_tasks(
-            theta_batch=[
-                np.array([1, 2, 3, 4], dtype=np.int64),
-                np.array([5.0, 6.0, 7.0, 8.0], dtype=np.float32),
-            ],
-            seeds=[11, 22],
-            n_humans=9,
-            print_explanations=False,
-        )
-
-        self.assertEqual(len(tasks), 2)
-        self.assertEqual(tasks[0].seeds, (11, 22))
-        self.assertEqual(tasks[0].n_humans, 9)
-        self.assertFalse(tasks[0].print_explanations)
-        self.assertEqual(tasks[0].theta.dtype, np.float64)
-        self.assertEqual(tasks[1].theta.dtype, np.float64)
-
-    def test_evaluate_theta_tasks_in_parallel_preserves_input_order(self):
-        tasks = _build_theta_evaluation_tasks(
-            theta_batch=[
-                np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
-                np.array([2.0, 0.0, 0.0, 0.0], dtype=np.float64),
-                np.array([3.0, 0.0, 0.0, 0.0], dtype=np.float64),
-            ],
-            seeds=[42],
-            n_humans=15,
-            print_explanations=False,
-        )
-
-        def _fake_evaluate_task(task):
+        def _fake_evaluate_theta_sample(task):
+            seen_tasks.append(task)
             return ThetaEvaluation(
-                mean_return=float(task.theta[0]),
+                mean_return=float(len(seen_tasks)),
                 success_rate=0.5,
                 mean_duration_seconds=1.0,
                 mean_overwhelmed_triggers=0.0,
@@ -381,32 +327,27 @@ class TrainRwrTests(unittest.TestCase):
                 mean_distracted_triggers=0.0,
             )
 
-        with patch("museum_env.train_rwr._evaluate_theta_task", side_effect=_fake_evaluate_task):
-            evaluations = _evaluate_theta_tasks_in_parallel(
-                tasks,
-                max_workers=2,
-                executor_cls=_FakeExecutor,
-            )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("museum_env.train_rwr.ProcessPoolExecutor", _FakeExecutor):
+                with patch(
+                    "museum_env.train_rwr._evaluate_theta_sample",
+                    side_effect=_fake_evaluate_theta_sample,
+                ):
+                    metrics = train(
+                        epochs=1,
+                        samples_per_epoch=3,
+                        seed=7,
+                        output_dir=Path(tmp_dir),
+                    )
 
-        self.assertEqual(_FakeExecutor.last_max_workers, 2)
-        self.assertEqual(
-            [evaluation.mean_return for evaluation in evaluations],
-            [1.0, 2.0, 3.0],
-        )
-
-    def test_build_arg_parser_exposes_minimal_cli_surface(self):
-        parser = build_arg_parser()
-        public_args = {action.dest for action in parser._actions if action.dest != "help"}
-
-        self.assertEqual(public_args, {"epochs", "samples_per_epoch", "seed", "output_dir"})
-        args = parser.parse_args([])
-        self.assertEqual(args.epochs, 30)
-        self.assertEqual(args.samples_per_epoch, 30)
-        self.assertEqual(args.seed, 42)
-        self.assertEqual(args.output_dir, DEFAULT_OUTPUT_DIR)
-
-        override_args = parser.parse_args(["--output-dir", "/tmp/rwr_out"])
-        self.assertEqual(override_args.output_dir, Path("/tmp/rwr_out"))
+        self.assertEqual(_FakeExecutor.last_max_workers, 3)
+        self.assertEqual(len(_FakeExecutor.mapped_tasks), 3)
+        self.assertEqual(len(seen_tasks), 3)
+        for expected_task, seen_task in zip(_FakeExecutor.mapped_tasks, seen_tasks):
+            self.assertTrue(np.allclose(expected_task[0], seen_task[0]))
+            self.assertEqual(expected_task[1:], seen_task[1:])
+        self.assertTrue(all(task[3] is False for task in seen_tasks))
+        self.assertEqual(metrics[0]["epoch"], 1)
 
     def test_main_writes_csv_and_plot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
