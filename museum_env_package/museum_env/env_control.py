@@ -453,12 +453,14 @@ def apply_pass_request_response_if_needed(env) -> bool:
     """Resolve the current front-blocking human's response after the wait ends."""
     state = env.robot_front_blocking_state
     blocker_idx = state.blocker_idx
+    if blocker_idx is None or not (0 <= int(blocker_idx) < len(env.humans)):
+        return False
 
     blocker = env.humans[int(blocker_idx)]
     response_prob = min(
-            1.0,
-            float(env.pass_request_response_profile_probs.get(blocker.profile, 0.0)),
-        )
+        1.0,
+        float(env.pass_request_response_profile_probs.get(blocker.profile, 0.0)),
+    )
     if float(env.np_random.random()) >= response_prob:
         env._log_event(f">>> {blocker.name} ignored the pass request and stayed {blocker.mode}.")
         return False

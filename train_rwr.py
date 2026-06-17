@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import csv
+import json
 import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
+
+# Keep BLAS/OpenMP libraries from oversubscribing CPU cores across workers
+# unless the caller explicitly sets a different thread count.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import matplotlib
 
@@ -25,9 +35,12 @@ DEFAULT_SEED = 42
 DEFAULT_BETA = 0.02
 DEFAULT_EVALUATION_SEEDS = (42,)
 DEFAULT_N_HUMANS = 15
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / "rwr_minimal"
+DEFAULT_MAX_WORKERS = 5
+PROCESS_POOL_RESTART_EVERY_EPOCHS = 2
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
+DEFAULT_BEST_PARAMS_NAME = "best_params.json"
 METRIC_FIELDNAMES = (
     "epoch",
     "mean_return",
@@ -78,11 +91,46 @@ class ThetaEvaluation:
     mean_distracted_triggers: float
 
 
+_CACHED_ENV: MuseumEnv | None = None
+_CACHED_ENV_N_HUMANS: int | None = None
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
+
+
+def _get_cached_env(n_humans: int) -> MuseumEnv:
+    global _CACHED_ENV, _CACHED_ENV_N_HUMANS
+    requested_n_humans = int(n_humans)
+    if _CACHED_ENV is None:
+        _CACHED_ENV = MuseumEnv(
+            render_mode=None,
+            enable_event_logs=False,
+            n_humans=requested_n_humans,
+        )
+        _CACHED_ENV_N_HUMANS = requested_n_humans
+        return _CACHED_ENV
+
+    if _CACHED_ENV_N_HUMANS != requested_n_humans:
+        raise RuntimeError(
+            "Cached MuseumEnv was initialized with "
+            f"n_humans={_CACHED_ENV_N_HUMANS}, but received n_humans={requested_n_humans}."
+        )
+    return _CACHED_ENV
+
+
+def _close_cached_env() -> None:
+    global _CACHED_ENV, _CACHED_ENV_N_HUMANS
+    if _CACHED_ENV is not None:
+        _CACHED_ENV.close()
+    _CACHED_ENV = None
+    _CACHED_ENV_N_HUMANS = None
+
+
+atexit.register(_close_cached_env)
 
 
 def run_episode(
@@ -134,24 +182,17 @@ def run_episode(
 
 def _evaluate_theta_sample(task: tuple[np.ndarray, tuple[int, ...], int, bool]) -> ThetaEvaluation:
     theta, seeds, n_humans, print_explanations = task
-    env = MuseumEnv(
-        render_mode=None,
-        enable_event_logs=False,
-        n_humans=n_humans,
-    )
+    env = _get_cached_env(n_humans)
     # Multi-seed evaluation
-    try:
-        episode_results = [
-            run_episode(
-                env,
-                theta=theta,
-                seed=seed,
-                print_explanations=print_explanations,
-            )
-            for seed in seeds
-        ]
-    finally:
-        env.close()
+    episode_results = [
+        run_episode(
+            env,
+            theta=theta,
+            seed=seed,
+            print_explanations=print_explanations,
+        )
+        for seed in seeds
+    ]
 
     return ThetaEvaluation(
         mean_return=float(np.mean([result.episode_return for result in episode_results])),
@@ -200,6 +241,22 @@ def write_metrics_csv(
         writer.writeheader()
         for row in metrics:
             writer.writerow({field: row[field] for field in METRIC_FIELDNAMES})
+
+
+def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
+    params = PolicySearchParams.from_theta(theta)
+    return {
+        "slow_down_distance_m": float(params.slow_down_distance_m),
+        "callback_distance_m": float(params.callback_distance_m),
+        "callback_wait_seconds": float(params.callback_wait_seconds),
+        "slowdown_speed_scale": float(params.slowdown_speed_scale),
+    }
+
+
+def write_best_params_json(payload: dict[str, object], output_path: Path) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
 
 
 def plot_training_metrics(
@@ -265,75 +322,143 @@ def train(
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
     metrics: list[dict[str, float | int]] = []
-    max_workers = min(samples_per_epoch, os.cpu_count() or 1)
+    best_theta_seen: np.ndarray | None = None
+    best_evaluation: ThetaEvaluation | None = None
+    best_return_seen = float("-inf")
+    best_epoch = 0
+    best_sample_index = 0
+    max_workers = min(samples_per_epoch, os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
     # Only print if running single-process
     print_explanations = max_workers == 1
 
-    for epoch_idx in range(epochs):
-        raw_theta_batch = rng.normal(
-            loc=mu,
-            scale=std,
-            size=(samples_per_epoch, len(mu)),
-        )
-        theta_batch = np.array(
-            [PolicySearchParams.from_theta(theta).to_theta() for theta in raw_theta_batch],
-            dtype=np.float64,
-        )
-        tasks = [
-            (theta, DEFAULT_EVALUATION_SEEDS, DEFAULT_N_HUMANS, print_explanations)
-            for theta in theta_batch
-        ]
+    def _run_epoch_batch(tasks, executor: ProcessPoolExecutor | None) -> list[ThetaEvaluation]:
+        if executor is None:
+            return [_evaluate_theta_sample(task) for task in tasks]
+        return list(executor.map(_evaluate_theta_sample, tasks))
 
-        if max_workers == 1:
-            evaluations = [_evaluate_theta_sample(task) for task in tasks]
-        else:
+    def _run_training_loop(
+        *,
+        executor: ProcessPoolExecutor | None,
+        start_epoch_idx: int,
+        end_epoch_idx: int,
+    ) -> None:
+        nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
+        for epoch_idx in range(start_epoch_idx, end_epoch_idx):
+            raw_theta_batch = rng.normal(
+                loc=mu,
+                scale=std,
+                size=(samples_per_epoch, len(mu)),
+            )
+            theta_batch = np.array(
+                [PolicySearchParams.from_theta(theta).to_theta() for theta in raw_theta_batch],
+                dtype=np.float64,
+            )
+            tasks = [
+                (theta, DEFAULT_EVALUATION_SEEDS, DEFAULT_N_HUMANS, print_explanations)
+                for theta in theta_batch
+            ]
+
+            evaluations = _run_epoch_batch(tasks, executor)
+
+            returns = np.array(
+                [evaluation.mean_return for evaluation in evaluations],
+                dtype=np.float64,
+            )
+            best_idx = int(np.argmax(returns))
+            best_return_this_epoch = float(returns[best_idx])
+            if best_return_this_epoch > best_return_seen:
+                best_theta_seen = np.array(theta_batch[best_idx], dtype=np.float64, copy=True)
+                best_evaluation = evaluations[best_idx]
+                best_return_seen = best_return_this_epoch
+                best_epoch = int(epoch_idx + 1)
+                best_sample_index = int(best_idx + 1)
+            mu, std = update_distribution(
+                theta_batch=theta_batch,
+                returns=returns,
+                beta=DEFAULT_BETA,
+            )
+
+            epoch_metrics = {
+                "epoch": int(epoch_idx + 1),
+                "mean_return": float(np.mean([item.mean_return for item in evaluations])),
+                "best_return": float(np.max([item.mean_return for item in evaluations])),
+                "success_rate": float(np.mean([item.success_rate for item in evaluations])),
+                "mean_duration_seconds": float(
+                    np.mean([item.mean_duration_seconds for item in evaluations])
+                ),
+                "mean_overwhelmed_triggers": float(
+                    np.mean([item.mean_overwhelmed_triggers for item in evaluations])
+                ),
+                "mean_impatient_triggers": float(
+                    np.mean([item.mean_impatient_triggers for item in evaluations])
+                ),
+                "mean_distracted_triggers": float(
+                    np.mean([item.mean_distracted_triggers for item in evaluations])
+                ),
+            }
+            metrics.append(epoch_metrics)
+            print(
+                f"epoch={epoch_metrics['epoch']:02d} "
+                f"mean_return={float(epoch_metrics['mean_return']):.3f} "
+                f"best_return={float(epoch_metrics['best_return']):.3f} "
+                f"success_rate={float(epoch_metrics['success_rate']):.3f} "
+                f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
+            )
+
+    if max_workers == 1:
+        try:
+            _run_training_loop(executor=None, start_epoch_idx=0, end_epoch_idx=epochs)
+        finally:
+            _close_cached_env()
+    else:
+        for start_epoch_idx in range(0, epochs, PROCESS_POOL_RESTART_EVERY_EPOCHS):
+            end_epoch_idx = min(start_epoch_idx + PROCESS_POOL_RESTART_EVERY_EPOCHS, epochs)
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                evaluations = list(executor.map(_evaluate_theta_sample, tasks))
-
-        returns = np.array(
-            [evaluation.mean_return for evaluation in evaluations],
-            dtype=np.float64,
-        )
-        mu, std = update_distribution(
-            theta_batch=theta_batch,
-            returns=returns,
-            beta=DEFAULT_BETA,
-        )
-
-        epoch_metrics = {
-            "epoch": int(epoch_idx + 1),
-            "mean_return": float(np.mean([item.mean_return for item in evaluations])),
-            "best_return": float(np.max([item.mean_return for item in evaluations])),
-            "success_rate": float(np.mean([item.success_rate for item in evaluations])),
-            "mean_duration_seconds": float(
-                np.mean([item.mean_duration_seconds for item in evaluations])
-            ),
-            "mean_overwhelmed_triggers": float(
-                np.mean([item.mean_overwhelmed_triggers for item in evaluations])
-            ),
-            "mean_impatient_triggers": float(
-                np.mean([item.mean_impatient_triggers for item in evaluations])
-            ),
-            "mean_distracted_triggers": float(
-                np.mean([item.mean_distracted_triggers for item in evaluations])
-            ),
-        }
-        metrics.append(epoch_metrics)
-        print(
-            f"epoch={epoch_metrics['epoch']:02d} "
-            f"mean_return={float(epoch_metrics['mean_return']):.3f} "
-            f"best_return={float(epoch_metrics['best_return']):.3f} "
-            f"success_rate={float(epoch_metrics['success_rate']):.3f} "
-            f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
-        )
+                _run_training_loop(
+                    executor=executor,
+                    start_epoch_idx=start_epoch_idx,
+                    end_epoch_idx=end_epoch_idx,
+                )
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
+    best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
+    if best_theta_seen is None or best_evaluation is None:
+        raise RuntimeError("Training completed without evaluating any parameter samples.")
+
+    best_params_payload = {
+        "best_theta_seen": [float(value) for value in best_theta_seen],
+        "best_policy_params": _policy_params_dict(best_theta_seen),
+        "best_return": float(best_return_seen),
+        "best_success_rate": float(best_evaluation.success_rate),
+        "best_mean_duration_seconds": float(best_evaluation.mean_duration_seconds),
+        "best_mean_overwhelmed_triggers": float(best_evaluation.mean_overwhelmed_triggers),
+        "best_mean_impatient_triggers": float(best_evaluation.mean_impatient_triggers),
+        "best_mean_distracted_triggers": float(best_evaluation.mean_distracted_triggers),
+        "best_epoch": int(best_epoch),
+        "best_sample_index_within_epoch": int(best_sample_index),
+        "final_mu": [float(value) for value in mu],
+        "final_std": [float(value) for value in std],
+        "final_mu_policy_params": _policy_params_dict(mu),
+    }
     write_metrics_csv(metrics, csv_path)
     plot_training_metrics(metrics, plot_path)
+    write_best_params_json(best_params_payload, best_params_path)
 
     print(f"Saved metrics CSV to {csv_path}")
     print(f"Saved metrics plot to {plot_path}")
+    print(f"Saved best params JSON to {best_params_path}")
+    best_policy_params = best_params_payload["best_policy_params"]
+    print(
+        "Best policy params: "
+        f"slow_down_distance_m={float(best_policy_params['slow_down_distance_m']):.3f}, "
+        f"callback_distance_m={float(best_policy_params['callback_distance_m']):.3f}, "
+        f"callback_wait_seconds={float(best_policy_params['callback_wait_seconds']):.3f}, "
+        f"slowdown_speed_scale={float(best_policy_params['slowdown_speed_scale']):.3f}, "
+        f"best_return={float(best_params_payload['best_return']):.3f}, "
+        f"epoch={int(best_params_payload['best_epoch'])}, "
+        f"sample={int(best_params_payload['best_sample_index_within_epoch'])}"
+    )
     return metrics
 
 

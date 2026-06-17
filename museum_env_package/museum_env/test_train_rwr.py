@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -9,11 +10,13 @@ from unittest.mock import patch
 import numpy as np
 
 from train_rwr import (
+    DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_CSV_NAME,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
+    _close_cached_env,
     _evaluate_theta_sample,
     main,
     run_episode,
@@ -107,11 +110,14 @@ class _FakeTrainingEnv:
 
 
 class _FakeExecutor:
+    instances = []
     last_max_workers = None
-    mapped_tasks = None
 
     def __init__(self, *, max_workers):
         type(self).last_max_workers = int(max_workers)
+        self.max_workers = int(max_workers)
+        self.mapped_task_batches = []
+        type(self).instances.append(self)
 
     def __enter__(self):
         return self
@@ -122,15 +128,19 @@ class _FakeExecutor:
 
     def map(self, func, iterable):
         tasks = list(iterable)
-        type(self).mapped_tasks = tasks
+        self.mapped_task_batches.append(tasks)
         return [func(task) for task in tasks]
 
 
 class TrainRwrTests(unittest.TestCase):
     def setUp(self):
+        _close_cached_env()
         _FakeTrainingEnv.instances = []
+        _FakeExecutor.instances = []
         _FakeExecutor.last_max_workers = None
-        _FakeExecutor.mapped_tasks = None
+
+    def tearDown(self):
+        _close_cached_env()
 
     def test_run_episode_extracts_terminal_metrics(self):
         env = _FakeEpisodeEnv(
@@ -299,11 +309,14 @@ class TrainRwrTests(unittest.TestCase):
 
         self.assertEqual(stdout.getvalue(), "")
 
-    def test_evaluate_theta_sample_aggregates_seeds_and_closes_env(self):
+    def test_evaluate_theta_sample_aggregates_seeds_and_cached_env_closes_on_cleanup(self):
         theta = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
 
         with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
             evaluation = _evaluate_theta_sample((theta, (1, 2, 3), 15, False))
+            self.assertEqual(len(_FakeTrainingEnv.instances), 1)
+            self.assertFalse(_FakeTrainingEnv.instances[0].closed)
+            _close_cached_env()
 
         self.assertAlmostEqual(evaluation.mean_return, -0.1, places=6)
         self.assertAlmostEqual(evaluation.success_rate, 1.0 / 3.0, places=6)
@@ -311,10 +324,22 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(evaluation.mean_overwhelmed_triggers, 2.0 / 3.0, places=6)
         self.assertAlmostEqual(evaluation.mean_impatient_triggers, 1.0, places=6)
         self.assertAlmostEqual(evaluation.mean_distracted_triggers, 2.0 / 3.0, places=6)
-        self.assertEqual(len(_FakeTrainingEnv.instances), 1)
         self.assertTrue(_FakeTrainingEnv.instances[0].closed)
 
-    def test_train_parallel_branch_uses_executor_and_silent_payloads(self):
+    def test_evaluate_theta_sample_reuses_cached_env_for_multiple_tasks(self):
+        theta_a = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
+        theta_b = np.array([2.0, 3.0, 1.5, 0.6], dtype=np.float64)
+
+        with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
+            evaluation_a = _evaluate_theta_sample((theta_a, (1,), 15, False))
+            evaluation_b = _evaluate_theta_sample((theta_b, (2,), 15, False))
+
+        self.assertEqual(len(_FakeTrainingEnv.instances), 1)
+        self.assertAlmostEqual(evaluation_a.mean_return, -0.05, places=6)
+        self.assertAlmostEqual(evaluation_b.mean_return, -0.86, places=6)
+        self.assertFalse(_FakeTrainingEnv.instances[0].closed)
+
+    def test_train_parallel_branch_rebuilds_executor_every_two_epochs(self):
         seen_tasks = []
 
         def _fake_evaluate_theta_sample(task):
@@ -335,20 +360,43 @@ class TrainRwrTests(unittest.TestCase):
                     side_effect=_fake_evaluate_theta_sample,
                 ):
                     metrics = train(
-                        epochs=1,
+                        epochs=5,
                         samples_per_epoch=3,
                         seed=7,
                         output_dir=Path(tmp_dir),
                     )
+            best_params_path = Path(tmp_dir) / DEFAULT_BEST_PARAMS_NAME
+            self.assertTrue(best_params_path.exists())
+            with best_params_path.open("r", encoding="utf-8") as handle:
+                best_params = json.load(handle)
 
         self.assertEqual(_FakeExecutor.last_max_workers, 3)
-        self.assertEqual(len(_FakeExecutor.mapped_tasks), 3)
-        self.assertEqual(len(seen_tasks), 3)
-        for expected_task, seen_task in zip(_FakeExecutor.mapped_tasks, seen_tasks):
+        self.assertEqual(len(_FakeExecutor.instances), 3)
+        self.assertEqual(
+            [len(instance.mapped_task_batches) for instance in _FakeExecutor.instances],
+            [2, 2, 1],
+        )
+        flattened_expected_tasks = [
+            task
+            for instance in _FakeExecutor.instances
+            for batch in instance.mapped_task_batches
+            for task in batch
+        ]
+        self.assertEqual(len(flattened_expected_tasks), 15)
+        self.assertEqual(len(seen_tasks), 15)
+        for expected_task, seen_task in zip(flattened_expected_tasks, seen_tasks):
             self.assertTrue(np.allclose(expected_task[0], seen_task[0]))
             self.assertEqual(expected_task[1:], seen_task[1:])
+        self.assertTrue(all(len(batch) == 3 for instance in _FakeExecutor.instances for batch in instance.mapped_task_batches))
         self.assertTrue(all(task[3] is False for task in seen_tasks))
-        self.assertEqual(metrics[0]["epoch"], 1)
+        self.assertEqual([row["epoch"] for row in metrics], [1, 2, 3, 4, 5])
+        final_seen_task = seen_tasks[-1]
+        self.assertEqual(best_params["best_epoch"], 5)
+        self.assertEqual(best_params["best_sample_index_within_epoch"], 3)
+        self.assertTrue(np.allclose(best_params["best_theta_seen"], final_seen_task[0]))
+        self.assertAlmostEqual(best_params["best_return"], 15.0, places=6)
+        self.assertEqual(len(best_params["final_mu"]), 4)
+        self.assertEqual(len(best_params["final_std"]), 4)
 
     def test_main_writes_csv_and_plot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -371,24 +419,34 @@ class TrainRwrTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             csv_path = output_dir / DEFAULT_CSV_NAME
             plot_path = output_dir / DEFAULT_PLOT_NAME
+            best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
             self.assertTrue(csv_path.exists())
             self.assertTrue(plot_path.exists())
+            self.assertTrue(best_params_path.exists())
             self.assertGreater(csv_path.stat().st_size, 0)
             self.assertGreater(plot_path.stat().st_size, 0)
+            self.assertGreater(best_params_path.stat().st_size, 0)
 
             with csv_path.open("r", newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
+            with best_params_path.open("r", encoding="utf-8") as handle:
+                best_params = json.load(handle)
 
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["epoch"], "1")
             self.assertIn("mean_return", rows[0])
             self.assertIn("success_rate", rows[0])
+            self.assertEqual(len(best_params["best_theta_seen"]), 4)
+            self.assertEqual(set(best_params["best_policy_params"].keys()), {
+                "slow_down_distance_m",
+                "callback_distance_m",
+                "callback_wait_seconds",
+                "slowdown_speed_scale",
+            })
 
     def test_default_output_dir_stays_under_repo_root(self):
-        self.assertEqual(
-            DEFAULT_OUTPUT_DIR,
-            Path("/home/tianci/Polimi/workspace/Master-Thesis/runs/rwr_minimal"),
-        )
+        self.assertEqual(DEFAULT_OUTPUT_DIR.parent, Path("/home/tianci/Polimi/workspace/Master-Thesis/runs"))
+        self.assertTrue(DEFAULT_OUTPUT_DIR.name.startswith("rwr_"))
 
 
 if __name__ == "__main__":
