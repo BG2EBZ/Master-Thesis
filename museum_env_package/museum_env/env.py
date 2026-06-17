@@ -167,7 +167,7 @@ class MuseumEnv(gym.Env):
             waypoints=self.map_layout.robot_waypoints,
             v_max=1.0,
             k_v=20.0,
-            k_yaw=20.0,
+            k_yaw=12.0,
         )
         self.follow_phase = None
         self.robot_start_xy = None

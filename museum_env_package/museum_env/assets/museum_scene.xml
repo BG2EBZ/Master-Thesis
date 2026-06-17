@@ -1,6 +1,6 @@
 <mujoco model="museum_shell">
       <compiler angle="degree" coordinate="local"/>
-      <option timestep="0.002" gravity="0 0 0"/>
+      <option timestep="0.01" gravity="0 0 0"/>
 
       <visual>
             <global offwidth="1920" offheight="1080"/>
@@ -372,84 +372,84 @@
             <!-- Control x/y slides and yaw hinge.
             For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
             But for (v, w) you usually set vy_cmd=0 in your policy. -->
-            <velocity name="motor_x" joint="robot_x" kv="300" ctrlrange="-1.5 1.5"/>
-            <velocity name="motor_y" joint="robot_y" kv="300" ctrlrange="-1.5 1.5"/>
-            <velocity name="motor_yaw" joint="robot_yaw" kv="300" ctrlrange="-10.0 10.0"/>
+            <velocity name="motor_x" joint="robot_x" kv="100" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_y" joint="robot_y" kv="100" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_yaw" joint="robot_yaw" kv="100" ctrlrange="-10.0 10.0"/>
 
             <!-- Person controls (change from motor to velocity) -->
-            <velocity name="person1_motor_x" joint="person1_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person1_motor_y" joint="person1_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person1_motor_yaw" joint="person1_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person1_motor_x" joint="person1_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person1_motor_y" joint="person1_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person1_motor_yaw" joint="person1_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person2 controls -->
-            <velocity name="person2_motor_x" joint="person2_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person2_motor_y" joint="person2_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person2_motor_yaw" joint="person2_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person2_motor_x" joint="person2_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person2_motor_y" joint="person2_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person2_motor_yaw" joint="person2_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person3 controls -->
-            <velocity name="person3_motor_x" joint="person3_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person3_motor_y" joint="person3_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person3_motor_yaw" joint="person3_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person3_motor_x" joint="person3_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person3_motor_y" joint="person3_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person3_motor_yaw" joint="person3_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person4 controls -->
-            <velocity name="person4_motor_x" joint="person4_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person4_motor_y" joint="person4_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person4_motor_yaw" joint="person4_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person4_motor_x" joint="person4_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person4_motor_y" joint="person4_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person4_motor_yaw" joint="person4_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person5 controls -->
-            <velocity name="person5_motor_x" joint="person5_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person5_motor_y" joint="person5_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person5_motor_yaw" joint="person5_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person5_motor_x" joint="person5_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person5_motor_y" joint="person5_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person5_motor_yaw" joint="person5_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person6 controls -->
-            <velocity name="person6_motor_x" joint="person6_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person6_motor_y" joint="person6_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person6_motor_yaw" joint="person6_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person6_motor_x" joint="person6_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person6_motor_y" joint="person6_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person6_motor_yaw" joint="person6_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person7 controls -->
-            <velocity name="person7_motor_x" joint="person7_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person7_motor_y" joint="person7_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person7_motor_yaw" joint="person7_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person7_motor_x" joint="person7_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person7_motor_y" joint="person7_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person7_motor_yaw" joint="person7_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person8 controls -->
-            <velocity name="person8_motor_x" joint="person8_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person8_motor_y" joint="person8_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person8_motor_yaw" joint="person8_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person8_motor_x" joint="person8_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person8_motor_y" joint="person8_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person8_motor_yaw" joint="person8_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person9 controls -->
-            <velocity name="person9_motor_x" joint="person9_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person9_motor_y" joint="person9_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person9_motor_yaw" joint="person9_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person9_motor_x" joint="person9_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person9_motor_y" joint="person9_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person9_motor_yaw" joint="person9_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person10 controls -->
-            <velocity name="person10_motor_x" joint="person10_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person10_motor_y" joint="person10_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person10_motor_yaw" joint="person10_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person10_motor_x" joint="person10_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person10_motor_y" joint="person10_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person10_motor_yaw" joint="person10_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person11 controls -->
-            <velocity name="person11_motor_x" joint="person11_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person11_motor_y" joint="person11_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person11_motor_yaw" joint="person11_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person11_motor_x" joint="person11_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person11_motor_y" joint="person11_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person11_motor_yaw" joint="person11_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person12 controls -->
-            <velocity name="person12_motor_x" joint="person12_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person12_motor_y" joint="person12_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person12_motor_yaw" joint="person12_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person12_motor_x" joint="person12_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person12_motor_y" joint="person12_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person12_motor_yaw" joint="person12_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person13 controls -->
-            <velocity name="person13_motor_x" joint="person13_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person13_motor_y" joint="person13_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person13_motor_yaw" joint="person13_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person13_motor_x" joint="person13_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person13_motor_y" joint="person13_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person13_motor_yaw" joint="person13_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person14 controls -->
-            <velocity name="person14_motor_x" joint="person14_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person14_motor_y" joint="person14_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person14_motor_yaw" joint="person14_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person14_motor_x" joint="person14_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person14_motor_y" joint="person14_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person14_motor_yaw" joint="person14_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
             <!-- Person15 controls -->
-            <velocity name="person15_motor_x" joint="person15_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person15_motor_y" joint="person15_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person15_motor_yaw" joint="person15_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person15_motor_x" joint="person15_x" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person15_motor_y" joint="person15_y" kv="100" ctrlrange="-1.67 1.67"/>
+            <velocity name="person15_motor_yaw" joint="person15_yaw" kv="100" ctrlrange="-20.0 20.0"/>
 
       </actuator>
 
