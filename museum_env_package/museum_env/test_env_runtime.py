@@ -182,6 +182,156 @@ class EnvRuntimeTests(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_slim_world_frame_reuses_cached_observations_without_pairwise_geometry(self):
+        data, humans, human_body_ids = self._make_data(
+            robot_pose=(1.0, -1.0, 0.25),
+            human_poses=[
+                (0.0, 0.0, 0.10),
+                (0.5, 0.0, -0.20),
+            ],
+        )
+        cache = RuntimeCache()
+        hh_metric, hr_metric = self._make_metrics(n_humans=2)
+        initial_frame = env_runtime.build_world_frame(
+            data=data,
+            robot_body_id=0,
+            humans=humans,
+            human_body_ids=human_body_ids,
+            cache=cache,
+            hh_distance_metric=hh_metric,
+            hr_distance_metric=hr_metric,
+            observation_update_period_steps=2,
+            social_distance=1.0,
+            repulsion_gain=2.0,
+            force_observations=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
+
+        with patch(
+            "museum_env.env_runtime.compute_human_pairwise_geometry",
+            side_effect=AssertionError("unexpected pairwise recomputation"),
+        ):
+            frame = env_runtime.build_world_frame(
+                data=data,
+                robot_body_id=0,
+                humans=humans,
+                human_body_ids=human_body_ids,
+                cache=cache,
+                hh_distance_metric=hh_metric,
+                hr_distance_metric=hr_metric,
+                observation_update_period_steps=2,
+                social_distance=1.0,
+                repulsion_gain=2.0,
+                include_repulsion_vectors=False,
+                include_pairwise_distances=False,
+            )
+
+        self.assertIs(frame.observations, initial_frame.observations)
+        np.testing.assert_allclose(
+            frame.repulsion_vectors,
+            np.zeros((2, 2), dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            frame.pairwise_distances,
+            np.zeros((0, 0), dtype=np.float32),
+        )
+
+    def test_slim_world_frame_skips_repulsion_when_not_requested(self):
+        data, humans, human_body_ids = self._make_data(
+            robot_pose=(1.0, -1.0, 0.25),
+            human_poses=[
+                (0.0, 0.0, 0.10),
+                (0.5, 0.0, -0.20),
+            ],
+        )
+        cache = RuntimeCache()
+        hh_metric, hr_metric = self._make_metrics(n_humans=2)
+
+        with patch(
+            "museum_env.env_runtime._compute_social_repulsion_from_pairwise",
+            side_effect=AssertionError("unexpected repulsion computation"),
+        ):
+            frame = env_runtime.build_world_frame(
+                data=data,
+                robot_body_id=0,
+                humans=humans,
+                human_body_ids=human_body_ids,
+                cache=cache,
+                hh_distance_metric=hh_metric,
+                hr_distance_metric=hr_metric,
+                observation_update_period_steps=1,
+                social_distance=1.0,
+                repulsion_gain=2.0,
+                force_observations=True,
+                include_repulsion_vectors=False,
+                include_pairwise_distances=False,
+            )
+
+        np.testing.assert_allclose(
+            frame.repulsion_vectors,
+            np.zeros((2, 2), dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            frame.observations.human_robot_distance,
+            np.array([np.sqrt(2.0), np.sqrt(1.25)], dtype=np.float32),
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+    def test_slim_world_frame_refreshes_observations_with_lazy_pairwise_geometry(self):
+        data, humans, human_body_ids = self._make_data(
+            robot_pose=(1.0, -1.0, 0.25),
+            human_poses=[
+                (0.0, 0.0, 0.10),
+                (0.5, 0.0, -0.20),
+            ],
+        )
+        cache = RuntimeCache()
+        hh_metric, hr_metric = self._make_metrics(n_humans=2)
+        initial_frame = env_runtime.build_world_frame(
+            data=data,
+            robot_body_id=0,
+            humans=humans,
+            human_body_ids=human_body_ids,
+            cache=cache,
+            hh_distance_metric=hh_metric,
+            hr_distance_metric=hr_metric,
+            observation_update_period_steps=1,
+            social_distance=1.0,
+            repulsion_gain=2.0,
+            force_observations=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
+
+        with patch(
+            "museum_env.env_runtime.compute_human_pairwise_geometry",
+            wraps=env_runtime.compute_human_pairwise_geometry,
+        ) as geometry_helper:
+            frame = env_runtime.build_world_frame(
+                data=data,
+                robot_body_id=0,
+                humans=humans,
+                human_body_ids=human_body_ids,
+                cache=cache,
+                hh_distance_metric=hh_metric,
+                hr_distance_metric=hr_metric,
+                observation_update_period_steps=1,
+                social_distance=1.0,
+                repulsion_gain=2.0,
+                tick_age_before_refresh=True,
+                include_repulsion_vectors=False,
+                include_pairwise_distances=False,
+            )
+
+        self.assertEqual(geometry_helper.call_count, 1)
+        self.assertIsNot(frame.observations, initial_frame.observations)
+        np.testing.assert_allclose(
+            frame.pairwise_distances,
+            np.zeros((0, 0), dtype=np.float32),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

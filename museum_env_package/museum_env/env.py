@@ -332,7 +332,14 @@ class MuseumEnv(gym.Env):
             dtype=np.float32,
         )
 
-    def _build_world_frame(self, *, force: bool = False, tick: bool = False):
+    def _build_world_frame(
+        self,
+        *,
+        force: bool = False,
+        tick: bool = False,
+        include_repulsion_vectors: bool = True,
+        include_pairwise_distances: bool = True,
+    ):
         return build_world_frame(
             data=self.data,
             robot_body_id=self.robot_body_id,
@@ -346,6 +353,8 @@ class MuseumEnv(gym.Env):
             repulsion_gain=self.repulsion_gain,
             force_observations=force,
             tick_age_before_refresh=tick,
+            include_repulsion_vectors=include_repulsion_vectors,
+            include_pairwise_distances=include_pairwise_distances,
         )
 
     def _build_observation(self, world_frame) -> np.ndarray:
@@ -498,7 +507,11 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.listening_steps = 0
 
-        world_frame = self._build_world_frame(force=True)
+        world_frame = self._build_world_frame(
+            force=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
         self._sync_human_visual_state()
@@ -509,7 +522,10 @@ class MuseumEnv(gym.Env):
         self.step_count += 1
         events = StepEvents()
 
-        pre_frame = self._build_world_frame()
+        pre_frame = self._build_world_frame(
+            include_repulsion_vectors=True,
+            include_pairwise_distances=False,
+        )
         robot_action, _ = env_flow.compute_robot_action(self, pre_frame, events)
         env_flow.maybe_finish_post_explanation_hold(
             self,
@@ -528,7 +544,11 @@ class MuseumEnv(gym.Env):
         env_control.apply_human_controls(self, pre_frame)
 
         mujoco.mj_step(self.model, self.data)
-        post_frame = self._build_world_frame(tick=True)
+        post_frame = self._build_world_frame(
+            tick=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
 
         env_control.update_human_listening_session_progress(self)
         env_flow.progress_listening_phase(self, events, post_frame)

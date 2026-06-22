@@ -126,6 +126,17 @@ def tick_observation_age(cache: RuntimeCache) -> None:
     cache.sample_age_steps += 1
 
 
+def should_refresh_observation_snapshot(
+    *,
+    cache: RuntimeCache,
+    observation_update_period_steps: int,
+    force: bool = False,
+) -> bool:
+    if force or cache.observations is None:
+        return True
+    return cache.sample_age_steps >= int(observation_update_period_steps)
+
+
 def refresh_observation_snapshot(
     *,
     cache: RuntimeCache,
@@ -137,11 +148,11 @@ def refresh_observation_snapshot(
     force: bool = False,
     pairwise_distances=None,
 ) -> ObservationSnapshot:
-    should_refresh = force or cache.observations is None
-    if (not should_refresh) and cache.sample_age_steps >= int(observation_update_period_steps):
-        should_refresh = True
-
-    if not should_refresh:
+    if not should_refresh_observation_snapshot(
+        cache=cache,
+        observation_update_period_steps=observation_update_period_steps,
+        force=force,
+    ):
         return cache.observations
 
     # Compute all derived observations and update the cache if timeout.
@@ -187,16 +198,30 @@ def build_world_frame(
     repulsion_gain: float,
     force_observations: bool = False,
     tick_age_before_refresh: bool = False,
+    include_repulsion_vectors: bool = True,
+    include_pairwise_distances: bool = True,
 ) -> WorldFrame:
     robot_pose = collect_robot_pose(data, robot_body_id)
     robot_xy = np.array(robot_pose[:2], dtype=np.float32)
     human_xyz = collect_human_poses(data, humans, human_body_ids)
     human_xy = human_xyz[:, :2]
     human_yaw = human_xyz[:, 2] if human_xyz.size else np.zeros((0,), dtype=np.float32)
-    pairwise_diff, pairwise_distances = compute_human_pairwise_geometry(human_xy)
 
     if tick_age_before_refresh:
         tick_observation_age(cache)
+
+    needs_observation_refresh = should_refresh_observation_snapshot(
+        cache=cache,
+        observation_update_period_steps=observation_update_period_steps,
+        force=force_observations,
+    )
+    needs_pairwise_geometry = bool(
+        needs_observation_refresh or include_repulsion_vectors or include_pairwise_distances
+    )
+    pairwise_diff = None
+    pairwise_distances = None
+    if needs_pairwise_geometry:
+        pairwise_diff, pairwise_distances = compute_human_pairwise_geometry(human_xy)
 
     # Refresh observations if needed
     observations = refresh_observation_snapshot(
@@ -209,12 +234,17 @@ def build_world_frame(
         force=force_observations,
         pairwise_distances=pairwise_distances,
     )
-    repulsion_vectors = _compute_social_repulsion_from_pairwise(
-        pairwise_diff=pairwise_diff,
-        pairwise_dist=pairwise_distances,
-        social_distance=social_distance,
-        repulsion_gain=repulsion_gain,
-    )
+    if include_repulsion_vectors:
+        repulsion_vectors = _compute_social_repulsion_from_pairwise(
+            pairwise_diff=pairwise_diff,
+            pairwise_dist=pairwise_distances,
+            social_distance=social_distance,
+            repulsion_gain=repulsion_gain,
+        )
+    else:
+        repulsion_vectors = np.zeros((len(humans), 2), dtype=np.float32)
+    if not include_pairwise_distances:
+        pairwise_distances = np.zeros((0, 0), dtype=np.float32)
     return WorldFrame(
         robot_pose=robot_pose,
         robot_xy=robot_xy,
