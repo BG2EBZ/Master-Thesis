@@ -9,8 +9,8 @@ import numpy as np
 class PolicySearchParams:
     """Learnable parameters of the high-level museum guidance policy."""
 
-    slow_down_distance_m: float = 2.5
-    callback_distance_m: float = 3.5
+    slow_down_distance_m: float = 3.0
+    callback_distance_m: float = 4.0
     callback_wait_seconds: float = 2.0
     slowdown_speed_scale: float = 0.7
 

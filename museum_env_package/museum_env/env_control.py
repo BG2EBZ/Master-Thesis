@@ -475,79 +475,47 @@ def apply_pass_request_response_if_needed(env) -> bool:
 
 
 def apply_robot_front_blocking_stop_if_needed(env, robot_action, world_frame) -> np.ndarray:
-    """Stop the robot when someone blocks the ahead region at close range."""
+    """Stop the robot and keep requesting passage while someone blocks the front."""
     adjusted_action = np.array(robot_action, dtype=np.float32, copy=True)
     state = env.robot_front_blocking_state
 
     if env.robot.mode != RobotMode.MOVE:
         state.reset()
         return adjusted_action
-    
-    # First check blocking or not
-    if state.blocker_idx is None and not state.bypass_active:
+
+    # Clear any legacy bypass runtime so this controller stays in request-only mode.
+    if state.bypass_active or state.bypass_turn_target_yaw is not None:
+        state.reset()
+
+    if state.blocker_idx is None:
         blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
         if blocker_idx is None:
             return adjusted_action
 
         _start_front_blocking_pass_request(env, state, blocker_idx=int(blocker_idx))
 
-    # Stop 2 seconds to wait for the response
     if int(state.speech_steps_remaining) > 0:
         adjusted_action[:] = 0.0
         env.robot.mode = RobotMode.STOP
         return adjusted_action
 
-    if (not state.bypass_active) and apply_pass_request_response_if_needed(env):
+    if apply_pass_request_response_if_needed(env):
         return adjusted_action
-
-    if state.bypass_active:
-        if state.bypass_turn_target_yaw is not None:
-            turn_action = _compute_robot_turn_action(
-                current_yaw=float(world_frame.robot_pose[2]),
-                target_yaw=float(state.bypass_turn_target_yaw),
-            )
-            if float(turn_action[2]) != 0.0:
-                env.robot.mode = RobotMode.STOP
-                return turn_action
-            state.bypass_turn_target_yaw = None
-            blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
-            # Check if there's still a blocker after turn
-            if blocker_idx is not None:
-                _start_front_blocking_pass_request(
-                    env,
-                    state,
-                    blocker_idx=int(blocker_idx),
-                    reset_state=True,
-                )
-                adjusted_action[:] = 0.0
-                env.robot.mode = RobotMode.STOP
-                return adjusted_action
-        if _front_blocking_bypass_progress(state, world_frame=world_frame) >= float(
-            _FRONT_BLOCKING_BYPASS_ARC_RADIANS
-        ):
-            state.reset()
-            return adjusted_action
-        return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
 
     blocker_idx = get_nearest_front_blocking_human_idx(env, world_frame)
     if blocker_idx is None:
         state.reset()
         return adjusted_action
 
-    _start_front_blocking_bypass(env, state, blocker_idx=int(blocker_idx), world_frame=world_frame)
-    env._log_event(
-        f">>> Robot started a 60 deg bypass arc around person{int(blocker_idx) + 1}."
+    _start_front_blocking_pass_request(
+        env,
+        state,
+        blocker_idx=int(blocker_idx),
+        reset_state=True,
     )
-    if state.bypass_turn_target_yaw is not None:
-        turn_action = _compute_robot_turn_action(
-            current_yaw=float(world_frame.robot_pose[2]),
-            target_yaw=float(state.bypass_turn_target_yaw),
-        )
-        if float(turn_action[2]) != 0.0:
-            env.robot.mode = RobotMode.STOP
-            return turn_action
-        state.bypass_turn_target_yaw = None
-    return _compute_robot_bypass_action(env, state=state, world_frame=world_frame)
+    adjusted_action[:] = 0.0
+    env.robot.mode = RobotMode.STOP
+    return adjusted_action
 
 
 def _compute_robot_seek_action(env, *, robot_pose, target_xy) -> np.ndarray:
