@@ -17,19 +17,54 @@ DEFAULT_SLEEP_SCALE = 1.0
 DEFAULT_RTF_PRINT_EVERY = 2500
 DEFAULT_VIDEO_ROOT = "videos"
 DEFAULT_NAME_PREFIX = "museum_full_run"
+MIN_SPEED_MULTIPLIER = 0.125
+MAX_SPEED_MULTIPLIER = 8.0
+SPEED_ADJUST_FACTOR = 2.0
 
 
 class _PauseController:
-    def __init__(self, toggle_key):
+    def __init__(
+        self,
+        toggle_key,
+        increase_keys,
+        decrease_keys,
+        initial_speed_multiplier,
+    ):
         self.toggle_key = int(toggle_key)
+        self.increase_keys = {int(key) for key in increase_keys}
+        self.decrease_keys = {int(key) for key in decrease_keys}
         self.paused = False
+        self.speed_multiplier = self._clamp_speed(initial_speed_multiplier)
+
+    def _clamp_speed(self, speed_multiplier):
+        return min(MAX_SPEED_MULTIPLIER, max(MIN_SPEED_MULTIPLIER, float(speed_multiplier)))
+
+    def step_wall_time(self, sim_dt):
+        return float(sim_dt) / self.speed_multiplier
+
+    def print_speed(self):
+        print(f"[control] speed={self.speed_multiplier:.3f}x realtime")
 
     def on_key(self, key):
-        if int(key) != self.toggle_key:
+        key = int(key)
+        if key == self.toggle_key:
+            self.paused = not self.paused
+            status = "paused" if self.paused else "resumed"
+            print(f"[control] {status}")
             return
-        self.paused = not self.paused
-        status = "paused" if self.paused else "resumed"
-        print(f"[control] {status}")
+
+        if key in self.increase_keys:
+            self.speed_multiplier = self._clamp_speed(
+                self.speed_multiplier * SPEED_ADJUST_FACTOR
+            )
+            self.print_speed()
+            return
+
+        if key in self.decrease_keys:
+            self.speed_multiplier = self._clamp_speed(
+                self.speed_multiplier / SPEED_ADJUST_FACTOR
+            )
+            self.print_speed()
 
 
 def _positive_int(value):
@@ -143,8 +178,8 @@ def _print_rtf(tag, steps_done, sim_dt, wall_start):
     )
 
 
-def _sleep_until_realtime_target(steps_done, sim_dt, wall_start, sleep_scale, wall_time_offset=0.0):
-    target_wall_time = wall_start + wall_time_offset + (steps_done * sim_dt * float(sleep_scale))
+def _sleep_until_realtime_target(target_wall_elapsed, wall_start, wall_time_offset=0.0):
+    target_wall_time = wall_start + wall_time_offset + float(target_wall_elapsed)
     remaining = target_wall_time - time.perf_counter()
     if remaining > 0.0:
         time.sleep(remaining)
@@ -175,26 +210,41 @@ def _run_loop(
     sim_dt = float(base_env.dt)
     wall_start = time.perf_counter()
     wall_time_offset = 0.0
+    target_wall_elapsed = 0.0
     pause_controller = None
 
-    if realtime and base_env.viewer is None:
-        pause_controller = _PauseController(mujoco.viewer.glfw.KEY_P)
-        base_env.viewer = mujoco.viewer.launch_passive(
-            base_env.model,
-            base_env.data,
-            key_callback=pause_controller.on_key,
+    if realtime:
+        pause_controller = _PauseController(
+            mujoco.viewer.glfw.KEY_P,
+            increase_keys=(
+                mujoco.viewer.glfw.KEY_EQUAL,
+                mujoco.viewer.glfw.KEY_KP_ADD,
+            ),
+            decrease_keys=(
+                mujoco.viewer.glfw.KEY_MINUS,
+                mujoco.viewer.glfw.KEY_KP_SUBTRACT,
+            ),
+            initial_speed_multiplier=1.0 / float(sleep_scale),
         )
-        if base_env.viewer.user_scn is not None:
-            base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-            base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        env.render()
+        if base_env.viewer is None:
+            base_env.viewer = mujoco.viewer.launch_passive(
+                base_env.model,
+                base_env.data,
+                key_callback=pause_controller.on_key,
+            )
+            if base_env.viewer.user_scn is not None:
+                base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+                base_env.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+            env.render()
+            print("[control] P=pause/resume, +=faster, -=slower")
+            pause_controller.print_speed()
 
     step = 0
     while step < max_steps:
         if pause_controller is not None and pause_controller.paused:
             pause_start = time.perf_counter()
             env.render()
-            time.sleep(sim_dt * float(sleep_scale))
+            time.sleep(pause_controller.step_wall_time(sim_dt))
             wall_time_offset += time.perf_counter() - pause_start
             continue
 
@@ -216,11 +266,10 @@ def _run_loop(
             if not rendered_this_step and (terminated or truncated):
                 env.render()
 
+            target_wall_elapsed += pause_controller.step_wall_time(sim_dt)
             _sleep_until_realtime_target(
-                step + 1,
-                sim_dt,
+                target_wall_elapsed,
                 wall_start,
-                sleep_scale,
                 wall_time_offset,
             )
 
@@ -310,7 +359,7 @@ def build_arg_parser():
         "--sleep-scale",
         type=_positive_float,
         default=DEFAULT_SLEEP_SCALE,
-        help="Only for demo mode. Multiplier on simulation-time pacing (1.0 = real time).",
+        help="Only for demo mode. Multiplier on simulation-time pacing (1.0 = real time; P pauses, +/- adjust speed).",
     )
     parser.add_argument(
         "--video-fps",
