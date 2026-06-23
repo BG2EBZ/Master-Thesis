@@ -143,6 +143,13 @@ def _print_rtf(tag, steps_done, sim_dt, wall_start):
     )
 
 
+def _sleep_until_realtime_target(steps_done, sim_dt, wall_start, sleep_scale, wall_time_offset=0.0):
+    target_wall_time = wall_start + wall_time_offset + (steps_done * sim_dt * float(sleep_scale))
+    remaining = target_wall_time - time.perf_counter()
+    if remaining > 0.0:
+        time.sleep(remaining)
+
+
 def _make_env(mode):
     render_mode = None
     if mode == "demo":
@@ -166,8 +173,8 @@ def _run_loop(
     del obs, info
 
     sim_dt = float(base_env.dt)
-    target_sleep = (1.0 / DEFAULT_RENDER_FPS) * float(sleep_scale)
     wall_start = time.perf_counter()
+    wall_time_offset = 0.0
     pause_controller = None
 
     if realtime and base_env.viewer is None:
@@ -185,8 +192,10 @@ def _run_loop(
     step = 0
     while step < max_steps:
         if pause_controller is not None and pause_controller.paused:
+            pause_start = time.perf_counter()
             env.render()
-            time.sleep(target_sleep)
+            time.sleep(sim_dt * float(sleep_scale))
+            wall_time_offset += time.perf_counter() - pause_start
             continue
 
         _, _, terminated, truncated, info = env.step(None)
@@ -206,6 +215,14 @@ def _run_loop(
 
             if not rendered_this_step and (terminated or truncated):
                 env.render()
+
+            _sleep_until_realtime_target(
+                step + 1,
+                sim_dt,
+                wall_start,
+                sleep_scale,
+                wall_time_offset,
+            )
 
         if _report_step(step, terminated, truncated, info, base_env, wall_start, sim_dt):
             break
@@ -293,7 +310,7 @@ def build_arg_parser():
         "--sleep-scale",
         type=_positive_float,
         default=DEFAULT_SLEEP_SCALE,
-        help="Only for demo mode. Multiplier on render sleep pacing.",
+        help="Only for demo mode. Multiplier on simulation-time pacing (1.0 = real time).",
     )
     parser.add_argument(
         "--video-fps",
