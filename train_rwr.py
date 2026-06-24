@@ -254,6 +254,8 @@ def write_best_params_json(payload: dict[str, object], output_path: Path) -> Non
 def plot_training_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
+    *,
+    x_label: str = "Epoch",
 ) -> None:
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     import matplotlib
@@ -276,21 +278,21 @@ def plot_training_metrics(
     ax_return.plot(epochs, mean_returns, label="mean_return", linewidth=2)
     ax_return.plot(epochs, best_returns, label="best_return", linewidth=2)
     ax_return.set_title("Return")
-    ax_return.set_xlabel("Epoch")
+    ax_return.set_xlabel(x_label)
     ax_return.set_ylabel("Return")
     ax_return.grid(True, alpha=0.3)
     ax_return.legend()
 
     ax_success.plot(epochs, success_rates, color="tab:green", linewidth=2)
     ax_success.set_title("Success Rate")
-    ax_success.set_xlabel("Epoch")
+    ax_success.set_xlabel(x_label)
     ax_success.set_ylabel("Rate")
     ax_success.set_ylim(0.0, 1.0)
     ax_success.grid(True, alpha=0.3)
 
     ax_duration.plot(epochs, mean_durations, color="tab:orange", linewidth=2)
     ax_duration.set_title("Guide Duration")
-    ax_duration.set_xlabel("Epoch")
+    ax_duration.set_xlabel(x_label)
     ax_duration.set_ylabel("Seconds")
     ax_duration.grid(True, alpha=0.3)
 
@@ -298,7 +300,7 @@ def plot_training_metrics(
     ax_triggers.plot(epochs, mean_impatient, label="impatient", linewidth=2)
     ax_triggers.plot(epochs, mean_distracted, label="distracted", linewidth=2)
     ax_triggers.set_title("Negative Trigger Counts")
-    ax_triggers.set_xlabel("Epoch")
+    ax_triggers.set_xlabel(x_label)
     ax_triggers.set_ylabel("Mean count")
     ax_triggers.grid(True, alpha=0.3)
     ax_triggers.legend()

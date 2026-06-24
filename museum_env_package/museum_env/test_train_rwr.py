@@ -21,6 +21,7 @@ from train_rwr import (
     _close_cached_env,
     _evaluate_episode_task,
     main,
+    plot_training_metrics,
     run_episode,
     train,
 )
@@ -472,6 +473,26 @@ class TrainRwrTests(unittest.TestCase):
             "callback_wait_seconds": float(clipped_theta[2]),
             "slowdown_speed_scale": float(clipped_theta[3]),
         })
+
+    def test_plot_training_metrics_accepts_default_epoch_axis_label(self):
+        metrics = [
+            {
+                "epoch": 1,
+                "mean_return": -1.0,
+                "best_return": -1.0,
+                "success_rate": 1.0,
+                "mean_duration_seconds": 10.0,
+                "mean_overwhelmed_triggers": 0.0,
+                "mean_impatient_triggers": 1.0,
+                "mean_distracted_triggers": 2.0,
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "plot.png"
+            plot_training_metrics(metrics, output_path)
+            self.assertTrue(output_path.exists())
+            self.assertGreater(output_path.stat().st_size, 0)
 
     def test_main_writes_csv_and_plot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

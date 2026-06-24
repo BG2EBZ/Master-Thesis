@@ -1,0 +1,44 @@
+{
+  "baseline_theta": [
+    3.0,
+    4.0,
+    2.0,
+    0.7
+  ],
+  "baseline_policy_params": {
+    "slow_down_distance_m": 3.0,
+    "callback_distance_m": 4.0,
+    "callback_wait_seconds": 2.0,
+    "slowdown_speed_scale": 0.7
+  },
+  "seed": 42,
+  "evaluation_seeds": [
+    191664963,
+    1662057957,
+    1405681631,
+    942484272,
+    929893137,
+    1843824992,
+    184566854,
+    1497586438,
+    432652533,
+    202244314,
+    1130604997,
+    2095133045,
+    1580016183,
+    1634535062,
+    1540770719,
+    1688060240,
+    1102145672,
+    275121930,
+    1803345590,
+    967196436
+  ],
+  "num_runs": 20,
+  "mean_return": -69.629,
+  "best_return": -57.34,
+  "mean_duration_seconds": 201.28999999999996,
+  "mean_overwhelmed_triggers": 0.7,
+  "mean_impatient_triggers": 16.6,
+  "mean_distracted_triggers": 6.75
+}
