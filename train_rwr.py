@@ -342,14 +342,10 @@ def train(
     ) -> None:
         nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
         for epoch_idx in range(start_epoch_idx, end_epoch_idx):
-            raw_theta_batch = rng.normal(
+            theta_batch = rng.normal(
                 loc=mu,
                 scale=std,
                 size=(samples_per_epoch, len(mu)),
-            )
-            theta_batch = np.array(
-                [PolicySearchParams.from_theta(theta).to_theta() for theta in raw_theta_batch],
-                dtype=np.float64,
             )
             episode_tasks = [
                 (theta, int(seed), DEFAULT_N_HUMANS, print_explanations)
@@ -438,6 +434,7 @@ def train(
         "best_mean_distracted_triggers": float(best_evaluation.mean_distracted_triggers),
         "best_epoch": int(best_epoch),
         "best_sample_index_within_epoch": int(best_sample_index),
+        # These remain optimizer-space values; the environment clips them on application.
         "final_mu": [float(value) for value in mu],
         "final_std": [float(value) for value in std],
         "final_mu_policy_params": _policy_params_dict(mu),

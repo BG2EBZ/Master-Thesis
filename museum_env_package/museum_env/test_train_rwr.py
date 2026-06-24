@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_CSV_NAME,
@@ -426,6 +427,51 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(best_params["best_return"], grouped_returns[best_group_idx], places=6)
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
+
+    def test_train_passes_raw_theta_to_episode_tasks_and_keeps_clipped_policy_artifact(self):
+        raw_theta = np.array([0.1, 1.0, 12.0, 2.0], dtype=np.float64)
+        seen_tasks = []
+
+        def _fake_evaluate_episode_task(task):
+            seen_tasks.append(task)
+            return EpisodeResult(
+                episode_return=1.0,
+                duration_seconds=1.0,
+                overwhelmed_triggers=0,
+                impatient_triggers=0,
+                distracted_triggers=0,
+                success=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("train_rwr.ProcessPoolExecutor", _FakeExecutor):
+                with patch("train_rwr.DEFAULT_EVALUATION_SEEDS", (42,)):
+                    with patch("train_rwr.INITIAL_MU", raw_theta.copy()):
+                        with patch("train_rwr.INITIAL_STD", np.zeros(4, dtype=np.float64)):
+                            with patch(
+                                "train_rwr._evaluate_episode_task",
+                                side_effect=_fake_evaluate_episode_task,
+                            ):
+                                train(
+                                    epochs=1,
+                                    samples_per_epoch=1,
+                                    seed=7,
+                                    output_dir=Path(tmp_dir),
+                                )
+            best_params_path = Path(tmp_dir) / DEFAULT_BEST_PARAMS_NAME
+            with best_params_path.open("r", encoding="utf-8") as handle:
+                best_params = json.load(handle)
+
+        self.assertEqual(len(seen_tasks), 1)
+        self.assertTrue(np.allclose(seen_tasks[0][0], raw_theta))
+        self.assertEqual(best_params["best_theta_seen"], [float(value) for value in raw_theta])
+        clipped_theta = PolicySearchParams.from_theta(raw_theta).to_theta()
+        self.assertEqual(best_params["best_policy_params"], {
+            "slow_down_distance_m": float(clipped_theta[0]),
+            "callback_distance_m": float(clipped_theta[1]),
+            "callback_wait_seconds": float(clipped_theta[2]),
+            "slowdown_speed_scale": float(clipped_theta[3]),
+        })
 
     def test_main_writes_csv_and_plot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
