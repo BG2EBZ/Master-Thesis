@@ -356,7 +356,7 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(result_b.episode_return, -0.86, places=6)
         self.assertFalse(_FakeTrainingEnv.instances[0].closed)
 
-    def test_train_parallel_branch_rebuilds_executor_every_two_epochs(self):
+    def test_train_parallel_branch_reuses_one_executor_across_all_epochs(self):
         seen_tasks = []
 
         def _fake_evaluate_episode_task(task):
@@ -391,10 +391,10 @@ class TrainRwrTests(unittest.TestCase):
                 best_params = json.load(handle)
 
         self.assertEqual(_FakeExecutor.last_max_workers, 3)
-        self.assertEqual(len(_FakeExecutor.instances), 3)
+        self.assertEqual(len(_FakeExecutor.instances), 1)
         self.assertEqual(
             [len(instance.mapped_task_batches) for instance in _FakeExecutor.instances],
-            [2, 2, 1],
+            [5],
         )
         flattened_expected_tasks = [
             task

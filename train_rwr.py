@@ -30,8 +30,7 @@ DEFAULT_SEED = 42
 DEFAULT_BETA = 0.02
 DEFAULT_EVALUATION_SEEDS = (42,)
 DEFAULT_N_HUMANS = 15
-DEFAULT_MAX_WORKERS = 5
-PROCESS_POOL_RESTART_EVERY_EPOCHS = 2
+DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
@@ -415,14 +414,12 @@ def train(
         finally:
             _close_cached_env()
     else:
-        for start_epoch_idx in range(0, epochs, PROCESS_POOL_RESTART_EVERY_EPOCHS):
-            end_epoch_idx = min(start_epoch_idx + PROCESS_POOL_RESTART_EVERY_EPOCHS, epochs)
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                _run_training_loop(
-                    executor=executor,
-                    start_epoch_idx=start_epoch_idx,
-                    end_epoch_idx=end_epoch_idx,
-                )
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            _run_training_loop(
+                executor=executor,
+                start_epoch_idx=0,
+                end_epoch_idx=epochs,
+            )
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
