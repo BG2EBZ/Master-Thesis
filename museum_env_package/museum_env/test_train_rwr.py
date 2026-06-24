@@ -16,8 +16,9 @@ from train_rwr import (
     DEFAULT_PLOT_NAME,
     EpisodeResult,
     ThetaEvaluation,
+    _aggregate_episode_results,
     _close_cached_env,
-    _evaluate_theta_sample,
+    _evaluate_episode_task,
     main,
     run_episode,
     train,
@@ -309,14 +310,31 @@ class TrainRwrTests(unittest.TestCase):
 
         self.assertEqual(stdout.getvalue(), "")
 
-    def test_evaluate_theta_sample_aggregates_seeds_and_cached_env_closes_on_cleanup(self):
+    def test_evaluate_episode_task_returns_episode_result_and_cached_env_closes_on_cleanup(self):
         theta = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
 
         with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
-            evaluation = _evaluate_theta_sample((theta, (1, 2, 3), 15, False))
+            result = _evaluate_episode_task((theta, 3, 15, False))
             self.assertEqual(len(_FakeTrainingEnv.instances), 1)
             self.assertFalse(_FakeTrainingEnv.instances[0].closed)
             _close_cached_env()
+
+        self.assertAlmostEqual(result.episode_return, -0.15, places=6)
+        self.assertEqual(result.duration_seconds, 15.5)
+        self.assertEqual(result.overwhelmed_triggers, 1)
+        self.assertEqual(result.impatient_triggers, 0)
+        self.assertEqual(result.distracted_triggers, 1)
+        self.assertFalse(result.success)
+        self.assertTrue(_FakeTrainingEnv.instances[0].closed)
+
+    def test_aggregate_episode_results_combines_multiple_seeds(self):
+        evaluation = _aggregate_episode_results(
+            [
+                EpisodeResult(-0.05, 13.5, 1, 1, 1, False),
+                EpisodeResult(-0.10, 14.5, 0, 2, 0, True),
+                EpisodeResult(-0.15, 15.5, 1, 0, 1, False),
+            ]
+        )
 
         self.assertAlmostEqual(evaluation.mean_return, -0.1, places=6)
         self.assertAlmostEqual(evaluation.success_rate, 1.0 / 3.0, places=6)
@@ -324,47 +342,49 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(evaluation.mean_overwhelmed_triggers, 2.0 / 3.0, places=6)
         self.assertAlmostEqual(evaluation.mean_impatient_triggers, 1.0, places=6)
         self.assertAlmostEqual(evaluation.mean_distracted_triggers, 2.0 / 3.0, places=6)
-        self.assertTrue(_FakeTrainingEnv.instances[0].closed)
 
-    def test_evaluate_theta_sample_reuses_cached_env_for_multiple_tasks(self):
+    def test_evaluate_episode_task_reuses_cached_env_for_multiple_tasks(self):
         theta_a = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
         theta_b = np.array([2.0, 3.0, 1.5, 0.6], dtype=np.float64)
 
         with patch("train_rwr.MuseumEnv", _FakeTrainingEnv):
-            evaluation_a = _evaluate_theta_sample((theta_a, (1,), 15, False))
-            evaluation_b = _evaluate_theta_sample((theta_b, (2,), 15, False))
+            result_a = _evaluate_episode_task((theta_a, 1, 15, False))
+            result_b = _evaluate_episode_task((theta_b, 2, 15, False))
 
         self.assertEqual(len(_FakeTrainingEnv.instances), 1)
-        self.assertAlmostEqual(evaluation_a.mean_return, -0.05, places=6)
-        self.assertAlmostEqual(evaluation_b.mean_return, -0.86, places=6)
+        self.assertAlmostEqual(result_a.episode_return, -0.05, places=6)
+        self.assertAlmostEqual(result_b.episode_return, -0.86, places=6)
         self.assertFalse(_FakeTrainingEnv.instances[0].closed)
 
     def test_train_parallel_branch_rebuilds_executor_every_two_epochs(self):
         seen_tasks = []
 
-        def _fake_evaluate_theta_sample(task):
+        def _fake_evaluate_episode_task(task):
             seen_tasks.append(task)
-            return ThetaEvaluation(
-                mean_return=float(len(seen_tasks)),
-                success_rate=0.5,
-                mean_duration_seconds=1.0,
-                mean_overwhelmed_triggers=0.0,
-                mean_impatient_triggers=0.0,
-                mean_distracted_triggers=0.0,
+            theta, seed, _n_humans, _print_explanations = task
+            reward = float(np.sum(theta) - (0.1 * seed))
+            return EpisodeResult(
+                episode_return=reward,
+                duration_seconds=float(seed),
+                overwhelmed_triggers=int(seed % 2),
+                impatient_triggers=int(seed % 3),
+                distracted_triggers=int(seed % 4),
+                success=bool(seed % 2 == 0),
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch("train_rwr.ProcessPoolExecutor", _FakeExecutor):
-                with patch(
-                    "train_rwr._evaluate_theta_sample",
-                    side_effect=_fake_evaluate_theta_sample,
-                ):
-                    metrics = train(
-                        epochs=5,
-                        samples_per_epoch=3,
-                        seed=7,
-                        output_dir=Path(tmp_dir),
-                    )
+                with patch("train_rwr.DEFAULT_EVALUATION_SEEDS", (11, 12)):
+                    with patch(
+                        "train_rwr._evaluate_episode_task",
+                        side_effect=_fake_evaluate_episode_task,
+                    ):
+                        metrics = train(
+                            epochs=5,
+                            samples_per_epoch=3,
+                            seed=7,
+                            output_dir=Path(tmp_dir),
+                        )
             best_params_path = Path(tmp_dir) / DEFAULT_BEST_PARAMS_NAME
             self.assertTrue(best_params_path.exists())
             with best_params_path.open("r", encoding="utf-8") as handle:
@@ -382,19 +402,28 @@ class TrainRwrTests(unittest.TestCase):
             for batch in instance.mapped_task_batches
             for task in batch
         ]
-        self.assertEqual(len(flattened_expected_tasks), 15)
-        self.assertEqual(len(seen_tasks), 15)
+        self.assertEqual(len(flattened_expected_tasks), 30)
+        self.assertEqual(len(seen_tasks), 30)
         for expected_task, seen_task in zip(flattened_expected_tasks, seen_tasks):
             self.assertTrue(np.allclose(expected_task[0], seen_task[0]))
             self.assertEqual(expected_task[1:], seen_task[1:])
-        self.assertTrue(all(len(batch) == 3 for instance in _FakeExecutor.instances for batch in instance.mapped_task_batches))
+        self.assertTrue(all(len(batch) == 6 for instance in _FakeExecutor.instances for batch in instance.mapped_task_batches))
         self.assertTrue(all(task[3] is False for task in seen_tasks))
+        self.assertTrue(all(isinstance(task[1], int) for task in seen_tasks))
         self.assertEqual([row["epoch"] for row in metrics], [1, 2, 3, 4, 5])
-        final_seen_task = seen_tasks[-1]
-        self.assertEqual(best_params["best_epoch"], 5)
-        self.assertEqual(best_params["best_sample_index_within_epoch"], 3)
-        self.assertTrue(np.allclose(best_params["best_theta_seen"], final_seen_task[0]))
-        self.assertAlmostEqual(best_params["best_return"], 15.0, places=6)
+        grouped_tasks = [seen_tasks[idx : idx + 2] for idx in range(0, len(seen_tasks), 2)]
+        grouped_returns = [
+            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in theta_tasks]))
+            for theta_tasks in grouped_tasks
+        ]
+        best_group_idx = int(np.argmax(grouped_returns))
+        best_theta_tasks = grouped_tasks[best_group_idx]
+        best_epoch = (best_group_idx // 3) + 1
+        best_sample = (best_group_idx % 3) + 1
+        self.assertEqual(best_params["best_epoch"], best_epoch)
+        self.assertEqual(best_params["best_sample_index_within_epoch"], best_sample)
+        self.assertTrue(np.allclose(best_params["best_theta_seen"], best_theta_tasks[0][0]))
+        self.assertAlmostEqual(best_params["best_return"], grouped_returns[best_group_idx], places=6)
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
 

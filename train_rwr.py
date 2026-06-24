@@ -18,11 +18,6 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
 
 from museum_env import MuseumEnv
@@ -30,7 +25,7 @@ from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_EPOCHS = 30
-DEFAULT_SAMPLES_PER_EPOCH = 30
+DEFAULT_SAMPLES_PER_EPOCH = 20
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.02
 DEFAULT_EVALUATION_SEEDS = (42,)
@@ -180,20 +175,18 @@ def run_episode(
     )
 
 
-def _evaluate_theta_sample(task: tuple[np.ndarray, tuple[int, ...], int, bool]) -> ThetaEvaluation:
-    theta, seeds, n_humans, print_explanations = task
+def _evaluate_episode_task(task: tuple[np.ndarray, int, int, bool]) -> EpisodeResult:
+    theta, seed, n_humans, print_explanations = task
     env = _get_cached_env(n_humans)
-    # Multi-seed evaluation
-    episode_results = [
-        run_episode(
-            env,
-            theta=theta,
-            seed=seed,
-            print_explanations=print_explanations,
-        )
-        for seed in seeds
-    ]
+    return run_episode(
+        env,
+        theta=theta,
+        seed=seed,
+        print_explanations=print_explanations,
+    )
 
+
+def _aggregate_episode_results(episode_results: Sequence[EpisodeResult]) -> ThetaEvaluation:
     return ThetaEvaluation(
         mean_return=float(np.mean([result.episode_return for result in episode_results])),
         success_rate=float(np.mean([result.success for result in episode_results])),
@@ -263,6 +256,12 @@ def plot_training_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
 ) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     epochs = [int(row["epoch"]) for row in metrics]
     mean_returns = [float(row["mean_return"]) for row in metrics]
     best_returns = [float(row["best_return"]) for row in metrics]
@@ -331,10 +330,10 @@ def train(
     # Only print if running single-process
     print_explanations = max_workers == 1
 
-    def _run_epoch_batch(tasks, executor: ProcessPoolExecutor | None) -> list[ThetaEvaluation]:
+    def _run_episode_batch(tasks, executor: ProcessPoolExecutor | None) -> list[EpisodeResult]:
         if executor is None:
-            return [_evaluate_theta_sample(task) for task in tasks]
-        return list(executor.map(_evaluate_theta_sample, tasks))
+            return [_evaluate_episode_task(task) for task in tasks]
+        return list(executor.map(_evaluate_episode_task, tasks))
 
     def _run_training_loop(
         *,
@@ -353,12 +352,17 @@ def train(
                 [PolicySearchParams.from_theta(theta).to_theta() for theta in raw_theta_batch],
                 dtype=np.float64,
             )
-            tasks = [
-                (theta, DEFAULT_EVALUATION_SEEDS, DEFAULT_N_HUMANS, print_explanations)
+            episode_tasks = [
+                (theta, int(seed), DEFAULT_N_HUMANS, print_explanations)
                 for theta in theta_batch
+                for seed in DEFAULT_EVALUATION_SEEDS
             ]
-
-            evaluations = _run_epoch_batch(tasks, executor)
+            episode_results = _run_episode_batch(episode_tasks, executor)
+            seed_count = len(DEFAULT_EVALUATION_SEEDS)
+            evaluations = [
+                _aggregate_episode_results(episode_results[idx : idx + seed_count])
+                for idx in range(0, len(episode_results), seed_count)
+            ]
 
             returns = np.array(
                 [evaluation.mean_return for evaluation in evaluations],
