@@ -18,7 +18,7 @@ HUMAN_YAW_RATE_GAIN = 4.0
 HUMAN_ROTATION_STOP_DEG = 3.0
 LISTENING_RING_GAIN = 2.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
-DISTRACTED_SPEED_SCALE = 0.35
+DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
 DISTRACTED_YAW_DEVIATION_MAX_DEG = 90.0
 DISTRACTED_TARGET_DISTANCE_MIN = 0.5
@@ -54,7 +54,7 @@ MIN_SPEED_EPS = 1e-3
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 WALL_REPULSION_DISTANCE_METERS = 0.45
-WALL_REPULSION_GAIN = 8.0
+WALL_REPULSION_GAIN = 20.0
 WALL_DETOUR_ANGLES_DEG = (60.0, -60.0, 90.0, -90.0, 120.0, -120.0)
 WALL_DETOUR_ROTATIONS = tuple(
     (float(np.cos(np.deg2rad(angle_deg))), float(np.sin(np.deg2rad(angle_deg))))
@@ -138,7 +138,7 @@ class Human:
 
         self.impatient_duration = 800
         self.impatient_timer = 0
-        self.impatient_speed_multiplier = 1.1
+        self.impatient_speed_multiplier = 1.3
         self.impatient_front_offset = DEFAULT_IMPATIENT_FRONT_OFFSET
         self.listening_impatient_glance_steps = round(LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.impatient_original_max_speed = None
@@ -161,7 +161,7 @@ class Human:
 
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
-        self.overwhelmed_leave_speed = 0.55
+        self.overwhelmed_leave_speed = 1.0
         self.max_overwhelmed_leave_duration_seconds = 2.0
         self.overwhelmed_leave_duration = round(self.max_overwhelmed_leave_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.overwhelmed_leave_timer = 0

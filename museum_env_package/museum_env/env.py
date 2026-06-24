@@ -166,8 +166,8 @@ class MuseumEnv(gym.Env):
         self.robot = Robot(
             waypoints=self.map_layout.robot_waypoints,
             v_max=1.0,
-            k_v=15.0,
-            k_yaw=5.0,
+            k_v=20.0,
+            k_yaw=12.0,
         )
         self.follow_phase = None
         self.robot_start_xy = None
@@ -390,7 +390,7 @@ class MuseumEnv(gym.Env):
                 dt=self.dt,
                 max_distracted_duration_seconds=self.max_distracted_duration_seconds,
                 impatient_duration_seconds=6.0,
-                impatient_speed_multiplier=1.1,
+                impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
                 rng=self.np_random,
