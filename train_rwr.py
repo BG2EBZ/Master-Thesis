@@ -24,13 +24,13 @@ from museum_env import MuseumEnv
 from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EPOCHS = 30
-DEFAULT_SAMPLES_PER_EPOCH = 20
+DEFAULT_EPOCHS = 10
+DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
-DEFAULT_BETA = 0.02
+DEFAULT_BETA = 0.2
 DEFAULT_EVALUATION_SEEDS = (11, 22, 33)
 DEFAULT_N_HUMANS = 15
-DEFAULT_MAX_WORKERS = 5
+DEFAULT_MAX_WORKERS = 8
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
@@ -39,7 +39,6 @@ METRIC_FIELDNAMES = (
     "epoch",
     "mean_return",
     "best_return",
-    "success_rate",
     "mean_duration_seconds",
     "mean_overwhelmed_triggers",
     "mean_impatient_triggers",
@@ -78,7 +77,6 @@ class EpisodeResult:
 @dataclass(frozen=True)
 class ThetaEvaluation:
     mean_return: float
-    success_rate: float
     mean_duration_seconds: float
     mean_overwhelmed_triggers: float
     mean_impatient_triggers: float
@@ -188,7 +186,6 @@ def _evaluate_episode_task(task: tuple[np.ndarray, int, int, bool]) -> EpisodeRe
 def _aggregate_episode_results(episode_results: Sequence[EpisodeResult]) -> ThetaEvaluation:
     return ThetaEvaluation(
         mean_return=float(np.mean([result.episode_return for result in episode_results])),
-        success_rate=float(np.mean([result.success for result in episode_results])),
         mean_duration_seconds=float(np.mean([result.duration_seconds for result in episode_results])),
         mean_overwhelmed_triggers=float(
             np.mean([result.overwhelmed_triggers for result in episode_results])
@@ -266,14 +263,13 @@ def plot_training_metrics(
     epochs = [int(row["epoch"]) for row in metrics]
     mean_returns = [float(row["mean_return"]) for row in metrics]
     best_returns = [float(row["best_return"]) for row in metrics]
-    success_rates = [float(row["success_rate"]) for row in metrics]
     mean_durations = [float(row["mean_duration_seconds"]) for row in metrics]
     mean_overwhelmed = [float(row["mean_overwhelmed_triggers"]) for row in metrics]
     mean_impatient = [float(row["mean_impatient_triggers"]) for row in metrics]
     mean_distracted = [float(row["mean_distracted_triggers"]) for row in metrics]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
-    ax_return, ax_success, ax_duration, ax_triggers = axes.flat
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+    ax_return, ax_duration, ax_triggers = axes.flat
 
     ax_return.plot(epochs, mean_returns, label="mean_return", linewidth=2)
     ax_return.plot(epochs, best_returns, label="best_return", linewidth=2)
@@ -282,13 +278,6 @@ def plot_training_metrics(
     ax_return.set_ylabel("Return")
     ax_return.grid(True, alpha=0.3)
     ax_return.legend()
-
-    ax_success.plot(epochs, success_rates, color="tab:green", linewidth=2)
-    ax_success.set_title("Success Rate")
-    ax_success.set_xlabel(x_label)
-    ax_success.set_ylabel("Rate")
-    ax_success.set_ylim(0.0, 1.0)
-    ax_success.grid(True, alpha=0.3)
 
     ax_duration.plot(epochs, mean_durations, color="tab:orange", linewidth=2)
     ax_duration.set_title("Guide Duration")
@@ -383,7 +372,6 @@ def train(
                 "epoch": int(epoch_idx + 1),
                 "mean_return": float(np.mean([item.mean_return for item in evaluations])),
                 "best_return": float(np.max([item.mean_return for item in evaluations])),
-                "success_rate": float(np.mean([item.success_rate for item in evaluations])),
                 "mean_duration_seconds": float(
                     np.mean([item.mean_duration_seconds for item in evaluations])
                 ),
@@ -402,7 +390,6 @@ def train(
                 f"epoch={epoch_metrics['epoch']:02d} "
                 f"mean_return={float(epoch_metrics['mean_return']):.3f} "
                 f"best_return={float(epoch_metrics['best_return']):.3f} "
-                f"success_rate={float(epoch_metrics['success_rate']):.3f} "
                 f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
             )
 
@@ -429,7 +416,6 @@ def train(
         "best_theta_seen": [float(value) for value in best_theta_seen],
         "best_policy_params": _policy_params_dict(best_theta_seen),
         "best_return": float(best_return_seen),
-        "best_success_rate": float(best_evaluation.success_rate),
         "best_mean_duration_seconds": float(best_evaluation.mean_duration_seconds),
         "best_mean_overwhelmed_triggers": float(best_evaluation.mean_overwhelmed_triggers),
         "best_mean_impatient_triggers": float(best_evaluation.mean_impatient_triggers),

@@ -343,7 +343,6 @@ class TrainRwrTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(evaluation.mean_return, -0.1, places=6)
-        self.assertAlmostEqual(evaluation.success_rate, 1.0 / 3.0, places=6)
         self.assertAlmostEqual(evaluation.mean_duration_seconds, 14.5, places=6)
         self.assertAlmostEqual(evaluation.mean_overwhelmed_triggers, 2.0 / 3.0, places=6)
         self.assertAlmostEqual(evaluation.mean_impatient_triggers, 1.0, places=6)
@@ -484,7 +483,6 @@ class TrainRwrTests(unittest.TestCase):
                 "epoch": 1,
                 "mean_return": -1.0,
                 "best_return": -1.0,
-                "success_rate": 1.0,
                 "mean_duration_seconds": 10.0,
                 "mean_overwhelmed_triggers": 0.0,
                 "mean_impatient_triggers": 1.0,
@@ -535,8 +533,9 @@ class TrainRwrTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["epoch"], "1")
             self.assertIn("mean_return", rows[0])
-            self.assertIn("success_rate", rows[0])
+            self.assertNotIn("success_rate", rows[0])
             self.assertEqual(len(best_params["best_theta_seen"]), 4)
+            self.assertNotIn("best_success_rate", best_params)
             self.assertEqual(set(best_params["best_policy_params"].keys()), {
                 "slow_down_distance_m",
                 "callback_distance_m",
