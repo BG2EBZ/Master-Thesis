@@ -49,7 +49,9 @@ def compute_human_pairwise_geometry(human_xy) -> tuple[np.ndarray, np.ndarray]:
 
     pairwise_diff = (human_xy[:, None, :] - human_xy[None, :, :]).astype(np.float32, copy=False)
     pairwise_dist = np.linalg.norm(pairwise_diff, axis=2).astype(np.float32, copy=False)
-    np.fill_diagonal(pairwise_dist, np.inf)
+    # Avoid np.fill_diagonal in this hot path; current NumPy keeps small traced
+    # allocations around for each call, which becomes visible over long training runs.
+    pairwise_dist.reshape(-1)[:: n_humans + 1] = np.inf
     return pairwise_diff, pairwise_dist
 
 

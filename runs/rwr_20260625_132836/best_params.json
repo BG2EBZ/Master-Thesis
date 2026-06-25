@@ -1,0 +1,40 @@
+{
+  "best_theta_seen": [
+    2.4334315418771335,
+    4.170735194201868,
+    1.2761196719713666,
+    0.7016074629351807
+  ],
+  "best_policy_params": {
+    "slow_down_distance_m": 2.4334315418771335,
+    "callback_distance_m": 4.170735194201868,
+    "callback_wait_seconds": 1.2761196719713666,
+    "slowdown_speed_scale": 0.7016074629351807
+  },
+  "best_return": -59.535000000000004,
+  "best_success_rate": 1.0,
+  "best_mean_duration_seconds": 202.01666666666665,
+  "best_mean_overwhelmed_triggers": 0.3333333333333333,
+  "best_mean_impatient_triggers": 13.666666666666666,
+  "best_mean_distracted_triggers": 5.333333333333333,
+  "best_epoch": 24,
+  "best_sample_index_within_epoch": 16,
+  "final_mu": [
+    2.451576370096494,
+    3.793935839439441,
+    0.5378731328023576,
+    0.6721065199018843
+  ],
+  "final_std": [
+    0.062407877624201205,
+    0.4598590228752444,
+    1.049079136242761,
+    0.026620259076865244
+  ],
+  "final_mu_policy_params": {
+    "slow_down_distance_m": 2.451576370096494,
+    "callback_distance_m": 3.793935839439441,
+    "callback_wait_seconds": 0.5378731328023576,
+    "slowdown_speed_scale": 0.6721065199018843
+  }
+}

@@ -13,6 +13,7 @@ from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_CSV_NAME,
+    DEFAULT_EVALUATION_SEEDS,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
@@ -144,6 +145,9 @@ class TrainRwrTests(unittest.TestCase):
 
     def tearDown(self):
         _close_cached_env()
+
+    def test_default_evaluation_seeds_match_repo_default(self):
+        self.assertEqual(DEFAULT_EVALUATION_SEEDS, (11, 22, 33))
 
     def test_run_episode_extracts_terminal_metrics(self):
         env = _FakeEpisodeEnv(
