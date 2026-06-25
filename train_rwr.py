@@ -24,13 +24,13 @@ from museum_env import MuseumEnv
 from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EPOCHS = 10
+DEFAULT_EPOCHS = 20
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.2
 DEFAULT_EVALUATION_SEEDS = (11, 22, 33)
 DEFAULT_N_HUMANS = 15
-DEFAULT_MAX_WORKERS = 8
+DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
@@ -415,6 +415,8 @@ def train(
     best_params_payload = {
         "best_theta_seen": [float(value) for value in best_theta_seen],
         "best_policy_params": _policy_params_dict(best_theta_seen),
+        "final_theta": [float(value) for value in best_theta_seen],
+        "final_policy_params": _policy_params_dict(best_theta_seen),
         "best_return": float(best_return_seen),
         "best_mean_duration_seconds": float(best_evaluation.mean_duration_seconds),
         "best_mean_overwhelmed_triggers": float(best_evaluation.mean_overwhelmed_triggers),
@@ -425,7 +427,6 @@ def train(
         # These remain optimizer-space values; the environment clips them on application.
         "final_mu": [float(value) for value in mu],
         "final_std": [float(value) for value in std],
-        "final_mu_policy_params": _policy_params_dict(mu),
     }
     write_metrics_csv(metrics, csv_path)
     plot_training_metrics(metrics, plot_path)
@@ -434,13 +435,13 @@ def train(
     print(f"Saved metrics CSV to {csv_path}")
     print(f"Saved metrics plot to {plot_path}")
     print(f"Saved best params JSON to {best_params_path}")
-    best_policy_params = best_params_payload["best_policy_params"]
+    final_policy_params = best_params_payload["final_policy_params"]
     print(
-        "Best policy params: "
-        f"slow_down_distance_m={float(best_policy_params['slow_down_distance_m']):.3f}, "
-        f"callback_distance_m={float(best_policy_params['callback_distance_m']):.3f}, "
-        f"callback_wait_seconds={float(best_policy_params['callback_wait_seconds']):.3f}, "
-        f"slowdown_speed_scale={float(best_policy_params['slowdown_speed_scale']):.3f}, "
+        "Final policy params: "
+        f"slow_down_distance_m={float(final_policy_params['slow_down_distance_m']):.3f}, "
+        f"callback_distance_m={float(final_policy_params['callback_distance_m']):.3f}, "
+        f"callback_wait_seconds={float(final_policy_params['callback_wait_seconds']):.3f}, "
+        f"slowdown_speed_scale={float(final_policy_params['slowdown_speed_scale']):.3f}, "
         f"best_return={float(best_params_payload['best_return']):.3f}, "
         f"epoch={int(best_params_payload['best_epoch'])}, "
         f"sample={int(best_params_payload['best_sample_index_within_epoch'])}"

@@ -428,9 +428,12 @@ class TrainRwrTests(unittest.TestCase):
         self.assertEqual(best_params["best_epoch"], best_epoch)
         self.assertEqual(best_params["best_sample_index_within_epoch"], best_sample)
         self.assertTrue(np.allclose(best_params["best_theta_seen"], best_theta_tasks[0][0]))
+        self.assertTrue(np.allclose(best_params["final_theta"], best_theta_tasks[0][0]))
         self.assertAlmostEqual(best_params["best_return"], grouped_returns[best_group_idx], places=6)
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
+        self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+        self.assertNotIn("final_mu_policy_params", best_params)
 
     def test_train_passes_raw_theta_to_episode_tasks_and_keeps_clipped_policy_artifact(self):
         raw_theta = np.array([0.1, 1.0, 12.0, 2.0], dtype=np.float64)
@@ -469,6 +472,7 @@ class TrainRwrTests(unittest.TestCase):
         self.assertEqual(len(seen_tasks), 1)
         self.assertTrue(np.allclose(seen_tasks[0][0], raw_theta))
         self.assertEqual(best_params["best_theta_seen"], [float(value) for value in raw_theta])
+        self.assertEqual(best_params["final_theta"], [float(value) for value in raw_theta])
         clipped_theta = PolicySearchParams.from_theta(raw_theta).to_theta()
         self.assertEqual(best_params["best_policy_params"], {
             "slow_down_distance_m": float(clipped_theta[0]),
@@ -476,6 +480,8 @@ class TrainRwrTests(unittest.TestCase):
             "callback_wait_seconds": float(clipped_theta[2]),
             "slowdown_speed_scale": float(clipped_theta[3]),
         })
+        self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+        self.assertNotIn("final_mu_policy_params", best_params)
 
     def test_plot_training_metrics_accepts_default_epoch_axis_label(self):
         metrics = [
@@ -535,8 +541,17 @@ class TrainRwrTests(unittest.TestCase):
             self.assertIn("mean_return", rows[0])
             self.assertNotIn("success_rate", rows[0])
             self.assertEqual(len(best_params["best_theta_seen"]), 4)
+            self.assertEqual(best_params["final_theta"], best_params["best_theta_seen"])
+            self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+            self.assertNotIn("final_mu_policy_params", best_params)
             self.assertNotIn("best_success_rate", best_params)
             self.assertEqual(set(best_params["best_policy_params"].keys()), {
+                "slow_down_distance_m",
+                "callback_distance_m",
+                "callback_wait_seconds",
+                "slowdown_speed_scale",
+            })
+            self.assertEqual(set(best_params["final_policy_params"].keys()), {
                 "slow_down_distance_m",
                 "callback_distance_m",
                 "callback_wait_seconds",
