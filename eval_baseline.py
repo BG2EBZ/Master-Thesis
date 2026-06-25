@@ -1,69 +1,144 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import os
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import Sequence
 
 import numpy as np
 
 from museum_env.policy_search_params import PolicySearchParams
-from train_rwr import (
-    DEFAULT_MAX_WORKERS,
-    _evaluate_episode_task,
-    _policy_params_dict,
-    write_best_params_json,
-    write_metrics_csv,
-)
-
-if TYPE_CHECKING:
-    from train_rwr import EpisodeResult
+from train_rwr import EpisodeResult, _evaluate_episode_task
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_NUM_RUNS = 20
 DEFAULT_SEED = 42
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-DEFAULT_CSV_NAME = "baseline_metrics.csv"
-DEFAULT_PLOT_NAME = "baseline_metrics.png"
-DEFAULT_SUMMARY_NAME = "baseline_summary.json"
 DEFAULT_N_HUMANS = 15
+DEFAULT_MAX_WORKERS = 10
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+DEFAULT_CSV_NAME = "comparison_metrics.csv"
+DEFAULT_PLOT_NAME = "comparison_plot.png"
+DEFAULT_SUMMARY_NAME = "comparison_summary.json"
+COMPARISON_METRIC_FIELDNAMES = (
+    "run",
+    "seed",
+    "baseline_return",
+    "comparison_return",
+    "baseline_duration_seconds",
+    "comparison_duration_seconds",
+    "baseline_overwhelmed_triggers",
+    "comparison_overwhelmed_triggers",
+    "baseline_impatient_triggers",
+    "comparison_impatient_triggers",
+    "baseline_distracted_triggers",
+    "comparison_distracted_triggers",
+)
+COMPARISON_POLICY_PARAMS = PolicySearchParams(
+    slow_down_distance_m=2.70,
+    callback_distance_m=3.80,
+    callback_wait_seconds=3.87,
+    slowdown_speed_scale=0.90,
+)
 
 
-def _sample_evaluation_seeds(num_runs: int, master_seed: int) -> list[int]:
-    rng = np.random.default_rng(master_seed)
-    sampled: list[int] = []
-    seen: set[int] = set()
-    while len(sampled) < int(num_runs):
-        candidate = int(rng.integers(0, np.iinfo(np.int32).max))
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        sampled.append(candidate)
-    return sampled
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
-def _build_run_metrics(episode_results: Sequence[EpisodeResult]) -> list[dict[str, float | int]]:
+def _sample_evaluation_seeds(num_runs: int, seed: int) -> list[int]:
+    rng = np.random.default_rng(seed=seed)
+    return [int(value) for value in rng.integers(0, np.iinfo(np.int32).max, size=num_runs)]
+
+
+def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
+    params = PolicySearchParams.from_theta(theta)
+    return {
+        "slow_down_distance_m": float(params.slow_down_distance_m),
+        "callback_distance_m": float(params.callback_distance_m),
+        "callback_wait_seconds": float(params.callback_wait_seconds),
+        "slowdown_speed_scale": float(params.slowdown_speed_scale),
+    }
+
+
+def _build_comparison_run_metrics(
+    baseline_results: Sequence[EpisodeResult],
+    comparison_results: Sequence[EpisodeResult],
+    evaluation_seeds: Sequence[int],
+) -> list[dict[str, float | int]]:
+    if not (
+        len(baseline_results) == len(comparison_results) == len(evaluation_seeds)
+    ):
+        raise ValueError("baseline_results, comparison_results, and evaluation_seeds must align")
+
     metrics: list[dict[str, float | int]] = []
-    for idx, result in enumerate(episode_results, start=1):
+    for run_idx, (seed, baseline, comparison) in enumerate(
+        zip(evaluation_seeds, baseline_results, comparison_results),
+        start=1,
+    ):
         metrics.append(
             {
-                "epoch": int(idx),
-                "mean_return": float(result.episode_return),
-                "best_return": float(result.episode_return),
-                # Kept only to stay compatible with the shared training CSV schema.
-                "success_rate": float(result.success),
-                "mean_duration_seconds": float(result.duration_seconds),
-                "mean_overwhelmed_triggers": float(result.overwhelmed_triggers),
-                "mean_impatient_triggers": float(result.impatient_triggers),
-                "mean_distracted_triggers": float(result.distracted_triggers),
+                "run": int(run_idx),
+                "seed": int(seed),
+                "baseline_return": float(baseline.episode_return),
+                "comparison_return": float(comparison.episode_return),
+                "baseline_duration_seconds": float(baseline.duration_seconds),
+                "comparison_duration_seconds": float(comparison.duration_seconds),
+                "baseline_overwhelmed_triggers": int(baseline.overwhelmed_triggers),
+                "comparison_overwhelmed_triggers": int(comparison.overwhelmed_triggers),
+                "baseline_impatient_triggers": int(baseline.impatient_triggers),
+                "comparison_impatient_triggers": int(comparison.impatient_triggers),
+                "baseline_distracted_triggers": int(baseline.distracted_triggers),
+                "comparison_distracted_triggers": int(comparison.distracted_triggers),
             }
         )
     return metrics
 
 
-def plot_baseline_metrics(
+def _summarize_policy_results(results: Sequence[EpisodeResult]) -> dict[str, float]:
+    returns = np.array([item.episode_return for item in results], dtype=np.float64)
+    durations = np.array([item.duration_seconds for item in results], dtype=np.float64)
+    overwhelmed = np.array([item.overwhelmed_triggers for item in results], dtype=np.float64)
+    impatient = np.array([item.impatient_triggers for item in results], dtype=np.float64)
+    distracted = np.array([item.distracted_triggers for item in results], dtype=np.float64)
+    return {
+        "mean_return": float(np.mean(returns)),
+        "best_return": float(np.max(returns)),
+        "mean_duration_seconds": float(np.mean(durations)),
+        "mean_overwhelmed_triggers": float(np.mean(overwhelmed)),
+        "mean_impatient_triggers": float(np.mean(impatient)),
+        "mean_distracted_triggers": float(np.mean(distracted)),
+    }
+
+
+def _prefix_summary(prefix: str, summary: dict[str, float]) -> dict[str, float]:
+    return {f"{prefix}_{key}": float(value) for key, value in summary.items()}
+
+
+def write_metrics_csv(
+    metrics: Sequence[dict[str, float | int]],
+    output_path: Path,
+) -> None:
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=COMPARISON_METRIC_FIELDNAMES)
+        writer.writeheader()
+        for row in metrics:
+            writer.writerow({field: row[field] for field in COMPARISON_METRIC_FIELDNAMES})
+
+
+def write_summary_json(payload: dict[str, object], output_path: Path) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+
+
+def plot_comparison_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
 ) -> None:
@@ -73,37 +148,87 @@ def plot_baseline_metrics(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    runs = [int(row["epoch"]) for row in metrics]
-    returns = [float(row["mean_return"]) for row in metrics]
-    durations = [float(row["mean_duration_seconds"]) for row in metrics]
-    overwhelmed = [float(row["mean_overwhelmed_triggers"]) for row in metrics]
-    impatient = [float(row["mean_impatient_triggers"]) for row in metrics]
-    distracted = [float(row["mean_distracted_triggers"]) for row in metrics]
+    runs = [int(row["run"]) for row in metrics]
+    baseline_returns = [float(row["baseline_return"]) for row in metrics]
+    comparison_returns = [float(row["comparison_return"]) for row in metrics]
+    baseline_durations = [float(row["baseline_duration_seconds"]) for row in metrics]
+    comparison_durations = [float(row["comparison_duration_seconds"]) for row in metrics]
+    baseline_overwhelmed = [float(row["baseline_overwhelmed_triggers"]) for row in metrics]
+    comparison_overwhelmed = [float(row["comparison_overwhelmed_triggers"]) for row in metrics]
+    baseline_impatient = [float(row["baseline_impatient_triggers"]) for row in metrics]
+    comparison_impatient = [float(row["comparison_impatient_triggers"]) for row in metrics]
+    baseline_distracted = [float(row["baseline_distracted_triggers"]) for row in metrics]
+    comparison_distracted = [float(row["comparison_distracted_triggers"]) for row in metrics]
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5), constrained_layout=True)
     ax_return, ax_duration, ax_triggers = axes.flat
 
-    ax_return.plot(runs, returns, label="return", linewidth=2)
+    ax_return.plot(runs, baseline_returns, label="baseline", linewidth=2)
+    ax_return.plot(runs, comparison_returns, label="comparison", linewidth=2)
     ax_return.set_title("Return")
     ax_return.set_xlabel("Run")
     ax_return.set_ylabel("Return")
     ax_return.grid(True, alpha=0.3)
     ax_return.legend()
 
-    ax_duration.plot(runs, durations, color="tab:orange", linewidth=2)
+    ax_duration.plot(runs, baseline_durations, label="baseline", linewidth=2)
+    ax_duration.plot(runs, comparison_durations, label="comparison", linewidth=2)
     ax_duration.set_title("Guide Duration")
     ax_duration.set_xlabel("Run")
     ax_duration.set_ylabel("Seconds")
     ax_duration.grid(True, alpha=0.3)
+    ax_duration.legend()
 
-    ax_triggers.plot(runs, overwhelmed, label="overwhelmed", linewidth=2)
-    ax_triggers.plot(runs, impatient, label="impatient", linewidth=2)
-    ax_triggers.plot(runs, distracted, label="distracted", linewidth=2)
+    ax_triggers.plot(
+        runs,
+        baseline_overwhelmed,
+        label="baseline overwhelmed",
+        color="tab:red",
+        linewidth=2,
+    )
+    ax_triggers.plot(
+        runs,
+        comparison_overwhelmed,
+        label="comparison overwhelmed",
+        color="tab:red",
+        linestyle="--",
+        linewidth=2,
+    )
+    ax_triggers.plot(
+        runs,
+        baseline_impatient,
+        label="baseline impatient",
+        color="tab:orange",
+        linewidth=2,
+    )
+    ax_triggers.plot(
+        runs,
+        comparison_impatient,
+        label="comparison impatient",
+        color="tab:orange",
+        linestyle="--",
+        linewidth=2,
+    )
+    ax_triggers.plot(
+        runs,
+        baseline_distracted,
+        label="baseline distracted",
+        color="tab:blue",
+        linewidth=2,
+    )
+    ax_triggers.plot(
+        runs,
+        comparison_distracted,
+        label="comparison distracted",
+        color="tab:blue",
+        linestyle="--",
+        linewidth=2,
+    )
     ax_triggers.set_title("Negative Trigger Counts")
     ax_triggers.set_xlabel("Run")
-    ax_triggers.set_ylabel("Mean count")
+    ax_triggers.set_ylabel("Count")
     ax_triggers.grid(True, alpha=0.3)
-    ax_triggers.legend()
+    ax_triggers.legend(fontsize=8)
 
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
@@ -118,97 +243,125 @@ def evaluate_baseline(
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    theta = PolicySearchParams().to_theta()
-    worker_count = min(int(num_runs), os.cpu_count() or 1, int(max_workers))
-    evaluation_seeds = _sample_evaluation_seeds(int(num_runs), int(seed))
-    tasks = [(theta, evaluation_seed, DEFAULT_N_HUMANS, False) for evaluation_seed in evaluation_seeds]
+    baseline_theta = PolicySearchParams().to_theta()
+    comparison_theta = COMPARISON_POLICY_PARAMS.to_theta()
+    evaluation_seeds = _sample_evaluation_seeds(num_runs, seed)
+    baseline_tasks = [
+        (baseline_theta, int(evaluation_seed), DEFAULT_N_HUMANS, False)
+        for evaluation_seed in evaluation_seeds
+    ]
+    comparison_tasks = [
+        (comparison_theta, int(evaluation_seed), DEFAULT_N_HUMANS, False)
+        for evaluation_seed in evaluation_seeds
+    ]
+    episode_tasks = baseline_tasks + comparison_tasks
+    worker_count = min(len(episode_tasks), max_workers, os.cpu_count() or 1)
 
-    if worker_count == 1:
-        episode_results = [_evaluate_episode_task(task) for task in tasks]
+    if worker_count <= 1:
+        episode_results = [_evaluate_episode_task(task) for task in episode_tasks]
     else:
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
-            episode_results = list(executor.map(_evaluate_episode_task, tasks))
+            episode_results = list(executor.map(_evaluate_episode_task, episode_tasks))
 
-    metrics = _build_run_metrics(episode_results)
-    if not metrics:
-        raise RuntimeError("Baseline evaluation completed without any episode results.")
+    baseline_results = episode_results[:num_runs]
+    comparison_results = episode_results[num_runs:]
+    metrics = _build_comparison_run_metrics(
+        baseline_results=baseline_results,
+        comparison_results=comparison_results,
+        evaluation_seeds=evaluation_seeds,
+    )
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
     summary_path = output_dir / DEFAULT_SUMMARY_NAME
+    write_metrics_csv(metrics, csv_path)
+    plot_comparison_metrics(metrics, plot_path)
 
-    returns = np.array([result.episode_return for result in episode_results], dtype=np.float64)
-    durations = np.array([result.duration_seconds for result in episode_results], dtype=np.float64)
-    overwhelmed = np.array(
-        [result.overwhelmed_triggers for result in episode_results], dtype=np.float64
+    baseline_summary = _summarize_policy_results(baseline_results)
+    comparison_summary = _summarize_policy_results(comparison_results)
+    delta_summary = {
+        key: float(comparison_summary[key] - baseline_summary[key])
+        for key in baseline_summary
+    }
+    comparison_win_count = sum(
+        comparison.episode_return > baseline.episode_return
+        for baseline, comparison in zip(baseline_results, comparison_results)
     )
-    impatient = np.array(
-        [result.impatient_triggers for result in episode_results], dtype=np.float64
-    )
-    distracted = np.array(
-        [result.distracted_triggers for result in episode_results], dtype=np.float64
-    )
-    summary_payload = {
-        "baseline_theta": [float(value) for value in theta],
-        "baseline_policy_params": _policy_params_dict(theta),
+    summary_payload: dict[str, object] = {
+        "baseline_theta": [float(value) for value in baseline_theta],
+        "comparison_theta": [float(value) for value in comparison_theta],
+        "baseline_policy_params": _policy_params_dict(baseline_theta),
+        "comparison_policy_params": _policy_params_dict(comparison_theta),
         "seed": int(seed),
         "evaluation_seeds": [int(value) for value in evaluation_seeds],
         "num_runs": int(num_runs),
-        "mean_return": float(np.mean(returns)),
-        "best_return": float(np.max(returns)),
-        "mean_duration_seconds": float(np.mean(durations)),
-        "mean_overwhelmed_triggers": float(np.mean(overwhelmed)),
-        "mean_impatient_triggers": float(np.mean(impatient)),
-        "mean_distracted_triggers": float(np.mean(distracted)),
     }
+    summary_payload.update(_prefix_summary("baseline", baseline_summary))
+    summary_payload.update(_prefix_summary("comparison", comparison_summary))
+    write_summary_json(summary_payload, summary_path)
 
-    write_metrics_csv(metrics, csv_path)
-    plot_baseline_metrics(metrics, plot_path)
-    write_best_params_json(summary_payload, summary_path)
-
-    print(f"Saved baseline metrics CSV to {csv_path}")
-    print(f"Saved baseline metrics plot to {plot_path}")
-    print(f"Saved baseline summary JSON to {summary_path}")
+    print(f"Saved comparison metrics CSV to {csv_path}")
+    print(f"Saved comparison plot to {plot_path}")
+    print(f"Saved comparison summary to {summary_path}")
     print(
-        "Baseline policy params: "
-        f"slow_down_distance_m={float(summary_payload['baseline_policy_params']['slow_down_distance_m']):.3f}, "
-        f"callback_distance_m={float(summary_payload['baseline_policy_params']['callback_distance_m']):.3f}, "
-        f"callback_wait_seconds={float(summary_payload['baseline_policy_params']['callback_wait_seconds']):.3f}, "
-        f"slowdown_speed_scale={float(summary_payload['baseline_policy_params']['slowdown_speed_scale']):.3f}, "
-        f"mean_return={float(summary_payload['mean_return']):.3f}, "
-        f"best_return={float(summary_payload['best_return']):.3f}, "
-        f"mean_duration={float(summary_payload['mean_duration_seconds']):.3f}"
+        "Baseline vs comparison: "
+        f"baseline_mean_return={float(summary_payload['baseline_mean_return']):.3f}, "
+        f"comparison_mean_return={float(summary_payload['comparison_mean_return']):.3f}, "
+        f"baseline_best_return={float(summary_payload['baseline_best_return']):.3f}, "
+        f"comparison_best_return={float(summary_payload['comparison_best_return']):.3f}"
+    )
+    print(
+        "Mean triggers: "
+        f"baseline_overwhelmed={float(summary_payload['baseline_mean_overwhelmed_triggers']):.3f}, "
+        f"comparison_overwhelmed={float(summary_payload['comparison_mean_overwhelmed_triggers']):.3f}, "
+        f"baseline_impatient={float(summary_payload['baseline_mean_impatient_triggers']):.3f}, "
+        f"comparison_impatient={float(summary_payload['comparison_mean_impatient_triggers']):.3f}, "
+        f"baseline_distracted={float(summary_payload['baseline_mean_distracted_triggers']):.3f}, "
+        f"comparison_distracted={float(summary_payload['comparison_mean_distracted_triggers']):.3f}"
+    )
+    print(
+        "Mean deltas (comparison - baseline): "
+        f"return={delta_summary['mean_return']:.3f}, "
+        f"duration={delta_summary['mean_duration_seconds']:.3f}, "
+        f"overwhelmed={delta_summary['mean_overwhelmed_triggers']:.3f}, "
+        f"impatient={delta_summary['mean_impatient_triggers']:.3f}, "
+        f"distracted={delta_summary['mean_distracted_triggers']:.3f}"
+    )
+    print(
+        "Return win count: "
+        f"comparison_wins={comparison_win_count}/{num_runs}, "
+        f"baseline_wins={num_runs - comparison_win_count}/{num_runs}"
     )
     return metrics
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate the default baseline policy over multiple episodes."
+        description="Evaluate baseline and manual comparison policy on shared seeds."
     )
     parser.add_argument(
         "--num-runs",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_NUM_RUNS,
-        help="Number of baseline episodes to evaluate.",
+        help="Number of shared evaluation runs for baseline and comparison policy.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help="Master seed used to generate the per-run environment seeds for this evaluation.",
+        help="Random seed used to sample evaluation seeds.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Directory where baseline_metrics.csv, baseline_metrics.png, and baseline_summary.json are written.",
+        help="Directory where comparison_metrics.csv, comparison_plot.png, and comparison_summary.json are written.",
     )
     parser.add_argument(
         "--max-workers",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_MAX_WORKERS,
-        help="Maximum number of worker processes used for parallel evaluation.",
+        help="Maximum worker processes for rollout evaluation.",
     )
     args = parser.parse_args(argv)
     evaluate_baseline(

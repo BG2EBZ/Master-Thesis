@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,68 +41,91 @@ class EvalBaselineTests(unittest.TestCase):
         _FakeExecutor.instances = []
         _FakeExecutor.last_max_workers = None
 
-    def test_build_run_metrics_uses_per_run_raw_values(self):
-        metrics = eval_baseline._build_run_metrics(
-            [
+    def test_build_comparison_run_metrics_uses_paired_per_run_values(self):
+        metrics = eval_baseline._build_comparison_run_metrics(
+            baseline_results=[
                 EpisodeResult(-10.0, 100.0, 1, 2, 3, True),
-                EpisodeResult(-20.0, 120.0, 0, 4, 5, False),
-                EpisodeResult(-5.0, 80.0, 2, 1, 0, True),
-            ]
+                EpisodeResult(-20.0, 120.0, 0, 4, 5, True),
+            ],
+            comparison_results=[
+                EpisodeResult(-8.0, 90.0, 0, 1, 2, True),
+                EpisodeResult(-15.0, 110.0, 2, 3, 4, True),
+            ],
+            evaluation_seeds=[101, 202],
         )
 
-        self.assertEqual([row["epoch"] for row in metrics], [1, 2, 3])
-        self.assertAlmostEqual(metrics[0]["mean_return"], -10.0, places=6)
-        self.assertAlmostEqual(metrics[1]["mean_return"], -20.0, places=6)
-        self.assertAlmostEqual(metrics[2]["mean_return"], -5.0, places=6)
-        self.assertAlmostEqual(metrics[2]["best_return"], -5.0, places=6)
-        self.assertAlmostEqual(metrics[2]["mean_duration_seconds"], 80.0, places=6)
-        self.assertAlmostEqual(metrics[2]["mean_overwhelmed_triggers"], 2.0, places=6)
-        self.assertAlmostEqual(metrics[2]["mean_impatient_triggers"], 1.0, places=6)
-        self.assertAlmostEqual(metrics[2]["mean_distracted_triggers"], 0.0, places=6)
+        self.assertEqual([row["run"] for row in metrics], [1, 2])
+        self.assertEqual([row["seed"] for row in metrics], [101, 202])
+        self.assertAlmostEqual(metrics[0]["baseline_return"], -10.0, places=6)
+        self.assertAlmostEqual(metrics[0]["comparison_return"], -8.0, places=6)
+        self.assertAlmostEqual(metrics[1]["baseline_duration_seconds"], 120.0, places=6)
+        self.assertAlmostEqual(metrics[1]["comparison_duration_seconds"], 110.0, places=6)
+        self.assertEqual(metrics[1]["baseline_impatient_triggers"], 4)
+        self.assertEqual(metrics[1]["comparison_distracted_triggers"], 4)
 
-    def test_plot_baseline_metrics_writes_non_empty_png(self):
+    def test_plot_comparison_metrics_writes_non_empty_png(self):
         metrics = [
             {
-                "epoch": 1,
-                "mean_return": -10.0,
-                "best_return": -10.0,
-                "mean_duration_seconds": 100.0,
-                "mean_overwhelmed_triggers": 1.0,
-                "mean_impatient_triggers": 2.0,
-                "mean_distracted_triggers": 3.0,
+                "run": 1,
+                "seed": 101,
+                "baseline_return": -10.0,
+                "comparison_return": -8.0,
+                "baseline_duration_seconds": 100.0,
+                "comparison_duration_seconds": 90.0,
+                "baseline_overwhelmed_triggers": 1,
+                "comparison_overwhelmed_triggers": 0,
+                "baseline_impatient_triggers": 2,
+                "comparison_impatient_triggers": 1,
+                "baseline_distracted_triggers": 3,
+                "comparison_distracted_triggers": 2,
             },
             {
-                "epoch": 2,
-                "mean_return": -20.0,
-                "best_return": -20.0,
-                "mean_duration_seconds": 120.0,
-                "mean_overwhelmed_triggers": 0.0,
-                "mean_impatient_triggers": 4.0,
-                "mean_distracted_triggers": 5.0,
+                "run": 2,
+                "seed": 202,
+                "baseline_return": -20.0,
+                "comparison_return": -15.0,
+                "baseline_duration_seconds": 120.0,
+                "comparison_duration_seconds": 110.0,
+                "baseline_overwhelmed_triggers": 0,
+                "comparison_overwhelmed_triggers": 2,
+                "baseline_impatient_triggers": 4,
+                "comparison_impatient_triggers": 3,
+                "baseline_distracted_triggers": 5,
+                "comparison_distracted_triggers": 4,
             },
         ]
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            output_path = Path(tmp_dir) / "baseline_plot.png"
-            eval_baseline.plot_baseline_metrics(metrics, output_path)
+            output_path = Path(tmp_dir) / "comparison_plot.png"
+            eval_baseline.plot_comparison_metrics(metrics, output_path)
             self.assertTrue(output_path.exists())
             self.assertGreater(output_path.stat().st_size, 0)
 
-    def test_evaluate_baseline_uses_default_policy_params_and_records_overall_summary(self):
+    def test_evaluate_baseline_uses_shared_seeds_and_records_comparison_summary(self):
         seen_tasks = []
+        baseline_theta = PolicySearchParams().to_theta()
+        comparison_theta = eval_baseline.COMPARISON_POLICY_PARAMS.to_theta()
 
         def _fake_evaluate_episode_task(task):
             seen_tasks.append(task)
-            _theta, seed, _n_humans, _print_explanations = task
-            reward = float(-0.1 * seed)
-            success = bool(seed % 2 == 0)
+            theta, seed, _n_humans, _print_explanations = task
+            if np.allclose(theta, baseline_theta):
+                reward_offset = 0.0
+                duration_offset = 0.0
+                trigger_offset = 0
+            elif np.allclose(theta, comparison_theta):
+                reward_offset = 5.0
+                duration_offset = -10.0
+                trigger_offset = 1
+            else:
+                raise AssertionError("Unexpected theta passed to evaluator")
             return EpisodeResult(
-                episode_return=reward,
-                duration_seconds=float(seed + 100),
-                overwhelmed_triggers=int(seed % 3),
-                impatient_triggers=int(seed % 4),
-                distracted_triggers=int(seed % 5),
-                success=success,
+                episode_return=float(-0.1 * seed + reward_offset),
+                duration_seconds=float(seed + 100 + duration_offset),
+                overwhelmed_triggers=int(seed % 3) + trigger_offset,
+                impatient_triggers=int(seed % 4) + trigger_offset,
+                distracted_triggers=int(seed % 5) + trigger_offset,
+                success=True,
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -131,38 +155,82 @@ class EvalBaselineTests(unittest.TestCase):
             with csv_path.open("r", newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
 
-        baseline_theta = PolicySearchParams().to_theta()
         self.assertEqual(len(metrics), 4)
         self.assertEqual(len(rows), 4)
-        self.assertEqual(_FakeExecutor.last_max_workers, 4)
+        self.assertEqual(
+            _FakeExecutor.last_max_workers,
+            min(8, len(seen_tasks), os.cpu_count() or 1),
+        )
         self.assertEqual(len(_FakeExecutor.instances), 1)
         self.assertEqual(len(_FakeExecutor.instances[0].mapped_task_batches), 1)
-        self.assertEqual(len(seen_tasks), 4)
-        self.assertTrue(all(np.allclose(task[0], baseline_theta) for task in seen_tasks))
+        self.assertEqual(len(seen_tasks), 8)
+        baseline_tasks = seen_tasks[:4]
+        comparison_tasks = seen_tasks[4:]
+        self.assertTrue(all(np.allclose(task[0], baseline_theta) for task in baseline_tasks))
+        self.assertTrue(all(np.allclose(task[0], comparison_theta) for task in comparison_tasks))
+        expected_seeds = eval_baseline._sample_evaluation_seeds(4, 7)
         self.assertEqual(
-            [task[1] for task in seen_tasks],
-            eval_baseline._sample_evaluation_seeds(4, 7),
+            [task[1] for task in baseline_tasks],
+            expected_seeds,
+        )
+        self.assertEqual(
+            [task[1] for task in comparison_tasks],
+            expected_seeds,
         )
         self.assertTrue(all(task[3] is False for task in seen_tasks))
         self.assertEqual(summary["baseline_theta"], [float(value) for value in baseline_theta])
+        self.assertEqual(summary["comparison_theta"], [float(value) for value in comparison_theta])
         self.assertEqual(summary["baseline_policy_params"], {
             "slow_down_distance_m": 3.0,
             "callback_distance_m": 4.0,
             "callback_wait_seconds": 2.0,
             "slowdown_speed_scale": 0.7,
         })
+        self.assertEqual(
+            summary["comparison_policy_params"],
+            eval_baseline._policy_params_dict(comparison_theta),
+        )
         self.assertEqual(summary["seed"], 7)
-        self.assertEqual(summary["evaluation_seeds"], [task[1] for task in seen_tasks])
+        self.assertEqual(summary["evaluation_seeds"], expected_seeds)
         self.assertEqual(summary["num_runs"], 4)
         self.assertNotIn("success_rate", summary)
-        self.assertEqual([int(row["epoch"]) for row in rows], [1, 2, 3, 4])
+        self.assertEqual([int(row["run"]) for row in rows], [1, 2, 3, 4])
+        self.assertEqual([int(row["seed"]) for row in rows], expected_seeds)
 
-        per_run_returns = np.array([-0.1 * task[1] for task in seen_tasks], dtype=np.float64)
-        self.assertAlmostEqual(float(rows[0]["mean_return"]), per_run_returns[0], places=6)
-        self.assertAlmostEqual(float(rows[1]["mean_return"]), per_run_returns[1], places=6)
-        self.assertAlmostEqual(float(rows[2]["best_return"]), per_run_returns[2], places=6)
-        self.assertAlmostEqual(summary["mean_return"], float(np.mean(per_run_returns)), places=6)
-        self.assertAlmostEqual(summary["best_return"], float(np.max(per_run_returns)), places=6)
+        baseline_returns = np.array([-0.1 * task[1] for task in baseline_tasks], dtype=np.float64)
+        comparison_returns = baseline_returns + 5.0
+        self.assertAlmostEqual(float(rows[0]["baseline_return"]), baseline_returns[0], places=6)
+        self.assertAlmostEqual(float(rows[0]["comparison_return"]), comparison_returns[0], places=6)
+        self.assertAlmostEqual(
+            float(rows[1]["baseline_duration_seconds"]),
+            float(expected_seeds[1] + 100),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            float(rows[1]["comparison_duration_seconds"]),
+            float(expected_seeds[1] + 90),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            summary["baseline_mean_return"],
+            float(np.mean(baseline_returns)),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            summary["comparison_mean_return"],
+            float(np.mean(comparison_returns)),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            summary["baseline_best_return"],
+            float(np.max(baseline_returns)),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            summary["comparison_best_return"],
+            float(np.max(comparison_returns)),
+            places=6,
+        )
 
     def test_main_runs_with_small_smoke_configuration(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
