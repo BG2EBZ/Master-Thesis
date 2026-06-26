@@ -271,9 +271,23 @@ def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
     }
 
 
+def _round_json_floats(value: object, *, decimals: int = 3) -> object:
+    if isinstance(value, dict):
+        return {key: _round_json_floats(item, decimals=decimals) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_round_json_floats(item, decimals=decimals) for item in value]
+    if isinstance(value, tuple):
+        return [_round_json_floats(item, decimals=decimals) for item in value]
+    if isinstance(value, np.floating):
+        return round(float(value), decimals)
+    if isinstance(value, float):
+        return round(value, decimals)
+    return value
+
+
 def write_best_params_json(payload: dict[str, object], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+        json.dump(_round_json_floats(payload), handle, indent=2)
         handle.write("\n")
 
 

@@ -21,6 +21,7 @@ from train_rwr import (
     _aggregate_episode_results,
     _close_cached_env,
     _evaluate_episode_task,
+    _round_json_floats,
     main,
     plot_training_metrics,
     run_episode,
@@ -362,6 +363,26 @@ class TrainRwrTests(unittest.TestCase):
         self.assertAlmostEqual(result_b.episode_return, -0.86, places=6)
         self.assertFalse(_FakeTrainingEnv.instances[0].closed)
 
+    def test_round_json_floats_rounds_only_float_values(self):
+        payload = {
+            "nested": [1.23456, np.float64(2.34567), {"value": 3.45678}],
+            "count": 4,
+            "label": "ok",
+            "tuple_data": (5.67891, 6),
+        }
+
+        rounded = _round_json_floats(payload)
+
+        self.assertEqual(
+            rounded,
+            {
+                "nested": [1.235, 2.346, {"value": 3.457}],
+                "count": 4,
+                "label": "ok",
+                "tuple_data": [5.679, 6],
+            },
+        )
+
     def test_train_parallel_branch_reuses_one_executor_across_all_epochs(self):
         seen_tasks = []
 
@@ -435,8 +456,14 @@ class TrainRwrTests(unittest.TestCase):
         best_sample = (best_flat_idx % 4) + 1
         self.assertEqual(best_params["best_epoch"], best_epoch)
         self.assertEqual(best_params["best_sample_index_within_epoch"], best_sample)
-        self.assertTrue(np.allclose(best_params["best_theta_seen"], training_tasks[best_flat_idx][0]))
-        self.assertAlmostEqual(best_params["best_return"], training_returns[best_flat_idx], places=6)
+        self.assertEqual(
+            best_params["best_theta_seen"],
+            _round_json_floats([float(value) for value in training_tasks[best_flat_idx][0]]),
+        )
+        self.assertEqual(
+            best_params["best_return"],
+            _round_json_floats(float(training_returns[best_flat_idx])),
+        )
 
         expected_mu = None
         expected_std = None
@@ -456,9 +483,18 @@ class TrainRwrTests(unittest.TestCase):
 
         self.assertIsNotNone(expected_mu)
         self.assertIsNotNone(expected_std)
-        self.assertTrue(np.allclose(best_params["final_theta"], expected_mu))
-        self.assertTrue(np.allclose(best_params["final_mu"], expected_mu))
-        self.assertTrue(np.allclose(best_params["final_std"], expected_std))
+        self.assertEqual(
+            best_params["final_theta"],
+            _round_json_floats([float(value) for value in expected_mu]),
+        )
+        self.assertEqual(
+            best_params["final_mu"],
+            _round_json_floats([float(value) for value in expected_mu]),
+        )
+        self.assertEqual(
+            best_params["final_std"],
+            _round_json_floats([float(value) for value in expected_std]),
+        )
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
         self.assertNotIn("final_mu_policy_params", best_params)
@@ -468,20 +504,28 @@ class TrainRwrTests(unittest.TestCase):
         self.assertEqual([task[1] for task in best_report_tasks], [11, 12])
         self.assertEqual([task[1] for task in final_report_tasks], [11, 12])
         self.assertTrue(
-            all(np.allclose(task[0], best_params["best_theta_seen"]) for task in best_report_tasks)
+            all(
+                _round_json_floats([float(value) for value in task[0]]) == best_params["best_theta_seen"]
+                for task in best_report_tasks
+            )
         )
         self.assertTrue(
-            all(np.allclose(task[0], best_params["final_theta"]) for task in final_report_tasks)
+            all(
+                _round_json_floats([float(value) for value in task[0]]) == best_params["final_theta"]
+                for task in final_report_tasks
+            )
         )
-        self.assertAlmostEqual(
+        self.assertEqual(
             best_params["best_eval_mean_return"],
-            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in best_report_tasks])),
-            places=6,
+            _round_json_floats(
+                float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in best_report_tasks]))
+            ),
         )
-        self.assertAlmostEqual(
+        self.assertEqual(
             best_params["final_eval_mean_return"],
-            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in final_report_tasks])),
-            places=6,
+            _round_json_floats(
+                float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in final_report_tasks]))
+            ),
         )
 
     def test_train_handles_partial_fit_batch(self):
@@ -555,18 +599,30 @@ class TrainRwrTests(unittest.TestCase):
         self.assertEqual(len(seen_tasks), 3)
         self.assertTrue(np.allclose(seen_tasks[0][0], raw_theta))
         self.assertTrue(all(np.allclose(task[0], raw_theta) for task in seen_tasks[1:]))
-        self.assertEqual(best_params["best_theta_seen"], [float(value) for value in raw_theta])
-        self.assertEqual(best_params["final_theta"], [float(value) for value in raw_theta])
+        self.assertEqual(
+            best_params["best_theta_seen"],
+            _round_json_floats([float(value) for value in raw_theta]),
+        )
+        self.assertEqual(
+            best_params["final_theta"],
+            _round_json_floats([float(value) for value in raw_theta]),
+        )
         clipped_theta = PolicySearchParams.from_theta(raw_theta).to_theta()
-        self.assertEqual(best_params["best_policy_params"], {
-            "slow_down_distance_m": float(clipped_theta[0]),
-            "callback_distance_m": float(clipped_theta[1]),
-            "callback_wait_seconds": float(clipped_theta[2]),
-            "slowdown_speed_scale": float(clipped_theta[3]),
-        })
+        self.assertEqual(
+            best_params["best_policy_params"],
+            _round_json_floats({
+                "slow_down_distance_m": float(clipped_theta[0]),
+                "callback_distance_m": float(clipped_theta[1]),
+                "callback_wait_seconds": float(clipped_theta[2]),
+                "slowdown_speed_scale": float(clipped_theta[3]),
+            }),
+        )
         self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
         self.assertNotIn("final_mu_policy_params", best_params)
-        self.assertEqual(best_params["final_mu"], [float(value) for value in raw_theta])
+        self.assertEqual(
+            best_params["final_mu"],
+            _round_json_floats([float(value) for value in raw_theta]),
+        )
         self.assertIn("best_eval_mean_return", best_params)
         self.assertIn("final_eval_mean_return", best_params)
 
