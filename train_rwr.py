@@ -24,8 +24,8 @@ from museum_env import MuseumEnv
 from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EPOCHS = 20
-DEFAULT_SAMPLES_PER_EPOCH = 50
+DEFAULT_EPOCHS = 30
+DEFAULT_SAMPLES_PER_EPOCH = 25
 DEFAULT_EPISODES_PER_FIT = 25
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.2
@@ -378,51 +378,58 @@ def train(
     ) -> None:
         nonlocal best_epoch, best_return_seen, best_sample_index, best_theta_seen, mu, std
         for epoch_idx in range(start_epoch_idx, end_epoch_idx):
-            theta_batch = rng.normal(
-                loc=mu,
-                scale=std,
-                size=(samples_per_epoch, len(mu)),
-            )
-            training_seeds = _sample_training_seeds(rng, samples_per_epoch)
-            episode_tasks = [
-                (theta, int(training_seed), DEFAULT_N_HUMANS, print_explanations)
-                for theta, training_seed in zip(theta_batch, training_seeds)
-            ]
-            episode_results = _run_episode_batch(episode_tasks, executor)
-            returns = np.array(
-                [result.episode_return for result in episode_results],
-                dtype=np.float64,
-            )
-            best_idx = int(np.argmax(returns))
-            best_return_this_epoch = float(returns[best_idx])
-            if best_return_this_epoch > best_return_seen:
-                best_theta_seen = np.array(theta_batch[best_idx], dtype=np.float64, copy=True)
-                best_return_seen = best_return_this_epoch
-                best_epoch = int(epoch_idx + 1)
-                best_sample_index = int(best_idx + 1)
+            epoch_episode_results: list[EpisodeResult] = []
+            epoch_returns: list[float] = []
             for fit_start in range(0, samples_per_epoch, episodes_per_fit):
-                fit_end = min(fit_start + episodes_per_fit, samples_per_epoch)
+                block_size = min(episodes_per_fit, samples_per_epoch - fit_start)
+                theta_block = rng.normal(
+                    loc=mu,
+                    scale=std,
+                    size=(block_size, len(mu)),
+                )
+                training_seed_block = _sample_training_seeds(rng, block_size)
+                episode_tasks = [
+                    (theta, int(training_seed), DEFAULT_N_HUMANS, print_explanations)
+                    for theta, training_seed in zip(theta_block, training_seed_block)
+                ]
+                episode_results_block = _run_episode_batch(episode_tasks, executor)
+                returns_block = np.array(
+                    [result.episode_return for result in episode_results_block],
+                    dtype=np.float64,
+                )
+                best_idx = int(np.argmax(returns_block))
+                best_return_this_block = float(returns_block[best_idx])
+                if best_return_this_block > best_return_seen:
+                    best_theta_seen = np.array(theta_block[best_idx], dtype=np.float64, copy=True)
+                    best_return_seen = best_return_this_block
+                    best_epoch = int(epoch_idx + 1)
+                    best_sample_index = int(fit_start + best_idx + 1)
+
                 mu, std = update_distribution(
-                    theta_batch=theta_batch[fit_start:fit_end],
-                    returns=returns[fit_start:fit_end],
+                    theta_batch=theta_block,
+                    returns=returns_block,
                     beta=DEFAULT_BETA,
                 )
+                epoch_episode_results.extend(episode_results_block)
+                epoch_returns.extend(float(value) for value in returns_block)
+
+            returns = np.array(epoch_returns, dtype=np.float64)
 
             epoch_metrics = {
                 "epoch": int(epoch_idx + 1),
                 "mean_return": float(np.mean(returns)),
                 "best_return": float(np.max(returns)),
                 "mean_duration_seconds": float(
-                    np.mean([item.duration_seconds for item in episode_results])
+                    np.mean([item.duration_seconds for item in epoch_episode_results])
                 ),
                 "mean_overwhelmed_triggers": float(
-                    np.mean([item.overwhelmed_triggers for item in episode_results])
+                    np.mean([item.overwhelmed_triggers for item in epoch_episode_results])
                 ),
                 "mean_impatient_triggers": float(
-                    np.mean([item.impatient_triggers for item in episode_results])
+                    np.mean([item.impatient_triggers for item in epoch_episode_results])
                 ),
                 "mean_distracted_triggers": float(
-                    np.mean([item.distracted_triggers for item in episode_results])
+                    np.mean([item.distracted_triggers for item in epoch_episode_results])
                 ),
             }
             metrics.append(epoch_metrics)

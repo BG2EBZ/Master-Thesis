@@ -11,6 +11,7 @@ import numpy as np
 
 from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import (
+    DEFAULT_BETA,
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_CSV_NAME,
     DEFAULT_EVALUATION_SEEDS,
@@ -427,7 +428,7 @@ class TrainRwrTests(unittest.TestCase):
         self.assertEqual(len(_FakeExecutor.instances), 1)
         self.assertEqual(
             [len(batch) for batch in _FakeExecutor.instances[0].mapped_task_batches],
-            [4, 4, 4, 4, 4, 2, 2],
+            [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
         )
         flattened_expected_tasks = [
             task
@@ -467,19 +468,18 @@ class TrainRwrTests(unittest.TestCase):
 
         expected_mu = None
         expected_std = None
-        for epoch_start in range(0, len(training_tasks), 4):
-            epoch_tasks = training_tasks[epoch_start : epoch_start + 4]
-            epoch_theta = np.array([task[0] for task in epoch_tasks], dtype=np.float64)
-            epoch_returns = np.array(
-                [float(np.sum(task[0]) - (0.1 * task[1])) for task in epoch_tasks],
+        for block_start in range(0, len(training_tasks), 2):
+            block_tasks = training_tasks[block_start : block_start + 2]
+            block_theta = np.array([task[0] for task in block_tasks], dtype=np.float64)
+            block_returns = np.array(
+                [float(np.sum(task[0]) - (0.1 * task[1])) for task in block_tasks],
                 dtype=np.float64,
             )
-            for fit_start in range(0, 4, 2):
-                expected_mu, expected_std = update_distribution(
-                    theta_batch=epoch_theta[fit_start : fit_start + 2],
-                    returns=epoch_returns[fit_start : fit_start + 2],
-                    beta=0.2,
-                )
+            expected_mu, expected_std = update_distribution(
+                theta_batch=block_theta,
+                returns=block_returns,
+                beta=DEFAULT_BETA,
+            )
 
         self.assertIsNotNone(expected_mu)
         self.assertIsNotNone(expected_std)
@@ -560,6 +560,88 @@ class TrainRwrTests(unittest.TestCase):
                             )
 
         self.assertEqual(update_mock.call_count, 2)
+
+    def test_train_samples_next_fit_block_from_updated_distribution(self):
+        seen_tasks = []
+        initial_mu = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
+        first_block_theta = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [10.0, 10.0, 10.0, 10.0],
+            ],
+            dtype=np.float64,
+        )
+
+        class _FakeBlockRng:
+            def __init__(self):
+                self.normal_calls: list[np.ndarray] = []
+                self.integer_calls = 0
+
+            def normal(self, *, loc, scale, size):
+                del scale
+                loc_array = np.asarray(loc, dtype=np.float64).copy()
+                self.normal_calls.append(loc_array)
+                if len(self.normal_calls) == 1:
+                    return np.array(first_block_theta, dtype=np.float64, copy=True)
+                if len(self.normal_calls) == 2:
+                    if size != (2, len(initial_mu)):
+                        raise AssertionError(f"Unexpected normal() size: {size!r}")
+                    return np.tile(loc_array, (size[0], 1))
+                raise AssertionError("Unexpected normal() call count")
+
+            def integers(self, low, high=None, size=None):
+                del low, high
+                self.integer_calls += 1
+                if self.integer_calls == 1:
+                    return np.array([1, 2], dtype=np.int64)
+                if self.integer_calls == 2:
+                    return np.array([3, 4], dtype=np.int64)
+                raise AssertionError("Unexpected integers() call count")
+
+        fake_rng = _FakeBlockRng()
+
+        def _fake_evaluate_episode_task(task):
+            seen_tasks.append(task)
+            theta, seed, _n_humans, _print_explanations = task
+            return EpisodeResult(
+                episode_return=float(theta[0]),
+                duration_seconds=float(seed),
+                overwhelmed_triggers=0,
+                impatient_triggers=0,
+                distracted_triggers=0,
+                success=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("train_rwr.DEFAULT_MAX_WORKERS", 1):
+                with patch("train_rwr.DEFAULT_EVALUATION_SEEDS", (11,)):
+                    with patch("train_rwr.np.random.default_rng", return_value=fake_rng):
+                        with patch(
+                            "train_rwr._evaluate_episode_task",
+                            side_effect=_fake_evaluate_episode_task,
+                        ):
+                            train(
+                                epochs=1,
+                                samples_per_epoch=4,
+                                episodes_per_fit=2,
+                                seed=7,
+                                output_dir=Path(tmp_dir),
+                            )
+
+        expected_mu_after_first_block, _expected_std_after_first_block = update_distribution(
+            theta_batch=first_block_theta,
+            returns=np.array([0.0, 10.0], dtype=np.float64),
+            beta=DEFAULT_BETA,
+        )
+        self.assertEqual(len(fake_rng.normal_calls), 2)
+        self.assertTrue(np.allclose(fake_rng.normal_calls[0], initial_mu))
+        self.assertTrue(np.allclose(fake_rng.normal_calls[1], expected_mu_after_first_block))
+
+        training_tasks = seen_tasks[:4]
+        second_block_tasks = training_tasks[2:4]
+        self.assertTrue(
+            all(np.allclose(task[0], expected_mu_after_first_block) for task in second_block_tasks)
+        )
 
     def test_train_passes_raw_theta_to_episode_tasks_and_keeps_clipped_policy_artifact(self):
         raw_theta = np.array([0.1, 1.0, 12.0, 2.0], dtype=np.float64)
