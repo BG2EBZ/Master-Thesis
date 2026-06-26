@@ -90,10 +90,18 @@ if terminated or truncated:
 - Demo: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo`
 - Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train`
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder`
-- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python train_rwr.py`
+- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python train_rwr.py --samples-per-epoch 100 --episodes-per-fit 25`
 
 The minimal RWR trainer writes:
 
-- default output directory: `runs/rwr_minimal`
+- default output directory: `runs/rwr_<timestamp>`
 - `training_metrics.csv`
 - `training_metrics.png`
+- `best_params.json`
+
+The trainer now follows a MushroomRL-style RWR workflow:
+
+- `samples_per_epoch` is the total number of single-episode samples collected per epoch
+- `episodes_per_fit` controls how many collected episodes are used in each RWR distribution update
+- `final_theta` in `best_params.json` is the final Gaussian mean in optimizer space
+- `best_theta_seen` remains the best raw sampled parameter vector observed during training

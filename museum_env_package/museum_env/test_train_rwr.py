@@ -25,6 +25,7 @@ from train_rwr import (
     plot_training_metrics,
     run_episode,
     train,
+    update_distribution,
 )
 
 
@@ -384,22 +385,28 @@ class TrainRwrTests(unittest.TestCase):
                         "train_rwr._evaluate_episode_task",
                         side_effect=_fake_evaluate_episode_task,
                     ):
-                        metrics = train(
-                            epochs=5,
-                            samples_per_epoch=3,
-                            seed=7,
-                            output_dir=Path(tmp_dir),
-                        )
+                        with patch(
+                            "train_rwr.update_distribution",
+                            wraps=update_distribution,
+                        ) as update_mock:
+                            metrics = train(
+                                epochs=5,
+                                samples_per_epoch=4,
+                                episodes_per_fit=2,
+                                seed=7,
+                                output_dir=Path(tmp_dir),
+                            )
             best_params_path = Path(tmp_dir) / DEFAULT_BEST_PARAMS_NAME
             self.assertTrue(best_params_path.exists())
             with best_params_path.open("r", encoding="utf-8") as handle:
                 best_params = json.load(handle)
 
-        self.assertEqual(_FakeExecutor.last_max_workers, 3)
+        self.assertEqual(update_mock.call_count, 10)
+        self.assertEqual(_FakeExecutor.last_max_workers, 4)
         self.assertEqual(len(_FakeExecutor.instances), 1)
         self.assertEqual(
-            [len(instance.mapped_task_batches) for instance in _FakeExecutor.instances],
-            [5],
+            [len(batch) for batch in _FakeExecutor.instances[0].mapped_task_batches],
+            [4, 4, 4, 4, 4, 2, 2],
         )
         flattened_expected_tasks = [
             task
@@ -407,33 +414,108 @@ class TrainRwrTests(unittest.TestCase):
             for batch in instance.mapped_task_batches
             for task in batch
         ]
-        self.assertEqual(len(flattened_expected_tasks), 30)
-        self.assertEqual(len(seen_tasks), 30)
+        self.assertEqual(len(flattened_expected_tasks), 24)
+        self.assertEqual(len(seen_tasks), 24)
         for expected_task, seen_task in zip(flattened_expected_tasks, seen_tasks):
             self.assertTrue(np.allclose(expected_task[0], seen_task[0]))
             self.assertEqual(expected_task[1:], seen_task[1:])
-        self.assertTrue(all(len(batch) == 6 for instance in _FakeExecutor.instances for batch in instance.mapped_task_batches))
+
+        training_tasks = seen_tasks[:20]
+        report_tasks = seen_tasks[20:]
         self.assertTrue(all(task[3] is False for task in seen_tasks))
         self.assertTrue(all(isinstance(task[1], int) for task in seen_tasks))
         self.assertEqual([row["epoch"] for row in metrics], [1, 2, 3, 4, 5])
-        grouped_tasks = [seen_tasks[idx : idx + 2] for idx in range(0, len(seen_tasks), 2)]
-        grouped_returns = [
-            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in theta_tasks]))
-            for theta_tasks in grouped_tasks
-        ]
-        best_group_idx = int(np.argmax(grouped_returns))
-        best_theta_tasks = grouped_tasks[best_group_idx]
-        best_epoch = (best_group_idx // 3) + 1
-        best_sample = (best_group_idx % 3) + 1
+
+        training_returns = np.array(
+            [float(np.sum(task[0]) - (0.1 * task[1])) for task in training_tasks],
+            dtype=np.float64,
+        )
+        best_flat_idx = int(np.argmax(training_returns))
+        best_epoch = (best_flat_idx // 4) + 1
+        best_sample = (best_flat_idx % 4) + 1
         self.assertEqual(best_params["best_epoch"], best_epoch)
         self.assertEqual(best_params["best_sample_index_within_epoch"], best_sample)
-        self.assertTrue(np.allclose(best_params["best_theta_seen"], best_theta_tasks[0][0]))
-        self.assertTrue(np.allclose(best_params["final_theta"], best_theta_tasks[0][0]))
-        self.assertAlmostEqual(best_params["best_return"], grouped_returns[best_group_idx], places=6)
+        self.assertTrue(np.allclose(best_params["best_theta_seen"], training_tasks[best_flat_idx][0]))
+        self.assertAlmostEqual(best_params["best_return"], training_returns[best_flat_idx], places=6)
+
+        expected_mu = None
+        expected_std = None
+        for epoch_start in range(0, len(training_tasks), 4):
+            epoch_tasks = training_tasks[epoch_start : epoch_start + 4]
+            epoch_theta = np.array([task[0] for task in epoch_tasks], dtype=np.float64)
+            epoch_returns = np.array(
+                [float(np.sum(task[0]) - (0.1 * task[1])) for task in epoch_tasks],
+                dtype=np.float64,
+            )
+            for fit_start in range(0, 4, 2):
+                expected_mu, expected_std = update_distribution(
+                    theta_batch=epoch_theta[fit_start : fit_start + 2],
+                    returns=epoch_returns[fit_start : fit_start + 2],
+                    beta=0.2,
+                )
+
+        self.assertIsNotNone(expected_mu)
+        self.assertIsNotNone(expected_std)
+        self.assertTrue(np.allclose(best_params["final_theta"], expected_mu))
+        self.assertTrue(np.allclose(best_params["final_mu"], expected_mu))
+        self.assertTrue(np.allclose(best_params["final_std"], expected_std))
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
-        self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
         self.assertNotIn("final_mu_policy_params", best_params)
+
+        best_report_tasks = report_tasks[:2]
+        final_report_tasks = report_tasks[2:]
+        self.assertEqual([task[1] for task in best_report_tasks], [11, 12])
+        self.assertEqual([task[1] for task in final_report_tasks], [11, 12])
+        self.assertTrue(
+            all(np.allclose(task[0], best_params["best_theta_seen"]) for task in best_report_tasks)
+        )
+        self.assertTrue(
+            all(np.allclose(task[0], best_params["final_theta"]) for task in final_report_tasks)
+        )
+        self.assertAlmostEqual(
+            best_params["best_eval_mean_return"],
+            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in best_report_tasks])),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            best_params["final_eval_mean_return"],
+            float(np.mean([float(np.sum(task[0]) - (0.1 * task[1])) for task in final_report_tasks])),
+            places=6,
+        )
+
+    def test_train_handles_partial_fit_batch(self):
+        def _fake_evaluate_episode_task(task):
+            theta, seed, _n_humans, _print_explanations = task
+            return EpisodeResult(
+                episode_return=float(np.sum(theta) - (0.1 * seed)),
+                duration_seconds=float(seed),
+                overwhelmed_triggers=int(seed % 2),
+                impatient_triggers=int(seed % 3),
+                distracted_triggers=int(seed % 4),
+                success=bool(seed % 2 == 0),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("train_rwr.ProcessPoolExecutor", _FakeExecutor):
+                with patch("train_rwr.DEFAULT_EVALUATION_SEEDS", (11,)):
+                    with patch(
+                        "train_rwr._evaluate_episode_task",
+                        side_effect=_fake_evaluate_episode_task,
+                    ):
+                        with patch(
+                            "train_rwr.update_distribution",
+                            wraps=update_distribution,
+                        ) as update_mock:
+                            train(
+                                epochs=1,
+                                samples_per_epoch=3,
+                                episodes_per_fit=2,
+                                seed=7,
+                                output_dir=Path(tmp_dir),
+                            )
+
+        self.assertEqual(update_mock.call_count, 2)
 
     def test_train_passes_raw_theta_to_episode_tasks_and_keeps_clipped_policy_artifact(self):
         raw_theta = np.array([0.1, 1.0, 12.0, 2.0], dtype=np.float64)
@@ -462,6 +544,7 @@ class TrainRwrTests(unittest.TestCase):
                                 train(
                                     epochs=1,
                                     samples_per_epoch=1,
+                                    episodes_per_fit=1,
                                     seed=7,
                                     output_dir=Path(tmp_dir),
                                 )
@@ -469,8 +552,9 @@ class TrainRwrTests(unittest.TestCase):
             with best_params_path.open("r", encoding="utf-8") as handle:
                 best_params = json.load(handle)
 
-        self.assertEqual(len(seen_tasks), 1)
+        self.assertEqual(len(seen_tasks), 3)
         self.assertTrue(np.allclose(seen_tasks[0][0], raw_theta))
+        self.assertTrue(all(np.allclose(task[0], raw_theta) for task in seen_tasks[1:]))
         self.assertEqual(best_params["best_theta_seen"], [float(value) for value in raw_theta])
         self.assertEqual(best_params["final_theta"], [float(value) for value in raw_theta])
         clipped_theta = PolicySearchParams.from_theta(raw_theta).to_theta()
@@ -482,6 +566,9 @@ class TrainRwrTests(unittest.TestCase):
         })
         self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
         self.assertNotIn("final_mu_policy_params", best_params)
+        self.assertEqual(best_params["final_mu"], [float(value) for value in raw_theta])
+        self.assertIn("best_eval_mean_return", best_params)
+        self.assertIn("final_eval_mean_return", best_params)
 
     def test_plot_training_metrics_accepts_default_epoch_axis_label(self):
         metrics = [
@@ -513,6 +600,8 @@ class TrainRwrTests(unittest.TestCase):
                         "1",
                         "--samples-per-epoch",
                         "1",
+                        "--episodes-per-fit",
+                        "1",
                         "--seed",
                         "7",
                         "--output-dir",
@@ -543,8 +632,11 @@ class TrainRwrTests(unittest.TestCase):
             self.assertEqual(len(best_params["best_theta_seen"]), 4)
             self.assertEqual(best_params["final_theta"], best_params["best_theta_seen"])
             self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+            self.assertEqual(best_params["final_mu"], best_params["final_theta"])
             self.assertNotIn("final_mu_policy_params", best_params)
             self.assertNotIn("best_success_rate", best_params)
+            self.assertIn("best_eval_mean_return", best_params)
+            self.assertIn("final_eval_mean_return", best_params)
             self.assertEqual(set(best_params["best_policy_params"].keys()), {
                 "slow_down_distance_m",
                 "callback_distance_m",

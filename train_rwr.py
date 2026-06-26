@@ -25,7 +25,8 @@ from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_EPOCHS = 20
-DEFAULT_SAMPLES_PER_EPOCH = 30
+DEFAULT_SAMPLES_PER_EPOCH = 50
+DEFAULT_EPISODES_PER_FIT = 25
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.2
 DEFAULT_EVALUATION_SEEDS = (11, 22, 33)
@@ -198,6 +199,7 @@ def _aggregate_episode_results(episode_results: Sequence[EpisodeResult]) -> Thet
         ),
     )
 
+
 # Expectation-maximization update for Gaussian distribution
 def update_distribution(
     theta_batch: np.ndarray,
@@ -219,6 +221,33 @@ def update_distribution(
     std = np.sqrt(weights @ delta_sq / max(denominator, 1e-8))
 
     return mu, std
+
+
+def _sample_training_seeds(
+    rng: np.random.Generator,
+    batch_size: int,
+) -> np.ndarray:
+    return np.asarray(
+        rng.integers(0, np.iinfo(np.int32).max, size=batch_size),
+        dtype=np.int64,
+    )
+
+
+def _evaluate_theta_over_seeds(
+    theta: np.ndarray,
+    evaluation_seeds: Sequence[int],
+    *,
+    executor: ProcessPoolExecutor | None,
+) -> ThetaEvaluation:
+    tasks = [
+        (theta, int(seed), DEFAULT_N_HUMANS, False)
+        for seed in evaluation_seeds
+    ]
+    if executor is None:
+        episode_results = [_evaluate_episode_task(task) for task in tasks]
+    else:
+        episode_results = list(executor.map(_evaluate_episode_task, tasks))
+    return _aggregate_episode_results(episode_results)
 
 
 def write_metrics_csv(
@@ -302,6 +331,7 @@ def train(
     *,
     epochs: int,
     samples_per_epoch: int,
+    episodes_per_fit: int,
     seed: int,
     output_dir: Path,
 ) -> list[dict[str, float | int]]:
@@ -312,7 +342,8 @@ def train(
     std = INITIAL_STD.copy()
     metrics: list[dict[str, float | int]] = []
     best_theta_seen: np.ndarray | None = None
-    best_evaluation: ThetaEvaluation | None = None
+    best_report_evaluation: ThetaEvaluation | None = None
+    final_report_evaluation: ThetaEvaluation | None = None
     best_return_seen = float("-inf")
     best_epoch = 0
     best_sample_index = 0
@@ -331,58 +362,53 @@ def train(
         start_epoch_idx: int,
         end_epoch_idx: int,
     ) -> None:
-        nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
+        nonlocal best_epoch, best_return_seen, best_sample_index, best_theta_seen, mu, std
         for epoch_idx in range(start_epoch_idx, end_epoch_idx):
             theta_batch = rng.normal(
                 loc=mu,
                 scale=std,
                 size=(samples_per_epoch, len(mu)),
             )
+            training_seeds = _sample_training_seeds(rng, samples_per_epoch)
             episode_tasks = [
-                (theta, int(seed), DEFAULT_N_HUMANS, print_explanations)
-                for theta in theta_batch
-                for seed in DEFAULT_EVALUATION_SEEDS
+                (theta, int(training_seed), DEFAULT_N_HUMANS, print_explanations)
+                for theta, training_seed in zip(theta_batch, training_seeds)
             ]
             episode_results = _run_episode_batch(episode_tasks, executor)
-            seed_count = len(DEFAULT_EVALUATION_SEEDS)
-            evaluations = [
-                _aggregate_episode_results(episode_results[idx : idx + seed_count])
-                for idx in range(0, len(episode_results), seed_count)
-            ]
-
             returns = np.array(
-                [evaluation.mean_return for evaluation in evaluations],
+                [result.episode_return for result in episode_results],
                 dtype=np.float64,
             )
             best_idx = int(np.argmax(returns))
             best_return_this_epoch = float(returns[best_idx])
             if best_return_this_epoch > best_return_seen:
                 best_theta_seen = np.array(theta_batch[best_idx], dtype=np.float64, copy=True)
-                best_evaluation = evaluations[best_idx]
                 best_return_seen = best_return_this_epoch
                 best_epoch = int(epoch_idx + 1)
                 best_sample_index = int(best_idx + 1)
-            mu, std = update_distribution(
-                theta_batch=theta_batch,
-                returns=returns,
-                beta=DEFAULT_BETA,
-            )
+            for fit_start in range(0, samples_per_epoch, episodes_per_fit):
+                fit_end = min(fit_start + episodes_per_fit, samples_per_epoch)
+                mu, std = update_distribution(
+                    theta_batch=theta_batch[fit_start:fit_end],
+                    returns=returns[fit_start:fit_end],
+                    beta=DEFAULT_BETA,
+                )
 
             epoch_metrics = {
                 "epoch": int(epoch_idx + 1),
-                "mean_return": float(np.mean([item.mean_return for item in evaluations])),
-                "best_return": float(np.max([item.mean_return for item in evaluations])),
+                "mean_return": float(np.mean(returns)),
+                "best_return": float(np.max(returns)),
                 "mean_duration_seconds": float(
-                    np.mean([item.mean_duration_seconds for item in evaluations])
+                    np.mean([item.duration_seconds for item in episode_results])
                 ),
                 "mean_overwhelmed_triggers": float(
-                    np.mean([item.mean_overwhelmed_triggers for item in evaluations])
+                    np.mean([item.overwhelmed_triggers for item in episode_results])
                 ),
                 "mean_impatient_triggers": float(
-                    np.mean([item.mean_impatient_triggers for item in evaluations])
+                    np.mean([item.impatient_triggers for item in episode_results])
                 ),
                 "mean_distracted_triggers": float(
-                    np.mean([item.mean_distracted_triggers for item in evaluations])
+                    np.mean([item.distracted_triggers for item in episode_results])
                 ),
             }
             metrics.append(epoch_metrics)
@@ -393,9 +419,28 @@ def train(
                 f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
             )
 
+    def _run_reporting_evaluations(
+        *,
+        executor: ProcessPoolExecutor | None,
+    ) -> None:
+        nonlocal best_report_evaluation, final_report_evaluation
+        if best_theta_seen is None:
+            raise RuntimeError("Training completed without evaluating any parameter samples.")
+        best_report_evaluation = _evaluate_theta_over_seeds(
+            best_theta_seen,
+            DEFAULT_EVALUATION_SEEDS,
+            executor=executor,
+        )
+        final_report_evaluation = _evaluate_theta_over_seeds(
+            mu,
+            DEFAULT_EVALUATION_SEEDS,
+            executor=executor,
+        )
+
     if max_workers == 1:
         try:
             _run_training_loop(executor=None, start_epoch_idx=0, end_epoch_idx=epochs)
+            _run_reporting_evaluations(executor=None)
         finally:
             _close_cached_env()
     else:
@@ -405,23 +450,46 @@ def train(
                 start_epoch_idx=0,
                 end_epoch_idx=epochs,
             )
+            _run_reporting_evaluations(executor=executor)
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
     best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
-    if best_theta_seen is None or best_evaluation is None:
+    if (
+        best_theta_seen is None
+        or best_report_evaluation is None
+        or final_report_evaluation is None
+    ):
         raise RuntimeError("Training completed without evaluating any parameter samples.")
 
     best_params_payload = {
         "best_theta_seen": [float(value) for value in best_theta_seen],
         "best_policy_params": _policy_params_dict(best_theta_seen),
-        "final_theta": [float(value) for value in best_theta_seen],
-        "final_policy_params": _policy_params_dict(best_theta_seen),
+        "final_theta": [float(value) for value in mu],
+        "final_policy_params": _policy_params_dict(mu),
         "best_return": float(best_return_seen),
-        "best_mean_duration_seconds": float(best_evaluation.mean_duration_seconds),
-        "best_mean_overwhelmed_triggers": float(best_evaluation.mean_overwhelmed_triggers),
-        "best_mean_impatient_triggers": float(best_evaluation.mean_impatient_triggers),
-        "best_mean_distracted_triggers": float(best_evaluation.mean_distracted_triggers),
+        "best_eval_mean_return": float(best_report_evaluation.mean_return),
+        "best_mean_duration_seconds": float(best_report_evaluation.mean_duration_seconds),
+        "best_mean_overwhelmed_triggers": float(
+            best_report_evaluation.mean_overwhelmed_triggers
+        ),
+        "best_mean_impatient_triggers": float(
+            best_report_evaluation.mean_impatient_triggers
+        ),
+        "best_mean_distracted_triggers": float(
+            best_report_evaluation.mean_distracted_triggers
+        ),
+        "final_eval_mean_return": float(final_report_evaluation.mean_return),
+        "final_mean_duration_seconds": float(final_report_evaluation.mean_duration_seconds),
+        "final_mean_overwhelmed_triggers": float(
+            final_report_evaluation.mean_overwhelmed_triggers
+        ),
+        "final_mean_impatient_triggers": float(
+            final_report_evaluation.mean_impatient_triggers
+        ),
+        "final_mean_distracted_triggers": float(
+            final_report_evaluation.mean_distracted_triggers
+        ),
         "best_epoch": int(best_epoch),
         "best_sample_index_within_epoch": int(best_sample_index),
         # These remain optimizer-space values; the environment clips them on application.
@@ -461,13 +529,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--samples-per-epoch",
         type=_positive_int,
         default=DEFAULT_SAMPLES_PER_EPOCH,
-        help="Number of sampled policies per epoch.",
+        help="Total number of sampled episodes per epoch.",
+    )
+    parser.add_argument(
+        "--episodes-per-fit",
+        type=_positive_int,
+        default=DEFAULT_EPISODES_PER_FIT,
+        help="Number of sampled episodes per RWR fit update.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help="Random seed for policy sampling.",
+        help="Random seed for policy sampling and training episode seeds.",
     )
     parser.add_argument(
         "--output-dir",
@@ -479,6 +553,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     train(
         epochs=args.epochs,
         samples_per_epoch=args.samples_per_epoch,
+        episodes_per_fit=args.episodes_per_fit,
         seed=args.seed,
         output_dir=args.output_dir,
     )
