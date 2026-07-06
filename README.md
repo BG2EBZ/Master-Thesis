@@ -71,6 +71,7 @@ The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback inter
 - the final scalar reward is emitted only when the episode completes or times out
 - `info` keeps the same compact top-level schema shown above
 - final-step reward breakdown is exposed under `info["episode"]["reward_components"]`
+- each env step still represents `0.05s` of simulated decision time, even though MuJoCo may integrate smaller internal physics substeps
 
 Example:
 

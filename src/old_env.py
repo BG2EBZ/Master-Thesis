@@ -94,8 +94,6 @@ if not logger.handlers:
     logger.addHandler(_handler)
 logger.propagate = False
 
-DEFAULT_DECISION_TIMESTEP_SECONDS = 0.05
-
 
 class MuseumEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
@@ -143,20 +141,7 @@ class MuseumEnv(gym.Env):
 
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
-        # Keep MuJoCo integration and environment decision timing separate:
-        # physics_dt drives the internal simulator, while dt stays as the
-        # public per-step decision duration used by existing behavior logic.
-        self.physics_dt = float(self.model.opt.timestep)
-        self.decision_dt = float(DEFAULT_DECISION_TIMESTEP_SECONDS)
-        ratio = self.decision_dt / self.physics_dt
-        rounded_ratio = int(round(ratio))
-        if (rounded_ratio < 1) or (not np.isclose(ratio, float(rounded_ratio), atol=1e-6)):
-            raise ValueError(
-                "decision_dt must be an integer multiple of physics_dt, "
-                f"got decision_dt={self.decision_dt} and physics_dt={self.physics_dt}."
-            )
-        self.physics_steps_per_decision = rounded_ratio
-        self.dt = self.decision_dt
+        self.dt = float(self.model.opt.timestep)
 
         self.render_mode = render_mode
         self.viewer = None
@@ -347,14 +332,7 @@ class MuseumEnv(gym.Env):
             dtype=np.float32,
         )
 
-    def _build_world_frame(
-        self,
-        *,
-        force: bool = False,
-        tick: bool = False,
-        include_repulsion_vectors: bool = True,
-        include_pairwise_distances: bool = True,
-    ):
+    def _build_world_frame(self, *, force: bool = False, tick: bool = False):
         return build_world_frame(
             data=self.data,
             robot_body_id=self.robot_body_id,
@@ -368,8 +346,6 @@ class MuseumEnv(gym.Env):
             repulsion_gain=self.repulsion_gain,
             force_observations=force,
             tick_age_before_refresh=tick,
-            include_repulsion_vectors=include_repulsion_vectors,
-            include_pairwise_distances=include_pairwise_distances,
         )
 
     def _build_observation(self, world_frame) -> np.ndarray:
@@ -489,11 +465,6 @@ class MuseumEnv(gym.Env):
             )
             self.model.geom_rgba[geom_id] = halo_rgba
 
-    def _advance_physics_substeps(self) -> None:
-        """Advance MuJoCo using the already-written control buffer."""
-        for _ in range(self.physics_steps_per_decision):
-            mujoco.mj_step(self.model, self.data)
-
     def reset(self, seed=None, options=None):
         del options
         super().reset(seed=seed)
@@ -527,11 +498,7 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.listening_steps = 0
 
-        world_frame = self._build_world_frame(
-            force=True,
-            include_repulsion_vectors=False,
-            include_pairwise_distances=False,
-        )
+        world_frame = self._build_world_frame(force=True)
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
         self._sync_human_visual_state()
@@ -542,10 +509,7 @@ class MuseumEnv(gym.Env):
         self.step_count += 1
         events = StepEvents()
 
-        pre_frame = self._build_world_frame(
-            include_repulsion_vectors=True,
-            include_pairwise_distances=False,
-        )
+        pre_frame = self._build_world_frame()
         robot_action, _ = env_flow.compute_robot_action(self, pre_frame, events)
         env_flow.maybe_finish_post_explanation_hold(
             self,
@@ -563,14 +527,8 @@ class MuseumEnv(gym.Env):
         self.data.ctrl[0:3] = robot_action
         env_control.apply_human_controls(self, pre_frame)
 
-        # Hold one decision's controls constant while the simulator integrates
-        # multiple finer-grained physics steps.
-        self._advance_physics_substeps()
-        post_frame = self._build_world_frame(
-            tick=True,
-            include_repulsion_vectors=False,
-            include_pairwise_distances=False,
-        )
+        mujoco.mj_step(self.model, self.data)
+        post_frame = self._build_world_frame(tick=True)
 
         env_control.update_human_listening_session_progress(self)
         env_flow.progress_listening_phase(self, events, post_frame)
