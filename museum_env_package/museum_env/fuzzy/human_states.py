@@ -209,8 +209,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "hhd": {
                 "close": _trap(0, 0, 0.5, 0.7),
-                "medium": _trap(0.5, 0.7, 1.0, 1.2),
-                "far": _trap(1.0, 1.2, 4.0, 4.0),
+                "medium": _trap(0.5, 0.7, 1.3, 1.5),
+                "far": _trap(1.3, 1.5, 4.0, 4.0),
             },
             "hrd": {
                 "close": _trap(0, 0, 0.8, 1.0),

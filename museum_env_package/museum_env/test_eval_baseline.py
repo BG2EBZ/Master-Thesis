@@ -101,10 +101,12 @@ class EvalBaselineTests(unittest.TestCase):
             self.assertTrue(output_path.exists())
             self.assertGreater(output_path.stat().st_size, 0)
 
-    def test_evaluate_baseline_uses_shared_seeds_and_records_comparison_summary(self):
+    def test_evaluate_baseline_uses_fixed_evaluation_seeds_and_ignores_seed_metadata(self):
         seen_tasks = []
         baseline_theta = PolicySearchParams().to_theta()
-        comparison_theta = eval_baseline.COMPARISON_POLICY_PARAMS.to_theta()
+        comparison_theta = np.array([2.9, 4.4, 2.2, 0.76], dtype=np.float64)
+        best_theta_seen = np.array([2.4, 3.6, 1.8, 0.72], dtype=np.float64)
+        heldout_evaluation_seeds = [301, 302, 303, 304, 305, 306]
 
         def _fake_evaluate_episode_task(task):
             seen_tasks.append(task)
@@ -129,14 +131,27 @@ class EvalBaselineTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
+            learned_params_json = Path(tmp_dir) / "best_params.json"
+            with learned_params_json.open("w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "master_seed": 77,
+                        "final_theta": [float(value) for value in comparison_theta],
+                        "best_theta_seen": [float(value) for value in best_theta_seen],
+                        "heldout_evaluation_seeds": heldout_evaluation_seeds,
+                    },
+                    handle,
+                    indent=2,
+                )
+                handle.write("\n")
             with patch("eval_baseline.ProcessPoolExecutor", _FakeExecutor):
                 with patch(
                     "eval_baseline._evaluate_episode_task",
                     side_effect=_fake_evaluate_episode_task,
                 ):
                     metrics = eval_baseline.evaluate_baseline(
+                        learned_params_json=learned_params_json,
                         num_runs=4,
-                        seed=7,
                         output_dir=Path(tmp_dir),
                         max_workers=8,
                     )
@@ -168,7 +183,7 @@ class EvalBaselineTests(unittest.TestCase):
         comparison_tasks = seen_tasks[4:]
         self.assertTrue(all(np.allclose(task[0], baseline_theta) for task in baseline_tasks))
         self.assertTrue(all(np.allclose(task[0], comparison_theta) for task in comparison_tasks))
-        expected_seeds = eval_baseline._sample_evaluation_seeds(4, 7)
+        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:4]
         self.assertEqual(
             [task[1] for task in baseline_tasks],
             expected_seeds,
@@ -190,9 +205,11 @@ class EvalBaselineTests(unittest.TestCase):
             summary["comparison_policy_params"],
             eval_baseline._policy_params_dict(comparison_theta),
         )
-        self.assertEqual(summary["seed"], 7)
+        self.assertEqual(summary["learned_params_json"], str(learned_params_json))
         self.assertEqual(summary["evaluation_seeds"], expected_seeds)
         self.assertEqual(summary["num_runs"], 4)
+        self.assertNotIn("seed", summary)
+        self.assertNotIn("master_seed", summary)
         self.assertNotIn("success_rate", summary)
         self.assertEqual([int(row["run"]) for row in rows], [1, 2, 3, 4])
         self.assertEqual([int(row["seed"]) for row in rows], expected_seeds)
@@ -232,6 +249,131 @@ class EvalBaselineTests(unittest.TestCase):
             places=6,
         )
 
+    def test_evaluate_baseline_falls_back_to_best_theta_seen_with_fixed_seeds(self):
+        seen_tasks = []
+        baseline_theta = PolicySearchParams().to_theta()
+        comparison_theta = np.array([2.6, 4.1, 2.3, 0.74], dtype=np.float64)
+        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:3]
+
+        def _fake_evaluate_episode_task(task):
+            seen_tasks.append(task)
+            theta, seed, _n_humans, _print_explanations = task
+            reward_offset = 0.0 if np.allclose(theta, baseline_theta) else 2.0
+            return EpisodeResult(
+                episode_return=float(seed + reward_offset),
+                duration_seconds=float(seed + 10),
+                overwhelmed_triggers=0,
+                impatient_triggers=0,
+                distracted_triggers=0,
+                success=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            learned_params_json = Path(tmp_dir) / "legacy_with_master_seed.json"
+            with learned_params_json.open("w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "master_seed": 19,
+                        "heldout_evaluation_seeds": [901, 902, 903],
+                        "best_theta_seen": [float(value) for value in comparison_theta],
+                    },
+                    handle,
+                    indent=2,
+                )
+                handle.write("\n")
+
+            with patch("eval_baseline._evaluate_episode_task", side_effect=_fake_evaluate_episode_task):
+                eval_baseline.evaluate_baseline(
+                    learned_params_json=learned_params_json,
+                    num_runs=3,
+                    output_dir=Path(tmp_dir),
+                    max_workers=1,
+                )
+
+            summary_path = Path(tmp_dir) / eval_baseline.DEFAULT_SUMMARY_NAME
+            with summary_path.open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+
+        baseline_tasks = seen_tasks[:3]
+        comparison_tasks = seen_tasks[3:]
+        self.assertTrue(all(np.allclose(task[0], baseline_theta) for task in baseline_tasks))
+        self.assertTrue(all(np.allclose(task[0], comparison_theta) for task in comparison_tasks))
+        self.assertEqual([task[1] for task in baseline_tasks], expected_seeds)
+        self.assertEqual([task[1] for task in comparison_tasks], expected_seeds)
+        self.assertEqual(summary["comparison_theta"], [float(value) for value in comparison_theta])
+        self.assertEqual(summary["evaluation_seeds"], expected_seeds)
+        self.assertNotIn("master_seed", summary)
+
+    def test_evaluate_baseline_uses_fixed_seeds_for_legacy_artifact_without_seed_metadata(self):
+        seen_tasks = []
+        comparison_theta = np.array([2.8, 4.0, 2.1, 0.75], dtype=np.float64)
+
+        def _fake_evaluate_episode_task(task):
+            seen_tasks.append(task)
+            theta, seed, _n_humans, _print_explanations = task
+            reward_offset = 1.0 if np.allclose(theta, comparison_theta) else 0.0
+            return EpisodeResult(
+                episode_return=float(seed + reward_offset),
+                duration_seconds=float(seed),
+                overwhelmed_triggers=0,
+                impatient_triggers=0,
+                distracted_triggers=0,
+                success=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            learned_params_json = Path(tmp_dir) / "legacy_without_seed_metadata.json"
+            with learned_params_json.open("w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "best_theta_seen": [float(value) for value in comparison_theta],
+                    },
+                    handle,
+                    indent=2,
+                )
+                handle.write("\n")
+
+            with patch("eval_baseline._evaluate_episode_task", side_effect=_fake_evaluate_episode_task):
+                eval_baseline.evaluate_baseline(
+                    learned_params_json=learned_params_json,
+                    num_runs=3,
+                    output_dir=Path(tmp_dir),
+                    max_workers=1,
+                )
+
+            summary_path = Path(tmp_dir) / eval_baseline.DEFAULT_SUMMARY_NAME
+            with summary_path.open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+
+        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:3]
+        baseline_tasks = seen_tasks[:3]
+        comparison_tasks = seen_tasks[3:]
+        self.assertEqual([task[1] for task in baseline_tasks], expected_seeds)
+        self.assertEqual([task[1] for task in comparison_tasks], expected_seeds)
+        self.assertEqual(summary["evaluation_seeds"], expected_seeds)
+        self.assertNotIn("master_seed", summary)
+
+    def test_evaluate_baseline_errors_when_num_runs_exceeds_fixed_seed_count(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            learned_params_json = Path(tmp_dir) / "best_params.json"
+            with learned_params_json.open("w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "final_theta": [2.5, 3.5, 2.0, 0.7],
+                    },
+                    handle,
+                    indent=2,
+                )
+                handle.write("\n")
+
+            with self.assertRaisesRegex(ValueError, "fixed evaluation seed count of 20"):
+                eval_baseline.evaluate_baseline(
+                    learned_params_json=learned_params_json,
+                    num_runs=21,
+                    output_dir=Path(tmp_dir),
+                    max_workers=1,
+                )
+
     def test_main_runs_with_small_smoke_configuration(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch(
@@ -240,10 +382,10 @@ class EvalBaselineTests(unittest.TestCase):
             ) as evaluate_mock:
                 exit_code = eval_baseline.main(
                     [
+                        "--learned-params-json",
+                        str(Path(tmp_dir) / "best_params.json"),
                         "--num-runs",
                         "3",
-                        "--seed",
-                        "11",
                         "--output-dir",
                         str(Path(tmp_dir) / "baseline"),
                         "--max-workers",
@@ -254,8 +396,9 @@ class EvalBaselineTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         evaluate_mock.assert_called_once()
         kwargs = evaluate_mock.call_args.kwargs
+        self.assertEqual(kwargs["learned_params_json"], Path(tmp_dir) / "best_params.json")
         self.assertEqual(kwargs["num_runs"], 3)
-        self.assertEqual(kwargs["seed"], 11)
+        self.assertNotIn("seed", kwargs)
         self.assertEqual(kwargs["max_workers"], 2)
 
 

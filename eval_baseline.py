@@ -16,7 +16,6 @@ from train_rwr import EpisodeResult, _evaluate_episode_task
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_NUM_RUNS = 20
-DEFAULT_SEED = 42
 DEFAULT_N_HUMANS = 15
 DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -37,12 +36,28 @@ COMPARISON_METRIC_FIELDNAMES = (
     "baseline_distracted_triggers",
     "comparison_distracted_triggers",
 )
-COMPARISON_POLICY_PARAMS = PolicySearchParams(
-    slow_down_distance_m=2.70,
-    callback_distance_m=3.80,
-    callback_wait_seconds=3.87,
-    slowdown_speed_scale=0.90,
-)
+FIXED_EVALUATION_SEEDS = [
+    191664963,
+    1662057957,
+    1405681631,
+    942484272,
+    929893137,
+    1843824992,
+    184566854,
+    1497586438,
+    432652533,
+    202244314,
+    1130604997,
+    2095133045,
+    1580016183,
+    1634535062,
+    1540770719,
+    1688060240,
+    1102145672,
+    275121930,
+    1803345590,
+    967196436,
+]
 
 
 def _positive_int(value: str) -> int:
@@ -52,9 +67,34 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def _sample_evaluation_seeds(num_runs: int, seed: int) -> list[int]:
-    rng = np.random.default_rng(seed=seed)
-    return [int(value) for value in rng.integers(0, np.iinfo(np.int32).max, size=num_runs)]
+def _load_learned_params_payload(learned_params_json: Path) -> dict[str, object]:
+    with learned_params_json.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"Expected {learned_params_json} to contain a JSON object, received {type(payload)!r}."
+        )
+    return payload
+
+
+def _load_comparison_theta(learned_params_payload: dict[str, object]) -> np.ndarray:
+    raw_theta = learned_params_payload.get("final_theta")
+    if raw_theta is None:
+        raw_theta = learned_params_payload.get("best_theta_seen")
+    if raw_theta is None:
+        raise ValueError("learned params JSON must contain final_theta or best_theta_seen.")
+    if not isinstance(raw_theta, list):
+        raise ValueError("learned theta payload must be a JSON array.")
+    return np.asarray(raw_theta, dtype=np.float64)
+
+
+def _select_evaluation_seeds(num_runs: int) -> list[int]:
+    max_runs = len(FIXED_EVALUATION_SEEDS)
+    if num_runs > max_runs:
+        raise ValueError(
+            f"num_runs={num_runs} exceeds fixed evaluation seed count of {max_runs}."
+        )
+    return [int(value) for value in FIXED_EVALUATION_SEEDS[:num_runs]]
 
 
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
@@ -236,16 +276,17 @@ def plot_comparison_metrics(
 
 def evaluate_baseline(
     *,
+    learned_params_json: Path,
     num_runs: int,
-    seed: int,
     output_dir: Path,
     max_workers: int,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    learned_params_payload = _load_learned_params_payload(learned_params_json)
     baseline_theta = PolicySearchParams().to_theta()
-    comparison_theta = COMPARISON_POLICY_PARAMS.to_theta()
-    evaluation_seeds = _sample_evaluation_seeds(num_runs, seed)
+    comparison_theta = _load_comparison_theta(learned_params_payload)
+    evaluation_seeds = _select_evaluation_seeds(num_runs)
     baseline_tasks = [
         (baseline_theta, int(evaluation_seed), DEFAULT_N_HUMANS, False)
         for evaluation_seed in evaluation_seeds
@@ -292,7 +333,7 @@ def evaluate_baseline(
         "comparison_theta": [float(value) for value in comparison_theta],
         "baseline_policy_params": _policy_params_dict(baseline_theta),
         "comparison_policy_params": _policy_params_dict(comparison_theta),
-        "seed": int(seed),
+        "learned_params_json": str(learned_params_json),
         "evaluation_seeds": [int(value) for value in evaluation_seeds],
         "num_runs": int(num_runs),
     }
@@ -337,19 +378,19 @@ def evaluate_baseline(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate baseline and manual comparison policy on shared seeds."
+        description="Evaluate baseline and learned policy on fixed held-out seeds."
+    )
+    parser.add_argument(
+        "--learned-params-json",
+        type=Path,
+        required=True,
+        help="Training artifact JSON containing the learned theta.",
     )
     parser.add_argument(
         "--num-runs",
         type=_positive_int,
         default=DEFAULT_NUM_RUNS,
         help="Number of shared evaluation runs for baseline and comparison policy.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=DEFAULT_SEED,
-        help="Random seed used to sample evaluation seeds.",
     )
     parser.add_argument(
         "--output-dir",
@@ -365,8 +406,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     evaluate_baseline(
+        learned_params_json=args.learned_params_json,
         num_runs=args.num_runs,
-        seed=args.seed,
         output_dir=args.output_dir,
         max_workers=args.max_workers,
     )
