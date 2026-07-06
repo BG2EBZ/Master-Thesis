@@ -21,6 +21,7 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 import numpy as np
 
 from museum_env import MuseumEnv
+from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -29,7 +30,6 @@ DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.2
 DEFAULT_EPOCH_TRAIN_SEED_COUNT = 3
-DEFAULT_HELDOUT_EVALUATION_SEED_COUNT = 20
 DEFAULT_N_HUMANS = 15
 DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -200,26 +200,12 @@ def _aggregate_episode_results(episode_results: Sequence[EpisodeResult]) -> Thet
     )
 
 
-def _sample_heldout_evaluation_seeds(
-    rng: np.random.Generator,
-    count: int,
-) -> list[int]:
-    sampled = rng.integers(
-        0,
-        np.iinfo(np.int32).max,
-        size=count,
-        dtype=np.int64,
-    )
-    return [int(value) for value in sampled]
-
-
 def _build_epoch_training_seed_schedule(
     rng: np.random.Generator,
     epochs: int,
     seeds_per_epoch: int,
-    excluded_seeds: Sequence[int],
 ) -> list[list[int]]:
-    excluded_seed_set = {int(seed) for seed in excluded_seeds}
+    excluded_seed_set = {int(seed) for seed in FIXED_EVALUATION_SEEDS}
     epoch_training_seeds: list[list[int]] = []
 
     for _ in range(epochs):
@@ -344,21 +330,13 @@ def train(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     master_seed = int(seed)
-    theta_seed_sequence, train_seed_sequence, heldout_seed_sequence = np.random.SeedSequence(
-        master_seed
-    ).spawn(3)
+    theta_seed_sequence, train_seed_sequence = np.random.SeedSequence(master_seed).spawn(2)
     theta_rng = np.random.default_rng(theta_seed_sequence)
     train_seed_rng = np.random.default_rng(train_seed_sequence)
-    heldout_seed_rng = np.random.default_rng(heldout_seed_sequence)
-    heldout_evaluation_seeds = _sample_heldout_evaluation_seeds(
-        heldout_seed_rng,
-        DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-    )
     epoch_training_seeds = _build_epoch_training_seed_schedule(
         train_seed_rng,
         epochs=epochs,
         seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-        excluded_seeds=heldout_evaluation_seeds,
     )
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
@@ -466,12 +444,6 @@ def train(
         raise RuntimeError("Training completed without evaluating any parameter samples.")
 
     best_params_payload = {
-        "master_seed": int(master_seed),
-        "epoch_training_seeds": [
-            [int(epoch_seed) for epoch_seed in epoch_seed_batch]
-            for epoch_seed_batch in epoch_training_seeds
-        ],
-        "heldout_evaluation_seeds": [int(seed_value) for seed_value in heldout_evaluation_seeds],
         "best_theta_seen": [float(value) for value in best_theta_seen],
         "best_policy_params": _policy_params_dict(best_theta_seen),
         "final_theta": [float(value) for value in best_theta_seen],

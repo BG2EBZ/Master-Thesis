@@ -9,12 +9,12 @@ from unittest.mock import patch
 
 import numpy as np
 
+from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_CSV_NAME,
     DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-    DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PLOT_NAME,
     EpisodeResult,
@@ -23,7 +23,6 @@ from train_rwr import (
     _build_epoch_training_seed_schedule,
     _close_cached_env,
     _evaluate_episode_task,
-    _sample_heldout_evaluation_seeds,
     main,
     plot_training_metrics,
     run_episode,
@@ -149,79 +148,56 @@ class TrainRwrTests(unittest.TestCase):
     def tearDown(self):
         _close_cached_env()
 
-    def test_default_seed_constants_match_master_seed_contract(self):
+    def test_default_seed_constants_match_training_contract(self):
         self.assertEqual(DEFAULT_EPOCH_TRAIN_SEED_COUNT, 3)
-        self.assertEqual(DEFAULT_HELDOUT_EVALUATION_SEED_COUNT, 20)
+        self.assertEqual(len(FIXED_EVALUATION_SEEDS), 20)
 
-    def test_master_seed_reproduces_heldout_and_training_seed_schedule(self):
+    def test_master_seed_reproduces_training_seed_schedule(self):
         def _build_schedule(master_seed):
-            _theta_seq, train_seed_seq, heldout_seed_seq = np.random.SeedSequence(
-                master_seed
-            ).spawn(3)
-            heldout_seeds = _sample_heldout_evaluation_seeds(
-                np.random.default_rng(heldout_seed_seq),
-                DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-            )
+            _theta_seq, train_seed_seq = np.random.SeedSequence(master_seed).spawn(2)
             training_schedule = _build_epoch_training_seed_schedule(
                 np.random.default_rng(train_seed_seq),
                 epochs=4,
                 seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-                excluded_seeds=heldout_seeds,
             )
-            return heldout_seeds, training_schedule
+            return training_schedule
 
-        heldout_a, schedule_a = _build_schedule(master_seed=17)
-        heldout_b, schedule_b = _build_schedule(master_seed=17)
+        schedule_a = _build_schedule(master_seed=17)
+        schedule_b = _build_schedule(master_seed=17)
 
-        self.assertEqual(heldout_a, heldout_b)
         self.assertEqual(schedule_a, schedule_b)
-        self.assertEqual(len(heldout_a), DEFAULT_HELDOUT_EVALUATION_SEED_COUNT)
         self.assertEqual(len(schedule_a), 4)
         self.assertTrue(all(len(epoch) == DEFAULT_EPOCH_TRAIN_SEED_COUNT for epoch in schedule_a))
+        fixed_seed_set = set(FIXED_EVALUATION_SEEDS)
+        self.assertTrue(all(seed not in fixed_seed_set for epoch in schedule_a for seed in epoch))
 
     def test_different_master_seeds_produce_different_training_schedule(self):
-        _theta_seq_a, train_seed_seq_a, heldout_seed_seq_a = np.random.SeedSequence(17).spawn(3)
-        heldout_a = _sample_heldout_evaluation_seeds(
-            np.random.default_rng(heldout_seed_seq_a),
-            DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-        )
+        _theta_seq_a, train_seed_seq_a = np.random.SeedSequence(17).spawn(2)
         schedule_a = _build_epoch_training_seed_schedule(
             np.random.default_rng(train_seed_seq_a),
             epochs=3,
             seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-            excluded_seeds=heldout_a,
         )
 
-        _theta_seq_b, train_seed_seq_b, heldout_seed_seq_b = np.random.SeedSequence(18).spawn(3)
-        heldout_b = _sample_heldout_evaluation_seeds(
-            np.random.default_rng(heldout_seed_seq_b),
-            DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-        )
+        _theta_seq_b, train_seed_seq_b = np.random.SeedSequence(18).spawn(2)
         schedule_b = _build_epoch_training_seed_schedule(
             np.random.default_rng(train_seed_seq_b),
             epochs=3,
             seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-            excluded_seeds=heldout_b,
         )
 
-        self.assertNotEqual(heldout_a, heldout_b)
         self.assertNotEqual(schedule_a, schedule_b)
 
-    def test_build_epoch_training_seed_schedule_excludes_heldout_seeds(self):
-        _theta_seq, train_seed_seq, heldout_seed_seq = np.random.SeedSequence(23).spawn(3)
-        heldout_seeds = _sample_heldout_evaluation_seeds(
-            np.random.default_rng(heldout_seed_seq),
-            DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-        )
+    def test_build_epoch_training_seed_schedule_excludes_fixed_evaluation_seeds(self):
+        _theta_seq, train_seed_seq = np.random.SeedSequence(23).spawn(2)
         training_schedule = _build_epoch_training_seed_schedule(
             np.random.default_rng(train_seed_seq),
             epochs=6,
             seeds_per_epoch=5,
-            excluded_seeds=heldout_seeds,
         )
 
-        heldout_seed_set = set(heldout_seeds)
-        self.assertTrue(all(seed not in heldout_seed_set for epoch in training_schedule for seed in epoch))
+        fixed_seed_set = set(FIXED_EVALUATION_SEEDS)
+        self.assertTrue(all(seed not in fixed_seed_set for epoch in training_schedule for seed in epoch))
 
     def test_run_episode_extracts_terminal_metrics(self):
         env = _FakeEpisodeEnv(
@@ -437,28 +413,6 @@ class TrainRwrTests(unittest.TestCase):
 
     def test_train_parallel_branch_reuses_one_executor_across_all_epochs(self):
         seen_tasks = []
-        heldout_seeds = [
-            1001,
-            1002,
-            1003,
-            1004,
-            1005,
-            1006,
-            1007,
-            1008,
-            1009,
-            1010,
-            1011,
-            1012,
-            1013,
-            1014,
-            1015,
-            1016,
-            1017,
-            1018,
-            1019,
-            1020,
-        ]
         epoch_training_schedule = [
             [11, 12, 13],
             [21, 22, 23],
@@ -483,34 +437,28 @@ class TrainRwrTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch("train_rwr.ProcessPoolExecutor", _FakeExecutor):
                 with patch(
-                    "train_rwr._sample_heldout_evaluation_seeds",
-                    return_value=heldout_seeds,
-                ) as heldout_mock:
+                    "train_rwr._build_epoch_training_seed_schedule",
+                    return_value=epoch_training_schedule,
+                ) as schedule_mock:
                     with patch(
-                        "train_rwr._build_epoch_training_seed_schedule",
-                        return_value=epoch_training_schedule,
-                    ) as schedule_mock:
-                        with patch(
-                            "train_rwr._evaluate_episode_task",
-                            side_effect=_fake_evaluate_episode_task,
-                        ):
-                            metrics = train(
-                                epochs=5,
-                                samples_per_epoch=3,
-                                seed=7,
-                                output_dir=Path(tmp_dir),
-                            )
+                        "train_rwr._evaluate_episode_task",
+                        side_effect=_fake_evaluate_episode_task,
+                    ):
+                        metrics = train(
+                            epochs=5,
+                            samples_per_epoch=3,
+                            seed=7,
+                            output_dir=Path(tmp_dir),
+                        )
             best_params_path = Path(tmp_dir) / DEFAULT_BEST_PARAMS_NAME
             self.assertTrue(best_params_path.exists())
             with best_params_path.open("r", encoding="utf-8") as handle:
                 best_params = json.load(handle)
 
-        heldout_mock.assert_called_once()
         schedule_mock.assert_called_once_with(
             unittest.mock.ANY,
             epochs=5,
             seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-            excluded_seeds=heldout_seeds,
         )
         self.assertEqual(_FakeExecutor.last_max_workers, 3)
         self.assertEqual(len(_FakeExecutor.instances), 1)
@@ -550,15 +498,15 @@ class TrainRwrTests(unittest.TestCase):
         best_sample = (best_group_idx % 3) + 1
         self.assertEqual(best_params["best_epoch"], best_epoch)
         self.assertEqual(best_params["best_sample_index_within_epoch"], best_sample)
-        self.assertEqual(best_params["master_seed"], 7)
-        self.assertEqual(best_params["epoch_training_seeds"], epoch_training_schedule)
-        self.assertEqual(best_params["heldout_evaluation_seeds"], heldout_seeds)
         self.assertTrue(np.allclose(best_params["best_theta_seen"], best_theta_tasks[0][0]))
         self.assertTrue(np.allclose(best_params["final_theta"], best_theta_tasks[0][0]))
         self.assertAlmostEqual(best_params["best_return"], grouped_returns[best_group_idx], places=6)
         self.assertEqual(len(best_params["final_mu"]), 4)
         self.assertEqual(len(best_params["final_std"]), 4)
         self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+        self.assertNotIn("master_seed", best_params)
+        self.assertNotIn("epoch_training_seeds", best_params)
+        self.assertNotIn("heldout_evaluation_seeds", best_params)
         self.assertNotIn("final_mu_policy_params", best_params)
 
     def test_train_passes_raw_theta_to_episode_tasks_and_keeps_clipped_policy_artifact(self):
@@ -606,6 +554,9 @@ class TrainRwrTests(unittest.TestCase):
             "slowdown_speed_scale": float(clipped_theta[3]),
         })
         self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
+        self.assertNotIn("master_seed", best_params)
+        self.assertNotIn("epoch_training_seeds", best_params)
+        self.assertNotIn("heldout_evaluation_seeds", best_params)
         self.assertNotIn("final_mu_policy_params", best_params)
 
     def test_plot_training_metrics_accepts_default_epoch_axis_label(self):
@@ -668,13 +619,9 @@ class TrainRwrTests(unittest.TestCase):
             self.assertEqual(len(best_params["best_theta_seen"]), 4)
             self.assertEqual(best_params["final_theta"], best_params["best_theta_seen"])
             self.assertEqual(best_params["final_policy_params"], best_params["best_policy_params"])
-            self.assertEqual(best_params["master_seed"], 7)
-            self.assertEqual(len(best_params["epoch_training_seeds"]), 1)
-            self.assertEqual(len(best_params["epoch_training_seeds"][0]), DEFAULT_EPOCH_TRAIN_SEED_COUNT)
-            self.assertEqual(
-                len(best_params["heldout_evaluation_seeds"]),
-                DEFAULT_HELDOUT_EVALUATION_SEED_COUNT,
-            )
+            self.assertNotIn("master_seed", best_params)
+            self.assertNotIn("epoch_training_seeds", best_params)
+            self.assertNotIn("heldout_evaluation_seeds", best_params)
             self.assertNotIn("final_mu_policy_params", best_params)
             self.assertNotIn("best_success_rate", best_params)
             self.assertEqual(set(best_params["best_policy_params"].keys()), {

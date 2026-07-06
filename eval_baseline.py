@@ -11,6 +11,7 @@ from typing import Sequence
 
 import numpy as np
 
+from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import EpisodeResult, _evaluate_episode_task
 
@@ -36,28 +37,6 @@ COMPARISON_METRIC_FIELDNAMES = (
     "baseline_distracted_triggers",
     "comparison_distracted_triggers",
 )
-FIXED_EVALUATION_SEEDS = [
-    191664963,
-    1662057957,
-    1405681631,
-    942484272,
-    929893137,
-    1843824992,
-    184566854,
-    1497586438,
-    432652533,
-    202244314,
-    1130604997,
-    2095133045,
-    1580016183,
-    1634535062,
-    1540770719,
-    1688060240,
-    1102145672,
-    275121930,
-    1803345590,
-    967196436,
-]
 
 
 def _positive_int(value: str) -> int:

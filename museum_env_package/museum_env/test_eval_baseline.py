@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 
 import eval_baseline
+from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 from train_rwr import EpisodeResult
 
@@ -183,7 +184,7 @@ class EvalBaselineTests(unittest.TestCase):
         comparison_tasks = seen_tasks[4:]
         self.assertTrue(all(np.allclose(task[0], baseline_theta) for task in baseline_tasks))
         self.assertTrue(all(np.allclose(task[0], comparison_theta) for task in comparison_tasks))
-        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:4]
+        expected_seeds = FIXED_EVALUATION_SEEDS[:4]
         self.assertEqual(
             [task[1] for task in baseline_tasks],
             expected_seeds,
@@ -253,7 +254,7 @@ class EvalBaselineTests(unittest.TestCase):
         seen_tasks = []
         baseline_theta = PolicySearchParams().to_theta()
         comparison_theta = np.array([2.6, 4.1, 2.3, 0.74], dtype=np.float64)
-        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:3]
+        expected_seeds = FIXED_EVALUATION_SEEDS[:3]
 
         def _fake_evaluate_episode_task(task):
             seen_tasks.append(task)
@@ -345,7 +346,7 @@ class EvalBaselineTests(unittest.TestCase):
             with summary_path.open("r", encoding="utf-8") as handle:
                 summary = json.load(handle)
 
-        expected_seeds = eval_baseline.FIXED_EVALUATION_SEEDS[:3]
+        expected_seeds = FIXED_EVALUATION_SEEDS[:3]
         baseline_tasks = seen_tasks[:3]
         comparison_tasks = seen_tasks[3:]
         self.assertEqual([task[1] for task in baseline_tasks], expected_seeds)
