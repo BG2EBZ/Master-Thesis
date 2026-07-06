@@ -1,0 +1,62 @@
+{
+  "baseline_theta": [
+    3.0,
+    4.0,
+    2.0,
+    0.7
+  ],
+  "comparison_theta": [
+    2.7,
+    3.8,
+    3.87,
+    0.9
+  ],
+  "baseline_policy_params": {
+    "slow_down_distance_m": 3.0,
+    "callback_distance_m": 4.0,
+    "callback_wait_seconds": 2.0,
+    "slowdown_speed_scale": 0.7
+  },
+  "comparison_policy_params": {
+    "slow_down_distance_m": 2.7,
+    "callback_distance_m": 3.8,
+    "callback_wait_seconds": 3.87,
+    "slowdown_speed_scale": 0.9
+  },
+  "seed": 42,
+  "evaluation_seeds": [
+    191664963,
+    1662057957,
+    1405681631,
+    942484272,
+    929893137,
+    1843824992,
+    184566854,
+    1497586438,
+    432652533,
+    202244314,
+    1130604997,
+    2095133045,
+    1580016183,
+    1634535062,
+    1540770719,
+    1688060240,
+    1102145672,
+    275121930,
+    1803345590,
+    967196436
+  ],
+  "num_runs": 20,
+  "baseline_mean_return": -69.629,
+  "baseline_best_return": -57.34,
+  "baseline_mean_duration_seconds": 201.28999999999996,
+  "baseline_mean_overwhelmed_triggers": 0.7,
+  "baseline_mean_impatient_triggers": 16.6,
+  "baseline_mean_distracted_triggers": 6.75,
+  "comparison_mean_return": -68.4115,
+  "comparison_best_return": -52.425,
+  "comparison_mean_duration_seconds": 197.115,
+  "comparison_mean_overwhelmed_triggers": 0.75,
+  "comparison_mean_impatient_triggers": 15.45,
+  "comparison_mean_distracted_triggers": 7.4
+}

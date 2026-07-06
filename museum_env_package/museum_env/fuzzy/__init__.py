@@ -47,7 +47,7 @@ class FollowingFuzzyEngine:
         profile: str = "normal",
     ) -> list[dict]:
         rows = np.asarray(inputs, dtype=np.float32)
-        return [self.compute(*row, context=context, profile=profile) for row in rows]
+        return _compute_batch(rows, context=context, profile=profile)
 
 
 def compute(

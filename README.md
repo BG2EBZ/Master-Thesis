@@ -26,6 +26,13 @@
 
 - `step`
 - `terminated_reason`
+- terminal-only on the final step:
+- `duration_seconds`
+- `overwhelmed_triggers`
+- `impatient_triggers`
+- `distracted_triggers`
+- `return`
+- `reward_components`
 
 `info["phase"]` contains the current orchestration phase:
 
@@ -56,17 +63,26 @@
 
 The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback internals are no longer returned by default.
 
+## Reward semantics
+
+`MuseumEnv.step()` now uses episodic reward semantics:
+
+- intermediate steps return `0.0`
+- the final scalar reward is emitted only when the episode completes or times out
+- `info` keeps the same compact top-level schema shown above
+- final-step reward breakdown is exposed under `info["episode"]["reward_components"]`
+
 Example:
 
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
 print(info["phase"]["listen"])
-print(info["robot"]["dist_to_goal"])
+print(reward)
 print(info["crowd"]["modes"])
 
-if info["events"]["final_listen_ready"]:
-    print("Episode completed")
+if terminated or truncated:
+    print("Final episode reward:", reward)
 ```
 
 ## Run scripts
@@ -74,3 +90,10 @@ if info["events"]["final_listen_ready"]:
 - Demo: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo`
 - Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train`
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder`
+- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python train_rwr.py`
+
+The minimal RWR trainer writes:
+
+- default output directory: `runs/rwr_minimal`
+- `training_metrics.csv`
+- `training_metrics.png`

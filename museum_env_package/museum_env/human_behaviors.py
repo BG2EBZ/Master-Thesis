@@ -242,15 +242,6 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
         hr_distance_min=human.hr_distance_min,
         hr_distance_max=human.hr_distance_max,
     )
-    guide_norm = float(np.linalg.norm(to_target_xy))
-    if guide_norm > NORM_EPS:
-        guide_dir = to_target_xy / guide_norm
-        if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
-            fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
-            if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
-                v_total = np.asarray(fallback_v_xy, dtype=np.float32)
-            else:
-                v_total = np.zeros(2, dtype=np.float32)
 
     yaw_err = wrap_to_pi(desired_yaw - yaw)
     return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
@@ -706,11 +697,11 @@ def _initialize_distracted_target(
         return False
 
     # No valid focus target, so pick a random fallback yaw and corresponding target point.
-    deviation_deg = np.random.uniform(
+    deviation_deg = human.rng.uniform(
         DISTRACTED_YAW_DEVIATION_MIN_DEG,
         DISTRACTED_YAW_DEVIATION_MAX_DEG,
     )
-    deviation_sign = -1.0 if np.random.rand() < 0.5 else 1.0
+    deviation_sign = -1.0 if human.rng.random() < 0.5 else 1.0
     deviation_rad = np.deg2rad(deviation_deg) * deviation_sign
     fallback_yaw = wrap_to_pi(float(fallback_reference_yaw) + deviation_rad)
     if fallback_target_xy is None:

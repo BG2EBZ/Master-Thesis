@@ -5,7 +5,7 @@
 The environment now exposes a compact runtime surface:
 
 - `info["events"]`: high-level episode and callback events
-- `info["episode"]`: step counter and termination reason
+- `info["episode"]`: step counter and termination reason, plus terminal reward breakdown on the final step
 - `info["phase"]`: follow/listen orchestration state
 - `info["robot"]`: pose, goal, mode, emotion, speaker, and action
 - `info["crowd"]`: crowd pose, goal, modes, profiles, and distracted indices
@@ -18,11 +18,18 @@ Key fields to watch while debugging:
 - `info["robot"]["callback_phase"]`: `turn`, `cue`, or `None`
 - `info["events"]["final_listen_ready"]`: terminal success flag
 
+## Reward behavior
+
+- intermediate `step()` calls now return `reward = 0.0`
+- the final reward is emitted only on completion or timeout
+- final reward components are exposed through `info["episode"]["reward_components"]`
+
 Example:
 
 ```python
 obs, reward, terminated, truncated, info = env.step(None)
 
+print(reward)
 print(info["phase"])
 print(info["robot"])
 print(info["crowd"]["distracted_indices"])

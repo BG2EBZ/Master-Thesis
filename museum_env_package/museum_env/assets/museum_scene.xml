@@ -1,6 +1,6 @@
 <mujoco model="museum_shell">
       <compiler angle="degree" coordinate="local"/>
-      <option timestep="0.002" gravity="0 0 0"/>
+      <option timestep="0.05" gravity="0 0 0"/>
 
       <visual>
             <global offwidth="1920" offheight="1080"/>
@@ -138,8 +138,8 @@
             <!-- ============ ROBOT (triangle-ish base, planar joints) ============ -->
             <body name="robot" pos="5 5 0.06">
                   <!-- Planar movement: x, y, yaw -->
-                  <joint name="robot_x" type="slide" axis="1 0 0" damping="100"/>
-                  <joint name="robot_y" type="slide" axis="0 1 0" damping="100"/>
+                  <joint name="robot_x" type="slide" axis="1 0 0" damping="15" frictionloss="0.4"/>
+                  <joint name="robot_y" type="slide" axis="0 1 0" damping="15" frictionloss="0.4"/>
                   <joint name="robot_yaw" type="hinge" axis="0 0 1" damping="1"/>
 
                   <!-- Main footprint: use a cylinder for stable collision (fast + robust).
@@ -171,9 +171,9 @@
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
             <body name="person1" pos="0 0 0.125">
                   <!-- Planar movement: x, y, yaw -->
-                  <joint name="person1_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person1_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person1_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person1_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
 
                   <!-- Torso as a capsule.
                   shoulders: 0.45m, chest: 0.25m.
@@ -198,9 +198,9 @@
 
             <!-- More people -->
             <body name="person2" pos="0 0 0.125">
-                  <joint name="person2_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person2_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person2_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person2_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person2_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.20 0.70 0.30 1"/>
                   <geom name="person2_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person2_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -210,9 +210,9 @@
             </body>
 
             <body name="person3" pos="0 0 0.125">
-                  <joint name="person3_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person3_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person3_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person3_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person3_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.22 0.72 0.33 1"/>
                   <geom name="person3_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person3_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -222,9 +222,9 @@
             </body>
 
             <body name="person4" pos="0 0 0.125">
-                  <joint name="person4_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person4_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person4_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person4_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person4_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.24 0.74 0.35 1"/>
                   <geom name="person4_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person4_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -234,9 +234,9 @@
             </body>
 
             <body name="person5" pos="0 0 0.125">
-                  <joint name="person5_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person5_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person5_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person5_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person5_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.26 0.76 0.37 1"/>
                   <geom name="person5_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person5_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -246,9 +246,9 @@
             </body>
 
             <body name="person6" pos="0 0 0.125">
-                  <joint name="person6_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person6_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person6_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person6_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person6_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person6_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person6_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.28 0.78 0.39 1"/>
                   <geom name="person6_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person6_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -258,9 +258,9 @@
             </body>
 
             <body name="person7" pos="0 0 0.125">
-                  <joint name="person7_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person7_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person7_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person7_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person7_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person7_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person7_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.30 0.80 0.41 1"/>
                   <geom name="person7_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person7_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -270,9 +270,9 @@
             </body>
 
             <body name="person8" pos="0 0 0.125">
-                  <joint name="person8_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person8_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person8_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person8_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person8_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person8_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person8_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.32 0.82 0.43 1"/>
                   <geom name="person8_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person8_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -282,9 +282,9 @@
             </body>
 
             <body name="person9" pos="0 0 0.125">
-                  <joint name="person9_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person9_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person9_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person9_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person9_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person9_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person9_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.34 0.84 0.45 1"/>
                   <geom name="person9_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person9_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -294,9 +294,9 @@
             </body>
 
             <body name="person10" pos="0 0 0.125">
-                  <joint name="person10_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person10_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person10_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person10_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person10_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person10_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person10_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.36 0.86 0.47 1"/>
                   <geom name="person10_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person10_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -306,9 +306,9 @@
             </body>
 
             <body name="person11" pos="0 0 0.125">
-                  <joint name="person11_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person11_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person11_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person11_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person11_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person11_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person11_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.38 0.88 0.49 1"/>
                   <geom name="person11_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person11_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -318,9 +318,9 @@
             </body>
 
             <body name="person12" pos="0 0 0.125">
-                  <joint name="person12_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person12_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person12_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person12_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person12_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person12_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person12_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.40 0.90 0.51 1"/>
                   <geom name="person12_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person12_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -330,9 +330,9 @@
             </body>
 
             <body name="person13" pos="0 0 0.125">
-                  <joint name="person13_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person13_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person13_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person13_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person13_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person13_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person13_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.42 0.92 0.53 1"/>
                   <geom name="person13_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person13_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -342,9 +342,9 @@
             </body>
 
             <body name="person14" pos="0 0 0.125">
-                  <joint name="person14_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person14_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person14_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person14_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person14_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person14_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person14_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.44 0.94 0.55 1"/>
                   <geom name="person14_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person14_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -354,9 +354,9 @@
             </body>
 
             <body name="person15" pos="0 0 0.125">
-                  <joint name="person15_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person15_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person15_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person15_x" type="slide" axis="1 0 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person15_y" type="slide" axis="0 1 0" damping="15" frictionloss="1.2"/>
+                  <joint name="person15_yaw" type="hinge" axis="0 0 1" damping="5.0" frictionloss="1.0"/>
                   <geom name="person15_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.46 0.96 0.57 1"/>
                   <geom name="person15_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person15_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -372,84 +372,84 @@
             <!-- Control x/y slides and yaw hinge.
             For RL, action = [vx_cmd, vy_cmd, yawrate_cmd] is possible.
             But for (v, w) you usually set vy_cmd=0 in your policy. -->
-            <velocity name="motor_x" joint="robot_x" kv="300" ctrlrange="-1.5 1.5"/>
-            <velocity name="motor_y" joint="robot_y" kv="300" ctrlrange="-1.5 1.5"/>
-            <velocity name="motor_yaw" joint="robot_yaw" kv="300" ctrlrange="-10.0 10.0"/>
+            <velocity name="motor_x" joint="robot_x" kv="15.0" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_y" joint="robot_y" kv="15.0" ctrlrange="-1.5 1.5"/>
+            <velocity name="motor_yaw" joint="robot_yaw" kv="15.0" ctrlrange="-10.0 10.0"/>
 
             <!-- Person controls (change from motor to velocity) -->
-            <velocity name="person1_motor_x" joint="person1_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person1_motor_y" joint="person1_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person1_motor_yaw" joint="person1_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person1_motor_x" joint="person1_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person1_motor_y" joint="person1_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person1_motor_yaw" joint="person1_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person2 controls -->
-            <velocity name="person2_motor_x" joint="person2_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person2_motor_y" joint="person2_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person2_motor_yaw" joint="person2_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person2_motor_x" joint="person2_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person2_motor_y" joint="person2_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person2_motor_yaw" joint="person2_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person3 controls -->
-            <velocity name="person3_motor_x" joint="person3_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person3_motor_y" joint="person3_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person3_motor_yaw" joint="person3_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person3_motor_x" joint="person3_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person3_motor_y" joint="person3_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person3_motor_yaw" joint="person3_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person4 controls -->
-            <velocity name="person4_motor_x" joint="person4_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person4_motor_y" joint="person4_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person4_motor_yaw" joint="person4_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person4_motor_x" joint="person4_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person4_motor_y" joint="person4_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person4_motor_yaw" joint="person4_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person5 controls -->
-            <velocity name="person5_motor_x" joint="person5_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person5_motor_y" joint="person5_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person5_motor_yaw" joint="person5_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person5_motor_x" joint="person5_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person5_motor_y" joint="person5_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person5_motor_yaw" joint="person5_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person6 controls -->
-            <velocity name="person6_motor_x" joint="person6_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person6_motor_y" joint="person6_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person6_motor_yaw" joint="person6_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person6_motor_x" joint="person6_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person6_motor_y" joint="person6_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person6_motor_yaw" joint="person6_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person7 controls -->
-            <velocity name="person7_motor_x" joint="person7_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person7_motor_y" joint="person7_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person7_motor_yaw" joint="person7_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person7_motor_x" joint="person7_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person7_motor_y" joint="person7_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person7_motor_yaw" joint="person7_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person8 controls -->
-            <velocity name="person8_motor_x" joint="person8_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person8_motor_y" joint="person8_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person8_motor_yaw" joint="person8_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person8_motor_x" joint="person8_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person8_motor_y" joint="person8_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person8_motor_yaw" joint="person8_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person9 controls -->
-            <velocity name="person9_motor_x" joint="person9_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person9_motor_y" joint="person9_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person9_motor_yaw" joint="person9_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person9_motor_x" joint="person9_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person9_motor_y" joint="person9_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person9_motor_yaw" joint="person9_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person10 controls -->
-            <velocity name="person10_motor_x" joint="person10_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person10_motor_y" joint="person10_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person10_motor_yaw" joint="person10_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person10_motor_x" joint="person10_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person10_motor_y" joint="person10_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person10_motor_yaw" joint="person10_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person11 controls -->
-            <velocity name="person11_motor_x" joint="person11_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person11_motor_y" joint="person11_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person11_motor_yaw" joint="person11_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person11_motor_x" joint="person11_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person11_motor_y" joint="person11_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person11_motor_yaw" joint="person11_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person12 controls -->
-            <velocity name="person12_motor_x" joint="person12_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person12_motor_y" joint="person12_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person12_motor_yaw" joint="person12_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person12_motor_x" joint="person12_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person12_motor_y" joint="person12_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person12_motor_yaw" joint="person12_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person13 controls -->
-            <velocity name="person13_motor_x" joint="person13_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person13_motor_y" joint="person13_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person13_motor_yaw" joint="person13_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person13_motor_x" joint="person13_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person13_motor_y" joint="person13_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person13_motor_yaw" joint="person13_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person14 controls -->
-            <velocity name="person14_motor_x" joint="person14_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person14_motor_y" joint="person14_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person14_motor_yaw" joint="person14_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person14_motor_x" joint="person14_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person14_motor_y" joint="person14_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person14_motor_yaw" joint="person14_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
             <!-- Person15 controls -->
-            <velocity name="person15_motor_x" joint="person15_x" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person15_motor_y" joint="person15_y" kv="300" ctrlrange="-1.67 1.67"/>
-            <velocity name="person15_motor_yaw" joint="person15_yaw" kv="300" ctrlrange="-20.0 20.0"/>
+            <velocity name="person15_motor_x" joint="person15_x" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person15_motor_y" joint="person15_y" kv="15.0" ctrlrange="-1.67 1.67"/>
+            <velocity name="person15_motor_yaw" joint="person15_yaw" kv="15.0" ctrlrange="-20.0 20.0"/>
 
       </actuator>
 

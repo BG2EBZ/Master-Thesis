@@ -10,6 +10,7 @@ setup(
     },
     install_requires=[
         "gymnasium",
+        "matplotlib",
         "mujoco",
         "numpy",
         "scikit-fuzzy",

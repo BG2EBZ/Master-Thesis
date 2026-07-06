@@ -8,6 +8,7 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 
+from .policy_search_params import PolicySearchParams
 from . import env_control, env_flow
 from .env_constants import (
     ACTION_HIGH,
@@ -28,7 +29,6 @@ from .env_constants import (
     DEFAULT_MAP_NAME,
     FOLLOWING_CALLBACK_CUE_SECONDS,
     FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG,
-    FOLLOWING_CALLBACK_WAIT_SECONDS,
     FOLLOW_FAN_HALF_ANGLE_DEG,
     HUMAN_WALL_FOOTPRINT_RADIUS,
     HUMAN_FOLLOW_DISTANCE_DEFAULT,
@@ -54,6 +54,8 @@ from .env_constants import (
     MAX_DISTRACTED_DURATION_SECONDS_DEFAULT,
     MAX_HUMANS_CAPACITY,
     MAX_STEPS_DEFAULT,
+    PASS_REQUEST_RESPONSE_PROB_ND_DEFAULT,
+    PASS_REQUEST_RESPONSE_PROB_NORMAL_DEFAULT,
     POST_EXPLANATION_HOLD_RESUME_DISTANCE,
     POST_EXPLANATION_HOLD_RESUME_SPEED_THRESHOLD,
     REPULSION_GAIN_DEFAULT,
@@ -71,6 +73,7 @@ from .env_reporting import (
 )
 from .env_runtime import build_human_goals, build_world_frame, compute_reached_goal_indices
 from .env_state import (
+    EpisodeMetrics,
     ListeningState,
     PostExplanationState,
     RobotFrontBlockingState,
@@ -81,6 +84,7 @@ from .env_state import (
 from .human import Human, HumanMode, HumanProfile, LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT
 from .map_layouts import MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
+from .reward import DEFAULT_REWARD_CONFIG, RewardConfig, compute_episode_reward
 from .robot import Robot
 
 logger = logging.getLogger(__name__)
@@ -115,11 +119,14 @@ class MuseumEnv(gym.Env):
         callback_impatient_rejoin_prob_nd: float = CALLBACK_IMPATIENT_REJOIN_PROB_ND_DEFAULT,
         callback_impatient_ignore_prob_nd: float = CALLBACK_IMPATIENT_IGNORE_PROB_ND_DEFAULT,
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
+        pass_request_response_prob_normal: float = PASS_REQUEST_RESPONSE_PROB_NORMAL_DEFAULT,
+        pass_request_response_prob_nd: float = PASS_REQUEST_RESPONSE_PROB_ND_DEFAULT,
         observation_update_period_seconds: float = 0.1,
         listen_question_probability: float = LISTEN_QUESTION_PROBABILITY_DEFAULT,
         listen_question_after_explanation_probability: float = (
             LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT
         ),
+        reward_config: Optional[RewardConfig] = None,
         n_humans: int = 15,
     ):
         super().__init__()
@@ -142,6 +149,9 @@ class MuseumEnv(gym.Env):
         self.render_width = 1920
         self.render_height = 1080
 
+        self.policy_params = PolicySearchParams()
+        self.reward_config = DEFAULT_REWARD_CONFIG if reward_config is None else reward_config
+
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -157,7 +167,7 @@ class MuseumEnv(gym.Env):
             waypoints=self.map_layout.robot_waypoints,
             v_max=1.0,
             k_v=20.0,
-            k_yaw=20.0,
+            k_yaw=12.0,
         )
         self.follow_phase = None
         self.robot_start_xy = None
@@ -181,8 +191,8 @@ class MuseumEnv(gym.Env):
         self.listen_question_pause_seconds = float(LISTEN_QUESTION_PAUSE_SECONDS_DEFAULT)
         self.listen_question_pause_steps = self._steps(self.listen_question_pause_seconds)
         self.listen_distance_shorten_steps = self._steps(LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN)
-        self.following_callback_wait_steps = self._steps(FOLLOWING_CALLBACK_WAIT_SECONDS)
         self.following_callback_cue_steps = self._steps(FOLLOWING_CALLBACK_CUE_SECONDS)
+        self._sync_policy_parameter_state()
         self.following_callback_resume_grace_steps = self._steps(5.0)
         self.following_callback_front_sector_half_angle = np.deg2rad(
             FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG
@@ -192,11 +202,16 @@ class MuseumEnv(gym.Env):
         )
         self.post_explanation_resume_distance = float(POST_EXPLANATION_HOLD_RESUME_DISTANCE)
         self.robot_pass_request_steps = self._steps(ROBOT_PASS_REQUEST_SECONDS)
+        self.pass_request_response_profile_probs = {
+            HumanProfile.NORMAL: float(pass_request_response_prob_normal),
+            HumanProfile.NEURODIVERGENT: float(pass_request_response_prob_nd),
+        }
 
         self.listening_state = ListeningState()
         self.post_explanation_state = PostExplanationState()
         self.robot_front_blocking_state = RobotFrontBlockingState()
         self.runtime_cache = RuntimeCache()
+        self.episode_metrics = EpisodeMetrics()
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.callback_trigger_distance_meters = float(callback_trigger_distance_meters)
         env_control.reset_following_wait_episode(self)
@@ -284,6 +299,30 @@ class MuseumEnv(gym.Env):
     def _steps(self, seconds: float) -> int:
         return max(1, int(round(float(seconds) / self.dt)))
 
+    def _sync_policy_parameter_state(self) -> None:
+        """Project the current episode policy parameters into runtime step fields."""
+        self.following_callback_wait_steps = self._steps(
+            self.policy_params.callback_wait_seconds
+        )
+
+    def _record_episode_trigger(self, kind: str) -> None:
+        if kind == "overwhelmed":
+            self.episode_metrics.overwhelmed_triggers += 1
+            return
+        if kind == "impatient":
+            self.episode_metrics.impatient_triggers += 1
+            return
+        if kind == "distracted":
+            self.episode_metrics.distracted_triggers += 1
+            return
+        raise ValueError(f"Unsupported episode trigger kind: {kind}")
+
+    def set_policy_parameters(self, theta) -> None:
+        """Apply one sampled high-level robot policy for the current episode."""
+        self.policy_params = PolicySearchParams.from_theta(theta)
+        self._sync_policy_parameter_state()
+
+
     def _robot_xy_from_data(self) -> np.ndarray:
         return np.array(
             [
@@ -293,7 +332,14 @@ class MuseumEnv(gym.Env):
             dtype=np.float32,
         )
 
-    def _build_world_frame(self, *, force: bool = False, tick: bool = False):
+    def _build_world_frame(
+        self,
+        *,
+        force: bool = False,
+        tick: bool = False,
+        include_repulsion_vectors: bool = True,
+        include_pairwise_distances: bool = True,
+    ):
         return build_world_frame(
             data=self.data,
             robot_body_id=self.robot_body_id,
@@ -307,6 +353,8 @@ class MuseumEnv(gym.Env):
             repulsion_gain=self.repulsion_gain,
             force_observations=force,
             tick_age_before_refresh=tick,
+            include_repulsion_vectors=include_repulsion_vectors,
+            include_pairwise_distances=include_pairwise_distances,
         )
 
     def _build_observation(self, world_frame) -> np.ndarray:
@@ -345,6 +393,7 @@ class MuseumEnv(gym.Env):
                 impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
+                rng=self.np_random,
             )
 
     def _sample_active_human_spawn_states(self, robot_xy) -> list[np.ndarray]:
@@ -438,6 +487,7 @@ class MuseumEnv(gym.Env):
         self.listening_state.reset()
         self.post_explanation_state.reset()
         self.runtime_cache.reset()
+        self.episode_metrics.reset()
         self.fuzzy_debug = build_fuzzy_debug_states(len(self.humans))
         self.hh_distance_metric.reset()
         self.hr_distance_metric.reset()
@@ -457,7 +507,11 @@ class MuseumEnv(gym.Env):
         for human in self.humans:
             human.listening_steps = 0
 
-        world_frame = self._build_world_frame(force=True)
+        world_frame = self._build_world_frame(
+            force=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
         self._sync_robot_speaker_state()
         self._sync_robot_visual_state(force=True)
         self._sync_human_visual_state()
@@ -468,7 +522,10 @@ class MuseumEnv(gym.Env):
         self.step_count += 1
         events = StepEvents()
 
-        pre_frame = self._build_world_frame()
+        pre_frame = self._build_world_frame(
+            include_repulsion_vectors=True,
+            include_pairwise_distances=False,
+        )
         robot_action, _ = env_flow.compute_robot_action(self, pre_frame, events)
         env_flow.maybe_finish_post_explanation_hold(
             self,
@@ -487,7 +544,11 @@ class MuseumEnv(gym.Env):
         env_control.apply_human_controls(self, pre_frame)
 
         mujoco.mj_step(self.model, self.data)
-        post_frame = self._build_world_frame(tick=True)
+        post_frame = self._build_world_frame(
+            tick=True,
+            include_repulsion_vectors=False,
+            include_pairwise_distances=False,
+        )
 
         env_control.update_human_listening_session_progress(self)
         env_flow.progress_listening_phase(self, events, post_frame)
@@ -541,7 +602,27 @@ class MuseumEnv(gym.Env):
             perceived_distracted_indices=distracted_indices,
         )
         env_control.advance_robot_front_blocking_runtime(self)
-        reward = -float(info["robot"]["dist_to_goal"])
+        if terminated or truncated:
+            duration_seconds = float(self.step_count) * float(self.dt)
+            reward, reward_components = compute_episode_reward(
+                completed=terminated,
+                truncated=truncated,
+                duration_seconds=duration_seconds,
+                metrics=self.episode_metrics,
+                config=self.reward_config,
+            )
+            info["episode"].update(
+                {
+                    "duration_seconds": duration_seconds,
+                    "overwhelmed_triggers": int(self.episode_metrics.overwhelmed_triggers),
+                    "impatient_triggers": int(self.episode_metrics.impatient_triggers),
+                    "distracted_triggers": int(self.episode_metrics.distracted_triggers),
+                    "return": float(reward),
+                    "reward_components": reward_components,
+                }
+            )
+        else:
+            reward = 0.0
         return self._build_observation(post_frame), reward, terminated, truncated, info
 
     def render(self):

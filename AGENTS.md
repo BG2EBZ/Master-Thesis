@@ -47,6 +47,7 @@
   - `info["crowd"]["human_robot_distance"]`
 - `info["robot"]` is a compact pose/goal/action summary, not a full internal dump.
 - `info["crowd"]` is a compact crowd snapshot with positions, goals, modes, profiles, reached-goal indices, distracted indices, and human-robot distances.
+- `info["episode"]` always includes `step` and `terminated_reason`, and on terminal or truncated steps also includes duration, trigger counts, scalar return, and reward components.
 - Preserve this compact contract unless the task explicitly requires an interface change. If you change it, update the dependent docs and tests in the same task.
 
 ## Runbook

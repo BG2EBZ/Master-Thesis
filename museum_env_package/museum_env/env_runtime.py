@@ -38,15 +38,63 @@ def collect_human_poses(data, humans: Sequence, human_body_ids: Sequence[int]) -
     return human_xyz
 
 
-def compute_human_pairwise_distances(human_xy) -> np.ndarray:
+def compute_human_pairwise_geometry(human_xy) -> tuple[np.ndarray, np.ndarray]:
     human_xy = np.asarray(human_xy, dtype=np.float32)
     n_humans = int(human_xy.shape[0])
     if n_humans == 0:
-        return np.zeros((0, 0), dtype=np.float32)
-    pairwise_diff = human_xy[:, None, :] - human_xy[None, :, :]
-    pairwise_dist = np.linalg.norm(pairwise_diff, axis=2).astype(np.float32)
-    np.fill_diagonal(pairwise_dist, np.inf)
-    return pairwise_dist
+        return (
+            np.zeros((0, 0, 2), dtype=np.float32),
+            np.zeros((0, 0), dtype=np.float32),
+        )
+
+    pairwise_diff = (human_xy[:, None, :] - human_xy[None, :, :]).astype(np.float32, copy=False)
+    pairwise_dist = np.linalg.norm(pairwise_diff, axis=2).astype(np.float32, copy=False)
+    # Avoid np.fill_diagonal in this hot path; current NumPy keeps small traced
+    # allocations around for each call, which becomes visible over long training runs.
+    pairwise_dist.reshape(-1)[:: n_humans + 1] = np.inf
+    return pairwise_diff, pairwise_dist
+
+
+def _compute_social_repulsion_from_pairwise(
+    pairwise_diff,
+    pairwise_dist,
+    social_distance: float,
+    repulsion_gain: float,
+) -> np.ndarray:
+    pairwise_diff = np.asarray(pairwise_diff, dtype=np.float32)
+    pairwise_dist = np.asarray(pairwise_dist, dtype=np.float32)
+    n_humans = int(pairwise_dist.shape[0])
+    if n_humans == 0 or social_distance <= 1e-6:
+        return np.zeros((n_humans, 2), dtype=np.float32)
+
+    mask = (pairwise_dist > 1e-6) & (pairwise_dist < social_distance)
+    repulsion_vectors = np.zeros((n_humans, 2), dtype=np.float32)
+    for idx in range(n_humans):
+        neighbors = mask[idx]
+        if not np.any(neighbors):
+            continue
+
+        diff = pairwise_diff[idx, neighbors]
+        dist = pairwise_dist[idx, neighbors]
+        directions = diff / dist[:, None]
+        # Distance-based repulsion strength
+        strengths = (social_distance - dist) / social_distance
+        repulsion_vectors[idx] = repulsion_gain * np.sum(
+            directions * strengths[:, None],
+            axis=0,
+        )
+
+    return repulsion_vectors
+
+
+def compute_social_repulsion(human_xy, social_distance: float, repulsion_gain: float) -> np.ndarray:
+    pairwise_diff, pairwise_dist = compute_human_pairwise_geometry(human_xy)
+    return _compute_social_repulsion_from_pairwise(
+        pairwise_diff=pairwise_diff,
+        pairwise_dist=pairwise_dist,
+        social_distance=social_distance,
+        repulsion_gain=repulsion_gain,
+    )
 
 
 def compute_nearest_human_distances_from_pairwise(pairwise_dist) -> np.ndarray:
@@ -76,35 +124,19 @@ def compute_human_robot_distances(human_xy, robot_xy) -> np.ndarray:
     return np.linalg.norm(human_xy - robot_xy[None, :], axis=1).astype(np.float32)
 
 
-def compute_social_repulsion(human_xy, social_distance: float, repulsion_gain: float) -> np.ndarray:
-    human_xy = np.asarray(human_xy, dtype=np.float32)
-    n_humans = int(human_xy.shape[0])
-    if n_humans == 0 or social_distance <= 1e-6:
-        return np.zeros((n_humans, 2), dtype=np.float32)
-
-    pairwise_dist = compute_human_pairwise_distances(human_xy)
-    mask = (pairwise_dist > 1e-6) & (pairwise_dist < social_distance)
-    repulsion_vectors = np.zeros((n_humans, 2), dtype=np.float32)
-    for idx in range(n_humans):
-        neighbors = mask[idx]
-        if not np.any(neighbors):
-            continue
-
-        diff = human_xy[idx] - human_xy[neighbors]
-        dist = pairwise_dist[idx, neighbors]
-        directions = diff / dist[:, None]
-        # Distance-based repulsion strength
-        strengths = (social_distance - dist) / social_distance
-        repulsion_vectors[idx] = repulsion_gain * np.sum(
-            directions * strengths[:, None],
-            axis=0,
-        )
-
-    return repulsion_vectors
-
-
 def tick_observation_age(cache: RuntimeCache) -> None:
     cache.sample_age_steps += 1
+
+
+def should_refresh_observation_snapshot(
+    *,
+    cache: RuntimeCache,
+    observation_update_period_steps: int,
+    force: bool = False,
+) -> bool:
+    if force or cache.observations is None:
+        return True
+    return cache.sample_age_steps >= int(observation_update_period_steps)
 
 
 def refresh_observation_snapshot(
@@ -116,19 +148,22 @@ def refresh_observation_snapshot(
     robot_xy,
     observation_update_period_steps: int,
     force: bool = False,
+    pairwise_distances=None,
 ) -> ObservationSnapshot:
-    n_humans = int(np.asarray(human_xy, dtype=np.float32).shape[0])
-    should_refresh = force or cache.observations is None
-    if (not should_refresh) and cache.sample_age_steps >= int(observation_update_period_steps):
-        should_refresh = True
-
-    if not should_refresh:
+    if not should_refresh_observation_snapshot(
+        cache=cache,
+        observation_update_period_steps=observation_update_period_steps,
+        force=force,
+    ):
         return cache.observations
 
-    # Compute all derived observations and update the cache if timeout
-    pairwise_dist = compute_human_pairwise_distances(human_xy)
-    nearest_human_distance = compute_nearest_human_distances_from_pairwise(pairwise_dist)
-    local_crowding_count_1m = compute_local_crowding_count_1m_from_pairwise(pairwise_dist)
+    # Compute all derived observations and update the cache if timeout.
+    if pairwise_distances is None:
+        _, pairwise_distances = compute_human_pairwise_geometry(human_xy)
+    else:
+        pairwise_distances = np.asarray(pairwise_distances, dtype=np.float32)
+    nearest_human_distance = compute_nearest_human_distances_from_pairwise(pairwise_distances)
+    local_crowding_count_1m = compute_local_crowding_count_1m_from_pairwise(pairwise_distances)
     human_robot_distance = compute_human_robot_distances(human_xy, robot_xy)
     nearest_human_distance_mean_1s = hh_distance_metric.update(nearest_human_distance)
     human_robot_distance_mean_1s = hr_distance_metric.update(human_robot_distance)
@@ -165,6 +200,8 @@ def build_world_frame(
     repulsion_gain: float,
     force_observations: bool = False,
     tick_age_before_refresh: bool = False,
+    include_repulsion_vectors: bool = True,
+    include_pairwise_distances: bool = True,
 ) -> WorldFrame:
     robot_pose = collect_robot_pose(data, robot_body_id)
     robot_xy = np.array(robot_pose[:2], dtype=np.float32)
@@ -175,6 +212,19 @@ def build_world_frame(
     if tick_age_before_refresh:
         tick_observation_age(cache)
 
+    needs_observation_refresh = should_refresh_observation_snapshot(
+        cache=cache,
+        observation_update_period_steps=observation_update_period_steps,
+        force=force_observations,
+    )
+    needs_pairwise_geometry = bool(
+        needs_observation_refresh or include_repulsion_vectors or include_pairwise_distances
+    )
+    pairwise_diff = None
+    pairwise_distances = None
+    if needs_pairwise_geometry:
+        pairwise_diff, pairwise_distances = compute_human_pairwise_geometry(human_xy)
+
     # Refresh observations if needed
     observations = refresh_observation_snapshot(
         cache=cache,
@@ -184,9 +234,19 @@ def build_world_frame(
         robot_xy=robot_xy,
         observation_update_period_steps=observation_update_period_steps,
         force=force_observations,
+        pairwise_distances=pairwise_distances,
     )
-    pairwise_distances = compute_human_pairwise_distances(human_xy)
-    repulsion_vectors = compute_social_repulsion(human_xy, social_distance, repulsion_gain)
+    if include_repulsion_vectors:
+        repulsion_vectors = _compute_social_repulsion_from_pairwise(
+            pairwise_diff=pairwise_diff,
+            pairwise_dist=pairwise_distances,
+            social_distance=social_distance,
+            repulsion_gain=repulsion_gain,
+        )
+    else:
+        repulsion_vectors = np.zeros((len(humans), 2), dtype=np.float32)
+    if not include_pairwise_distances:
+        pairwise_distances = np.zeros((0, 0), dtype=np.float32)
     return WorldFrame(
         robot_pose=robot_pose,
         robot_xy=robot_xy,

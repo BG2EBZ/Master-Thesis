@@ -14,16 +14,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WAYPOINT_THRESHOLD = 0.2
 DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
-HUMAN_YAW_RATE_GAIN = 20.0
+HUMAN_YAW_RATE_GAIN = 4.0
 HUMAN_ROTATION_STOP_DEG = 3.0
-LISTENING_RING_GAIN = 4.0
+LISTENING_RING_GAIN = 2.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
 DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
 DISTRACTED_YAW_DEVIATION_MAX_DEG = 90.0
 DISTRACTED_TARGET_DISTANCE_MIN = 0.5
 DISTRACTED_TARGET_DISTANCE_MAX = 1.5
-DEFAULT_SIM_TIMESTEP_SECONDS = 0.002
+DEFAULT_SIM_TIMESTEP_SECONDS = 0.05
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
 DISTRACTED_STOP_DURATION_SECONDS = 5.0
 DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
@@ -54,7 +54,7 @@ MIN_SPEED_EPS = 1e-3
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 WALL_REPULSION_DISTANCE_METERS = 0.45
-WALL_REPULSION_GAIN = 2.0
+WALL_REPULSION_GAIN = 20.0
 WALL_DETOUR_ANGLES_DEG = (60.0, -60.0, 90.0, -90.0, 120.0, -120.0)
 WALL_DETOUR_ROTATIONS = tuple(
     (float(np.cos(np.deg2rad(angle_deg))), float(np.sin(np.deg2rad(angle_deg))))
@@ -106,6 +106,7 @@ class Human:
         self.body_id = None
         self._runtime_model = None
         self._runtime_data = None
+        self.rng = np.random
 
         self.current_waypoint = self._random_waypoint()
         self.hr_distance_min = float(HR_DISTANCE_MIN)
@@ -255,8 +256,11 @@ class Human:
         impatient_speed_multiplier: float,
         impatient_front_offset: float,
         listening_impatient_glance_seconds: float,
+        rng=None,
     ) -> None:
         dt = float(dt)
+        if rng is not None:
+            self.rng = rng
         self.max_distracted_duration_seconds = float(max_distracted_duration_seconds)
         self.distracted_duration = round(self.max_distracted_duration_seconds / dt)
         self.distracted_stop_duration = round(self.distracted_stop_duration_seconds / dt)
@@ -309,13 +313,13 @@ class Human:
         if recovery_mode == HumanMode.LISTENING:
             self.listening_impatient_yaw_deviation = np.deg2rad(
                 float(
-                    np.random.uniform(
+                    self.rng.uniform(
                         LISTENING_IMPATIENT_YAW_DEVIATION_MIN_DEG,
                         LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG,
                     )
                 )
             )
-            self.listening_impatient_turn_sign = 1.0 if np.random.rand() >= 0.5 else -1.0
+            self.listening_impatient_turn_sign = 1.0 if self.rng.random() >= 0.5 else -1.0
         else:
             self.listening_impatient_yaw_deviation = 0.0
             self.listening_impatient_turn_sign = 1.0
@@ -630,7 +634,7 @@ class Human:
         )
 
     def _random_waypoint(self):
-        return self.map_layout.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=np.random)
+        return self.map_layout.sample_spawn_point(HUMAN_WALL_FOOTPRINT_RADIUS, rng=self.rng)
 
     def _wrap_to_pi(self, ang):
         return wrap_to_pi(ang)

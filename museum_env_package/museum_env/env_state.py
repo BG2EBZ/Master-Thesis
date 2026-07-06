@@ -189,20 +189,24 @@ class PostExplanationState:
 
 @dataclass
 class RobotFrontBlockingState:
-    active: bool = False
     blocker_idx: Optional[int] = None
     speech_steps_remaining: int = 0
     bypass_active: bool = False
-    bypass_target_xy: Optional[np.ndarray] = None
-    bypass_side_sign: float = 0.0
+    bypass_center_xy: Optional[np.ndarray] = None
+    bypass_radius: float = 0.0
+    bypass_start_angle: float = 0.0
+    bypass_direction_sign: float = 0.0
+    bypass_turn_target_yaw: Optional[float] = None
 
     def reset(self) -> None:
-        self.active = False
         self.blocker_idx = None
         self.speech_steps_remaining = 0
         self.bypass_active = False
-        self.bypass_target_xy = None
-        self.bypass_side_sign = 0.0
+        self.bypass_center_xy = None
+        self.bypass_radius = 0.0
+        self.bypass_start_angle = 0.0
+        self.bypass_direction_sign = 0.0
+        self.bypass_turn_target_yaw = None
 
 
 @dataclass
@@ -238,6 +242,18 @@ class RuntimeCache:
         self.observations = None
         self.sample_age_steps = 0
         self.refresh_counter = 0
+
+
+@dataclass
+class EpisodeMetrics:
+    overwhelmed_triggers: int = 0
+    impatient_triggers: int = 0
+    distracted_triggers: int = 0
+
+    def reset(self) -> None:
+        self.overwhelmed_triggers = 0
+        self.impatient_triggers = 0
+        self.distracted_triggers = 0
 
 
 @dataclass
