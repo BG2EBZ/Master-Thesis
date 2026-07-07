@@ -35,11 +35,24 @@ DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
+DEFAULT_EXPLORATION_PLOT_NAME = "exploration_metrics.png"
 DEFAULT_BEST_PARAMS_NAME = "best_params.json"
+EXPLORATION_STD_FIELDNAMES = ("std_0", "std_1", "std_2", "std_3")
+EXPLORATION_PARAMETER_LABELS = (
+    "slow_down_distance_m",
+    "callback_distance_m",
+    "callback_wait_seconds",
+    "slowdown_speed_scale",
+)
 METRIC_FIELDNAMES = (
     "epoch",
     "mean_return",
     "best_return",
+    "std_0",
+    "std_1",
+    "std_2",
+    "std_3",
+    "distribution_entropy",
     "mean_duration_seconds",
     "mean_overwhelmed_triggers",
     "mean_impatient_triggers",
@@ -243,6 +256,11 @@ def update_distribution(
     return mu, std
 
 
+def _diagonal_gaussian_entropy(std: np.ndarray) -> float:
+    clipped_std = np.maximum(np.asarray(std, dtype=np.float64), 1e-8)
+    return float(0.5 * np.sum(np.log(2.0 * np.pi * np.e * (clipped_std**2))))
+
+
 def write_metrics_csv(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
@@ -320,6 +338,46 @@ def plot_training_metrics(
     plt.close(fig)
 
 
+def plot_exploration_metrics(
+    metrics: Sequence[dict[str, float | int]],
+    output_path: Path,
+    *,
+    x_label: str = "Epoch",
+) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    epochs = [int(row["epoch"]) for row in metrics]
+    std_series = {
+        label: [float(row[field_name]) for row in metrics]
+        for field_name, label in zip(EXPLORATION_STD_FIELDNAMES, EXPLORATION_PARAMETER_LABELS)
+    }
+    entropies = [float(row["distribution_entropy"]) for row in metrics]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    ax_std, ax_entropy = axes.flat
+
+    for label, values in std_series.items():
+        ax_std.plot(epochs, values, label=label, linewidth=2)
+    ax_std.set_title("Std Per Dimension")
+    ax_std.set_xlabel(x_label)
+    ax_std.set_ylabel("Std")
+    ax_std.grid(True, alpha=0.3)
+    ax_std.legend()
+
+    ax_entropy.plot(epochs, entropies, color="tab:green", linewidth=2)
+    ax_entropy.set_title("Distribution Entropy")
+    ax_entropy.set_xlabel(x_label)
+    ax_entropy.set_ylabel("Entropy")
+    ax_entropy.grid(True, alpha=0.3)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def train(
     *,
     epochs: int,
@@ -363,9 +421,10 @@ def train(
     ) -> None:
         nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
         for epoch_idx in range(start_epoch_idx, end_epoch_idx):
+            sampling_std = np.array(std, dtype=np.float64, copy=True)
             theta_batch = theta_rng.normal(
                 loc=mu,
-                scale=std,
+                scale=sampling_std,
                 size=(samples_per_epoch, len(mu)),
             )
             epoch_training_seed_batch = epoch_training_seeds[epoch_idx]
@@ -403,6 +462,11 @@ def train(
                 "epoch": int(epoch_idx + 1),
                 "mean_return": float(np.mean([item.mean_return for item in evaluations])),
                 "best_return": float(np.max([item.mean_return for item in evaluations])),
+                "std_0": float(sampling_std[0]),
+                "std_1": float(sampling_std[1]),
+                "std_2": float(sampling_std[2]),
+                "std_3": float(sampling_std[3]),
+                "distribution_entropy": _diagonal_gaussian_entropy(sampling_std),
                 "mean_duration_seconds": float(
                     np.mean([item.mean_duration_seconds for item in evaluations])
                 ),
@@ -439,6 +503,7 @@ def train(
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
+    exploration_plot_path = output_dir / DEFAULT_EXPLORATION_PLOT_NAME
     best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
     if best_theta_seen is None or best_evaluation is None:
         raise RuntimeError("Training completed without evaluating any parameter samples.")
@@ -461,10 +526,12 @@ def train(
     }
     write_metrics_csv(metrics, csv_path)
     plot_training_metrics(metrics, plot_path)
+    plot_exploration_metrics(metrics, exploration_plot_path)
     write_best_params_json(best_params_payload, best_params_path)
 
     print(f"Saved metrics CSV to {csv_path}")
     print(f"Saved metrics plot to {plot_path}")
+    print(f"Saved exploration plot to {exploration_plot_path}")
     print(f"Saved best params JSON to {best_params_path}")
     final_policy_params = best_params_payload["final_policy_params"]
     print(
@@ -504,7 +571,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Directory where training_metrics.csv and training_metrics.png are written.",
+        help="Directory where training metrics, exploration plots, and best_params.json are written.",
     )
     args = parser.parse_args(argv)
     train(
