@@ -123,7 +123,7 @@ class MuseumEnv(gym.Env):
         callback_trigger_distance_meters: float = CALLBACK_TRIGGER_DISTANCE_METERS_DEFAULT,
         pass_request_response_prob_normal: float = PASS_REQUEST_RESPONSE_PROB_NORMAL_DEFAULT,
         pass_request_response_prob_nd: float = PASS_REQUEST_RESPONSE_PROB_ND_DEFAULT,
-        observation_update_period_seconds: float = 0.1,
+        observation_update_period_seconds: float = 0.2,
         listen_question_probability: float = LISTEN_QUESTION_PROBABILITY_DEFAULT,
         listen_question_after_explanation_probability: float = (
             LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT
