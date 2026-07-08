@@ -249,6 +249,7 @@ def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, w
 def _build_move_ctx(env, human, idx: int, world_frame, repulsion_vec, human_modes, impatient_recovery_mode):
     """Assemble the shared movement context passed into one human controller."""
     return {
+        "step_id": int(env.step_count),
         "index": idx,
         "n_humans": len(env.humans),
         "robot_pose": world_frame.robot_pose,
@@ -385,6 +386,7 @@ def apply_post_explanation_phase_strategy(env, human, idx: int, world_frame) -> 
         env.model,
         env.data,
         {
+            "step_id": int(env.step_count),
             "behavior_kind": "post_explanation_listening_anchor",
             "robot_xy": world_frame.robot_xy,
             "robot_yaw": world_frame.robot_pose[2],

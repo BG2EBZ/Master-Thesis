@@ -53,6 +53,9 @@ NORM_EPS = 1e-3
 MIN_SPEED_EPS = 1e-3
 RAYCAST_CLEARANCE_EPS = 1e-3
 RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
+WALL_RAYCAST_GUIDE_SKIP_METERS = 0.1
+WALL_RAYCAST_SPEED_SKIP_MPS = 0.05
+WALL_RAYCAST_CACHE_KEY_DECIMALS = 4
 WALL_REPULSION_DISTANCE_METERS = 0.45
 WALL_REPULSION_GAIN = 20.0
 WALL_DETOUR_ANGLES_DEG = (60.0, -60.0, 90.0, -90.0, 120.0, -120.0)
@@ -107,6 +110,8 @@ class Human:
         self._runtime_model = None
         self._runtime_data = None
         self.rng = np.random
+        self._wall_raycast_cache_step_id = -1
+        self._wall_raycast_cache: dict[tuple[float, float], Optional[float]] = {}
 
         self.current_waypoint = self._random_waypoint()
         self.hr_distance_min = float(HR_DISTANCE_MIN)
@@ -237,6 +242,7 @@ class Human:
         self.listening_steps = 0
         self.reset_curiosity_state()
         self.reset_overwhelmed_state()
+        self._reset_wall_query_state()
 
     def set_profile(self, profile: str):
         self.profile = profile
@@ -349,6 +355,28 @@ class Human:
         self.distracted_partner_index = None
         self.speaking_active = False
 
+    def _reset_wall_query_state(self) -> None:
+        self._wall_raycast_cache_step_id = -1
+        self._wall_raycast_cache = {}
+
+    def _begin_wall_query_step(self, step_id: int) -> None:
+        step_id = int(step_id)
+        if self._wall_raycast_cache_step_id == step_id:
+            return
+        self._wall_raycast_cache_step_id = step_id
+        self._wall_raycast_cache = {}
+
+    def _direction_cache_key(self, direction_xy) -> Optional[tuple[float, float]]:
+        direction_xy = np.asarray(direction_xy, dtype=np.float32)
+        direction_norm = float(np.linalg.norm(direction_xy))
+        if direction_norm <= 1e-6:
+            return None
+        unit_direction = direction_xy[:2] / direction_norm
+        return (
+            float(np.round(unit_direction[0], WALL_RAYCAST_CACHE_KEY_DECIMALS)),
+            float(np.round(unit_direction[1], WALL_RAYCAST_CACHE_KEY_DECIMALS)),
+        )
+
     def _set_distracted_target_state(
         self,
         target_yaw: float,
@@ -411,6 +439,9 @@ class Human:
     def step(self, model, data, ctx):
         self._runtime_model = model
         self._runtime_data = data
+        step_id = ctx.get("step_id")
+        if step_id is not None:
+            self._begin_wall_query_step(int(step_id))
 
         pose = self.get_pose(data)
         return human_behaviors.step_behavior(self, ctx, pose)
@@ -472,16 +503,20 @@ class Human:
             desired_v_xy=v_total,
         )
 
-    def _adjust_target_velocity_for_walls(self, guide_xy, desired_v_xy):
+    def _adjust_target_velocity_for_walls(self, *, guide_xy, desired_v_xy):
         desired_v_xy = np.asarray(desired_v_xy, dtype=np.float32)
         desired_speed = float(np.linalg.norm(desired_v_xy))
         if desired_speed <= MIN_SPEED_EPS:
             return np.zeros(2, dtype=np.float32)
+        if desired_speed <= WALL_RAYCAST_SPEED_SKIP_MPS:
+            return desired_v_xy
 
         guide_xy = np.asarray(guide_xy, dtype=np.float32)
         guide_norm = float(np.linalg.norm(guide_xy))
         if guide_norm <= NORM_EPS:
             return self._constrain_velocity_with_walkable(desired_v_xy)
+        if guide_norm <= WALL_RAYCAST_GUIDE_SKIP_METERS:
+            return desired_v_xy
         # Detect if there's a wall in the way of the desired velocity.
         hit_distance = self._raycast_hit_distance(desired_v_xy)
         if hit_distance is None or hit_distance >= RAYCAST_SLOWDOWN_DISTANCE_METERS:
@@ -525,12 +560,20 @@ class Human:
         return np.asarray(best_v_xy, dtype=np.float32)
 
     def _raycast_hit_distance(self, direction_xy):
-        return raycast_hit_distance(
+        cache_key = self._direction_cache_key(direction_xy)
+        if cache_key is None:
+            return None
+        if cache_key in self._wall_raycast_cache:
+            return self._wall_raycast_cache[cache_key]
+
+        hit_distance = raycast_hit_distance(
             self._runtime_model,
             self._runtime_data,
             self.body_id,
             direction_xy,
         )
+        self._wall_raycast_cache[cache_key] = hit_distance
+        return hit_distance
 
     def is_within_listening_front_sector(self, point_xy, robot_xy, robot_yaw: float, sector_half_angle: float) -> bool:
         point_xy = np.asarray(point_xy, dtype=np.float32)
@@ -594,6 +637,8 @@ class Human:
         guide_xy = np.asarray(guide_xy, dtype=np.float32)
         guide_norm = float(np.linalg.norm(guide_xy))
         if guide_norm <= NORM_EPS:
+            return np.zeros(2, dtype=np.float32)
+        if guide_norm <= WALL_RAYCAST_GUIDE_SKIP_METERS:
             return np.zeros(2, dtype=np.float32)
 
         guide_dir = guide_xy / guide_norm
