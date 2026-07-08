@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Optional
 
 import numpy as np
@@ -56,6 +57,7 @@ RAYCAST_SLOWDOWN_DISTANCE_METERS = 0.3
 WALL_RAYCAST_GUIDE_SKIP_METERS = 0.1
 WALL_RAYCAST_SPEED_SKIP_MPS = 0.05
 WALL_RAYCAST_CACHE_KEY_DECIMALS = 4
+WALL_RAYCAST_CACHE_KEY_SCALE = 10 ** WALL_RAYCAST_CACHE_KEY_DECIMALS
 WALL_REPULSION_DISTANCE_METERS = 0.45
 WALL_REPULSION_GAIN = 20.0
 WALL_DETOUR_ANGLES_DEG = (60.0, -60.0, 90.0, -90.0, 120.0, -120.0)
@@ -111,7 +113,7 @@ class Human:
         self._runtime_data = None
         self.rng = np.random
         self._wall_raycast_cache_step_id = -1
-        self._wall_raycast_cache: dict[tuple[float, float], Optional[float]] = {}
+        self._wall_raycast_cache: dict[tuple[int, int], Optional[float]] = {}
 
         self.current_waypoint = self._random_waypoint()
         self.hr_distance_min = float(HR_DISTANCE_MIN)
@@ -366,15 +368,16 @@ class Human:
         self._wall_raycast_cache_step_id = step_id
         self._wall_raycast_cache = {}
 
-    def _direction_cache_key(self, direction_xy) -> Optional[tuple[float, float]]:
-        direction_xy = np.asarray(direction_xy, dtype=np.float32)
-        direction_norm = float(np.linalg.norm(direction_xy))
+    def _direction_cache_key(self, direction_xy) -> Optional[tuple[int, int]]:
+        dx = float(direction_xy[0])
+        dy = float(direction_xy[1])
+        direction_norm = math.hypot(dx, dy)
         if direction_norm <= 1e-6:
             return None
-        unit_direction = direction_xy[:2] / direction_norm
+        inv_norm = 1.0 / direction_norm
         return (
-            float(np.round(unit_direction[0], WALL_RAYCAST_CACHE_KEY_DECIMALS)),
-            float(np.round(unit_direction[1], WALL_RAYCAST_CACHE_KEY_DECIMALS)),
+            int(round(dx * inv_norm * WALL_RAYCAST_CACHE_KEY_SCALE)),
+            int(round(dy * inv_norm * WALL_RAYCAST_CACHE_KEY_SCALE)),
         )
 
     def _set_distracted_target_state(

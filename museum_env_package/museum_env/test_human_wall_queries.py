@@ -55,6 +55,15 @@ class HumanWallQueryTests(unittest.TestCase):
 
         self.assertEqual(raycast_mock.call_count, 2)
 
+    def test_direction_cache_key_returns_integer_tuple_and_none_for_near_zero(self):
+        cache_key = self.human._direction_cache_key(np.array([3.0, 4.0], dtype=np.float32))
+
+        self.assertEqual(cache_key, (6000, 8000))
+        self.assertTrue(all(isinstance(value, int) for value in cache_key))
+        self.assertIsNone(
+            self.human._direction_cache_key(np.array([1e-8, 0.0], dtype=np.float32))
+        )
+
     def test_short_guide_skips_wall_spacing_raycast(self):
         with patch.object(self.human, "_raycast_hit_distance", side_effect=AssertionError("unexpected raycast")):
             wall_force = self.human._compute_wall_spacing_force(
