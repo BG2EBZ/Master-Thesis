@@ -278,15 +278,26 @@ def _build_input_curves(input_specs: dict[str, dict[str, MFSpec]]) -> dict[str, 
 
 def _build_rules() -> tuple[RuleSpec, ...]:
     return (
-        RuleSpec((("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+
+        # Spatial disengagement: visitor is physically/socially detached.
         RuleSpec((("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
+        RuleSpec((("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
+
+        # Time-enhanced distraction: long explanation/following increases attention decay.
+        RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "high"),
         RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
         RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "high"),
+
         RuleSpec((("hrd", "close"), ("angle", "ahead")), "curiosity", "high"),
+
         RuleSpec((("density", "low"),), "engaged", "high"),
         RuleSpec((("density", "medium"),), "engaged", "high"),
         RuleSpec((("hhd", "medium"), ("density", "crowded")), "engaged", "medium"),

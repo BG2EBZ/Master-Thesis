@@ -171,9 +171,9 @@
             <!-- ============ PERSON (oval torso + head + nose, planar joints) ============ -->
             <body name="person1" pos="0 0 0.125">
                   <!-- Planar movement: x, y, yaw -->
-                  <joint name="person1_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person1_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person1_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person1_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person1_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
 
                   <!-- Torso as a capsule.
                   shoulders: 0.45m, chest: 0.25m.
@@ -198,9 +198,9 @@
 
             <!-- More people -->
             <body name="person2" pos="0 0 0.125">
-                  <joint name="person2_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person2_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person2_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person2_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person2_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person2_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.20 0.70 0.30 1"/>
                   <geom name="person2_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person2_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -210,9 +210,9 @@
             </body>
 
             <body name="person3" pos="0 0 0.125">
-                  <joint name="person3_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person3_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person3_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person3_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person3_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person3_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.22 0.72 0.33 1"/>
                   <geom name="person3_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person3_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -222,9 +222,9 @@
             </body>
 
             <body name="person4" pos="0 0 0.125">
-                  <joint name="person4_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person4_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person4_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person4_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person4_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person4_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.24 0.74 0.35 1"/>
                   <geom name="person4_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person4_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -234,9 +234,9 @@
             </body>
 
             <body name="person5" pos="0 0 0.125">
-                  <joint name="person5_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person5_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person5_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person5_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person5_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person5_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.26 0.76 0.37 1"/>
                   <geom name="person5_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person5_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -246,9 +246,9 @@
             </body>
 
             <body name="person6" pos="0 0 0.125">
-                  <joint name="person6_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person6_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person6_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person6_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person6_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person6_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person6_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.28 0.78 0.39 1"/>
                   <geom name="person6_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person6_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -258,9 +258,9 @@
             </body>
 
             <body name="person7" pos="0 0 0.125">
-                  <joint name="person7_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person7_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person7_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person7_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person7_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person7_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person7_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.30 0.80 0.41 1"/>
                   <geom name="person7_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person7_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -270,9 +270,9 @@
             </body>
 
             <body name="person8" pos="0 0 0.125">
-                  <joint name="person8_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person8_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person8_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person8_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person8_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person8_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person8_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.32 0.82 0.43 1"/>
                   <geom name="person8_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person8_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -282,9 +282,9 @@
             </body>
 
             <body name="person9" pos="0 0 0.125">
-                  <joint name="person9_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person9_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person9_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person9_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person9_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person9_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person9_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.34 0.84 0.45 1"/>
                   <geom name="person9_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person9_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -294,9 +294,9 @@
             </body>
 
             <body name="person10" pos="0 0 0.125">
-                  <joint name="person10_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person10_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person10_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person10_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person10_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person10_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person10_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.36 0.86 0.47 1"/>
                   <geom name="person10_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person10_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -306,9 +306,9 @@
             </body>
 
             <body name="person11" pos="0 0 0.125">
-                  <joint name="person11_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person11_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person11_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person11_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person11_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person11_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person11_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.38 0.88 0.49 1"/>
                   <geom name="person11_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person11_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -318,9 +318,9 @@
             </body>
 
             <body name="person12" pos="0 0 0.125">
-                  <joint name="person12_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person12_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person12_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person12_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person12_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person12_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person12_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.40 0.90 0.51 1"/>
                   <geom name="person12_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person12_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -330,9 +330,9 @@
             </body>
 
             <body name="person13" pos="0 0 0.125">
-                  <joint name="person13_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person13_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person13_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person13_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person13_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person13_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person13_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.42 0.92 0.53 1"/>
                   <geom name="person13_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person13_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -342,9 +342,9 @@
             </body>
 
             <body name="person14" pos="0 0 0.125">
-                  <joint name="person14_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person14_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person14_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person14_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person14_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person14_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person14_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.44 0.94 0.55 1"/>
                   <geom name="person14_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person14_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
@@ -354,9 +354,9 @@
             </body>
 
             <body name="person15" pos="0 0 0.125">
-                  <joint name="person15_x" type="slide" axis="1 0 0" damping="100" frictionloss="20"/>
-                  <joint name="person15_y" type="slide" axis="0 1 0" damping="100" frictionloss="20"/>
-                  <joint name="person15_yaw" type="hinge" axis="0 0 1" damping="0.1"/>
+                  <joint name="person15_x" type="slide" axis="1 0 0" damping="80" frictionloss="12"/>
+                  <joint name="person15_y" type="slide" axis="0 1 0" damping="80" frictionloss="12"/>
+                  <joint name="person15_yaw" type="hinge" axis="0 0 1" damping="0.5"/>
                   <geom name="person15_torso" type="capsule" pos="0 0 0.125" size="0.125 0.10" mass="60" euler="0 0 90" rgba="0.46 0.96 0.57 1"/>
                   <geom name="person15_head" type="sphere" pos="0 0 0.36" size="0.09" rgba="0.95 0.85 0.75 1" contype="0" conaffinity="0"/>
                   <geom name="person15_nose" type="box" pos="0.18 0 0.36" size="0.02 0.03 0.02" rgba="0.95 0.35 0.35 1" contype="0" conaffinity="0"/>
