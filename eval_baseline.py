@@ -83,6 +83,8 @@ def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
         "callback_distance_m": float(params.callback_distance_m),
         "callback_wait_seconds": float(params.callback_wait_seconds),
         "slowdown_speed_scale": float(params.slowdown_speed_scale),
+        "explanation_time_scale": float(params.explanation_time_scale),
+        "explanation_wait_seconds": float(params.explanation_wait_seconds),
     }
 
 

@@ -1,13 +1,17 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
+import numpy as np
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from museum_env import MuseumEnv
+from museum_env import env_flow
+from museum_env.env_state import StepEvents
 
 
 class MuseumEnvTimingTests(unittest.TestCase):
@@ -36,6 +40,59 @@ class MuseumEnvTimingTests(unittest.TestCase):
         self.assertEqual(self.env.step_count, 1)
         self.assertAlmostEqual(float(self.env.data.time) - start_time, 0.05, places=7)
         self.assertAlmostEqual(float(info["episode"]["duration_seconds"]), 0.05, places=7)
+
+    def test_policy_parameters_scale_listen_wait_runtime(self):
+        self.assertAlmostEqual(self.env.listen_wait_base_seconds, 30.0, places=7)
+        self.assertAlmostEqual(self.env.listen_wait_seconds, 30.0, places=7)
+        self.assertEqual(self.env.listen_wait_steps, 600)
+
+        self.env.set_policy_parameters(np.array([2.5, 3.5, 2.0, 0.7, 0.7], dtype=np.float64))
+
+        self.assertAlmostEqual(self.env.listen_wait_seconds, 21.0, places=7)
+        self.assertEqual(self.env.listen_wait_steps, 420)
+
+    def test_listening_question_plan_uses_scaled_wait_steps(self):
+        self.env.reset(seed=123)
+        self.env.set_policy_parameters(np.array([2.5, 3.5, 2.0, 0.7, 0.7], dtype=np.float64))
+        self.env.listen_question_probability = 1.0
+        self.env.listen_question_after_explanation_probability = 0.0
+        self.env.listening_state.enter_wait(is_final=False)
+        self.env.listening_state.initialize_wait_runtime(self.env.listen_wait_steps)
+
+        env_flow.prepare_listening_question_plan(self.env)
+
+        self.assertEqual(self.env.listening_state.question_timing_mode, "mid_random")
+        self.assertIsNotNone(self.env.listening_state.question_trigger_step)
+        self.assertGreaterEqual(
+            int(self.env.listening_state.question_trigger_step),
+            max(1, int(self.env.listen_wait_steps) // 2),
+        )
+        self.assertLessEqual(
+            int(self.env.listening_state.question_trigger_step),
+            int(self.env.listen_wait_steps) - 1,
+        )
+
+    def test_progress_listening_phase_does_not_shorten_wait_for_far_human(self):
+        self.env.reset(seed=123)
+        self.env.listen_question_probability = 0.0
+        self.env.listening_state.enter_wait(is_final=False)
+        self.env.listening_state.initialize_wait_runtime(self.env.listen_wait_steps)
+        original_target_steps = int(self.env.listening_state.wait_target_steps)
+        events = StepEvents()
+        world_frame = SimpleNamespace(
+            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+            robot_pose=(0.0, 0.0, 0.0),
+            human_xy=np.array([[3.0, 0.0]], dtype=np.float32),
+            observations=SimpleNamespace(
+                human_robot_distance=np.array([3.0], dtype=np.float32),
+            ),
+        )
+
+        env_flow.progress_listening_phase(self.env, events, world_frame)
+
+        self.assertEqual(self.env.listening_state.counter, 1)
+        self.assertEqual(self.env.listening_state.wait_target_steps, original_target_steps)
+        self.assertEqual(len(self.env.listening_state.distance_shorten_triggered_indices), 0)
 
 
 if __name__ == "__main__":

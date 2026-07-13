@@ -197,7 +197,8 @@ class MuseumEnv(gym.Env):
         self.listen_stand_threshold = LISTEN_STAND_THRESHOLD_DEFAULT
         self.listen_intro_delay_seconds = LISTEN_INTRO_DELAY_SECONDS_DEFAULT
         self.listen_intro_delay_steps = self._steps(self.listen_intro_delay_seconds)
-        self.listen_wait_seconds = LISTEN_WAIT_SECONDS_DEFAULT
+        self.listen_wait_base_seconds = float(LISTEN_WAIT_SECONDS_DEFAULT)
+        self.listen_wait_seconds = float(self.listen_wait_base_seconds)
         self.listen_wait_steps = self._steps(self.listen_wait_seconds)
         self.listen_question_probability = float(listen_question_probability)
         self.listen_question_after_explanation_probability = float(
@@ -319,6 +320,10 @@ class MuseumEnv(gym.Env):
         self.following_callback_wait_steps = self._steps(
             self.policy_params.callback_wait_seconds
         )
+        self.listen_wait_seconds = float(self.listen_wait_base_seconds) * float(
+            self.policy_params.explanation_time_scale
+        )
+        self.listen_wait_steps = self._steps(self.listen_wait_seconds)
 
     def _record_episode_trigger(self, kind: str) -> None:
         if kind == "overwhelmed":

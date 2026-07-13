@@ -491,7 +491,6 @@ def progress_listening_phase(env, events, world_frame) -> None:
         return
 
     env.listening_state.counter += 1
-    maybe_shorten_listening_wait(env, world_frame)
     if maybe_start_listening_question(env, events, LISTEN_QUESTION_TIMING_MID_RANDOM, world_frame):
         return
     if env.listening_state.counter < env.listening_state.ensure_wait_target_steps(env.listen_wait_steps):
