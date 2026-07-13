@@ -25,11 +25,11 @@ from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EPOCHS = 15
+DEFAULT_EPOCHS = 20
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
-DEFAULT_BETA = 0.5
-DEFAULT_EPOCH_TRAIN_SEED_COUNT = 3
+DEFAULT_BETA = 0.1
+DEFAULT_EPOCH_TRAIN_SEED_COUNT = 1
 DEFAULT_N_HUMANS = 15
 DEFAULT_MAX_WORKERS = 10
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

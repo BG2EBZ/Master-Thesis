@@ -180,76 +180,130 @@ def plot_comparison_metrics(
     comparison_impatient = [float(row["comparison_impatient_triggers"]) for row in metrics]
     baseline_distracted = [float(row["baseline_distracted_triggers"]) for row in metrics]
     comparison_distracted = [float(row["comparison_distracted_triggers"]) for row in metrics]
+    return_deltas = [
+        comparison - baseline
+        for baseline, comparison in zip(baseline_returns, comparison_returns)
+    ]
+    return_delta_colors = [
+        "tab:green" if delta >= 0.0 else "tab:red"
+        for delta in return_deltas
+    ]
+    baseline_color = "tab:blue"
+    comparison_color = "tab:orange"
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5), constrained_layout=True)
-    ax_return, ax_duration, ax_triggers = axes.flat
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
+    (
+        ax_return,
+        ax_duration,
+        ax_return_delta,
+        ax_overwhelmed,
+        ax_impatient,
+        ax_distracted,
+    ) = axes.flat
 
-    ax_return.plot(runs, baseline_returns, label="baseline", linewidth=2)
-    ax_return.plot(runs, comparison_returns, label="comparison", linewidth=2)
+    ax_return.plot(runs, baseline_returns, label="baseline", color=baseline_color, linewidth=2)
+    ax_return.plot(
+        runs,
+        comparison_returns,
+        label="comparison",
+        color=comparison_color,
+        linewidth=2,
+    )
     ax_return.set_title("Return")
     ax_return.set_xlabel("Run")
     ax_return.set_ylabel("Return")
     ax_return.grid(True, alpha=0.3)
     ax_return.legend()
 
-    ax_duration.plot(runs, baseline_durations, label="baseline", linewidth=2)
-    ax_duration.plot(runs, comparison_durations, label="comparison", linewidth=2)
+    ax_duration.plot(
+        runs,
+        baseline_durations,
+        label="baseline",
+        color=baseline_color,
+        linewidth=2,
+    )
+    ax_duration.plot(
+        runs,
+        comparison_durations,
+        label="comparison",
+        color=comparison_color,
+        linewidth=2,
+    )
     ax_duration.set_title("Guide Duration")
     ax_duration.set_xlabel("Run")
     ax_duration.set_ylabel("Seconds")
     ax_duration.grid(True, alpha=0.3)
     ax_duration.legend()
 
-    ax_triggers.plot(
+    ax_return_delta.bar(runs, return_deltas, color=return_delta_colors, alpha=0.85)
+    ax_return_delta.axhline(0.0, color="black", linewidth=1.0, linestyle="--")
+    ax_return_delta.set_title("Return Delta (comparison - baseline)")
+    ax_return_delta.set_xlabel("Run")
+    ax_return_delta.set_ylabel("Delta Return")
+    ax_return_delta.grid(True, alpha=0.3)
+
+    ax_overwhelmed.plot(
         runs,
         baseline_overwhelmed,
-        label="baseline overwhelmed",
-        color="tab:red",
+        label="baseline",
+        color=baseline_color,
         linewidth=2,
     )
-    ax_triggers.plot(
+    ax_overwhelmed.plot(
         runs,
         comparison_overwhelmed,
-        label="comparison overwhelmed",
-        color="tab:red",
+        label="comparison",
+        color=comparison_color,
         linestyle="--",
         linewidth=2,
     )
-    ax_triggers.plot(
+    ax_overwhelmed.set_title("Overwhelmed Triggers")
+    ax_overwhelmed.set_xlabel("Run")
+    ax_overwhelmed.set_ylabel("Count")
+    ax_overwhelmed.grid(True, alpha=0.3)
+    ax_overwhelmed.legend()
+
+    ax_impatient.plot(
         runs,
         baseline_impatient,
-        label="baseline impatient",
-        color="tab:orange",
+        label="baseline",
+        color=baseline_color,
         linewidth=2,
     )
-    ax_triggers.plot(
+    ax_impatient.plot(
         runs,
         comparison_impatient,
-        label="comparison impatient",
-        color="tab:orange",
+        label="comparison",
+        color=comparison_color,
         linestyle="--",
         linewidth=2,
     )
-    ax_triggers.plot(
+    ax_impatient.set_title("Impatient Triggers")
+    ax_impatient.set_xlabel("Run")
+    ax_impatient.set_ylabel("Count")
+    ax_impatient.grid(True, alpha=0.3)
+    ax_impatient.legend()
+
+    ax_distracted.plot(
         runs,
         baseline_distracted,
-        label="baseline distracted",
-        color="tab:blue",
+        label="baseline",
+        color=baseline_color,
         linewidth=2,
     )
-    ax_triggers.plot(
+    ax_distracted.plot(
         runs,
         comparison_distracted,
-        label="comparison distracted",
-        color="tab:blue",
+        label="comparison",
+        color=comparison_color,
         linestyle="--",
         linewidth=2,
     )
-    ax_triggers.set_title("Negative Trigger Counts")
-    ax_triggers.set_xlabel("Run")
-    ax_triggers.set_ylabel("Count")
-    ax_triggers.grid(True, alpha=0.3)
-    ax_triggers.legend(fontsize=8)
+    ax_distracted.set_title("Distracted Triggers")
+    ax_distracted.set_xlabel("Run")
+    ax_distracted.set_ylabel("Count")
+    ax_distracted.grid(True, alpha=0.3)
+    ax_distracted.legend()
 
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
