@@ -87,6 +87,20 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             ),
         )
 
+    def _build_front_blocking_world_frame(self, distances):
+        distances = np.asarray(distances, dtype=np.float32)
+        return SimpleNamespace(
+            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+            robot_pose=(0.0, 0.0, 0.0),
+            human_xy=np.array(
+                [[float(idx + 1), 0.0] for idx in range(len(distances))],
+                dtype=np.float32,
+            ),
+            observations=SimpleNamespace(
+                human_robot_distance=distances,
+            ),
+        )
+
     def _build_env(self, humans, *, follow_phase="transit", listening_controller_active=False, listening_fuzzy_active=False):
         n_humans = len(humans)
         return SimpleNamespace(
@@ -121,165 +135,234 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             _record_episode_trigger=lambda _kind: None,
         )
 
-    def test_collect_fuzzy_candidates_matches_current_eligibility_rules(self):
+    def test_should_evaluate_fuzzy_matches_current_phase_and_cache_rules(self):
         humans = [
             _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL, following_steps=4),
             _FakeHuman("person2", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL, following_steps=6),
-            _FakeHuman("person3", mode=HumanMode.DISTRACTED, profile=HumanProfile.NEURODIVERGENT, following_steps=9),
+            _FakeHuman("person3", mode=HumanMode.FOLLOWING, profile=HumanProfile.NEURODIVERGENT, following_steps=9),
         ]
-        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT, listening_fuzzy_active=True)
         env.fuzzy_debug[1].context = "following"
         env.fuzzy_debug[1].dominant_state = "engaged"
         env.fuzzy_debug[1].refresh_counter = env.runtime_cache.refresh_counter
+        env.fuzzy_debug[2].context = "listening"
+        env.fuzzy_debug[2].dominant_state = "engaged"
+        env.fuzzy_debug[2].refresh_counter = env.runtime_cache.refresh_counter
+
+        self.assertTrue(env_control.should_evaluate_fuzzy(env, 0, context="following"))
+        self.assertFalse(env_control.should_evaluate_fuzzy(env, 1, context="following"))
+        self.assertTrue(env_control.should_evaluate_fuzzy(env, 2, context="following"))
+
+        env.follow_phase = None
+        self.assertFalse(env_control.should_evaluate_fuzzy(env, 0, context="following"))
+
+    def test_compute_human_fuzzy_debug_uses_clipped_inputs_and_profile(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NEURODIVERGENT, following_steps=4),
+        ]
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
         world_frame = self._build_world_frame(len(humans))
+        clipped_inputs = {
+            "following_time": 0.2,
+            "hhd": 0.6,
+            "hrd": 1.2,
+            "density": 2.0,
+            "angle": 0.0,
+        }
+        fuzzy_result = {
+            "dominant_state": "engaged",
+            "overwhelmed": 0.0,
+            "distracted": 0.0,
+            "impatient": 0.0,
+            "engaged": 1.0,
+            "curiosity": 0.0,
+        }
+        env.following_fuzzy_engine.clip_inputs = Mock(return_value=clipped_inputs)
+        env.following_fuzzy_engine.compute = Mock(return_value=fuzzy_result)
 
-        candidates = env_control._collect_fuzzy_candidates(env, context="following", world_frame=world_frame)
+        fuzzy_debug = env_control.compute_human_fuzzy_debug(
+            env,
+            idx=0,
+            context="following",
+            session_steps=humans[0].following_steps,
+            world_frame=world_frame,
+        )
 
-        self.assertEqual([candidate["idx"] for candidate in candidates], [0])
-        self.assertEqual(candidates[0]["profile"], HumanProfile.NORMAL)
-        self.assertAlmostEqual(float(candidates[0]["inputs"]["following_time"]), 0.2, places=7)
-        self.assertAlmostEqual(float(candidates[0]["inputs"]["hhd"]), 0.6, places=7)
-        self.assertAlmostEqual(float(candidates[0]["inputs"]["hrd"]), 1.2, places=7)
-        self.assertAlmostEqual(float(candidates[0]["inputs"]["density"]), 2.0, places=7)
-        self.assertAlmostEqual(float(candidates[0]["inputs"]["angle"]), 0.0, places=7)
+        self.assertEqual(fuzzy_debug["inputs"], clipped_inputs)
+        self.assertEqual(fuzzy_debug["result"], fuzzy_result)
+        compute_kwargs = env.following_fuzzy_engine.compute.call_args.kwargs
+        self.assertEqual(compute_kwargs["context"], "following")
+        self.assertEqual(compute_kwargs["profile"], HumanProfile.NEURODIVERGENT)
+        self.assertAlmostEqual(float(compute_kwargs["following_time"]), 0.2, places=7)
 
-    def test_compute_fuzzy_batch_groups_by_profile_and_preserves_input_order(self):
-        candidates = [
-            {"idx": 0, "profile": HumanProfile.NORMAL, "inputs": {"following_time": 1.0, "hhd": 2.0, "hrd": 3.0, "density": 4.0, "angle": 5.0}},
-            {"idx": 1, "profile": HumanProfile.NEURODIVERGENT, "inputs": {"following_time": 6.0, "hhd": 7.0, "hrd": 8.0, "density": 9.0, "angle": 10.0}},
-            {"idx": 2, "profile": HumanProfile.NORMAL, "inputs": {"following_time": 11.0, "hhd": 12.0, "hrd": 13.0, "density": 14.0, "angle": 15.0}},
+    def test_maybe_apply_fuzzy_only_sets_ahead_active_for_following(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.LISTENING, profile=HumanProfile.NORMAL),
         ]
-        compute_batch_mock = Mock(
-            side_effect=[
-                [
-                    {"dominant_state": "engaged", "overwhelmed": 0.0, "distracted": 0.0, "impatient": 0.0, "engaged": 1.0, "curiosity": 0.0},
-                    {"dominant_state": "curiosity", "overwhelmed": 0.0, "distracted": 0.0, "impatient": 0.0, "engaged": 0.3, "curiosity": 0.9},
-                ],
-                [
-                    {"dominant_state": "distracted", "overwhelmed": 0.0, "distracted": 0.8, "impatient": 0.1, "engaged": 0.2, "curiosity": 0.0},
-                ],
-            ]
-        )
-        env = SimpleNamespace(
-            following_fuzzy_engine=SimpleNamespace(compute_batch=compute_batch_mock),
-        )
+        env = self._build_env(humans, listening_fuzzy_active=True)
+        world_frame = self._build_world_frame(len(humans))
+        fuzzy_debug = {
+            "inputs": {"following_time": 1.0, "hhd": 2.0, "hrd": 3.0, "density": 4.0, "angle": 5.0},
+            "result": {
+                "dominant_state": "engaged",
+                "overwhelmed": 0.0,
+                "distracted": 0.0,
+                "impatient": 0.0,
+                "engaged": 1.0,
+                "curiosity": 0.0,
+            },
+        }
 
-        with patch("museum_env.env_control.in_ahead_region", return_value=True):
-            fuzzy_batch = env_control._compute_fuzzy_batch(env, candidates, context="following")
+        with patch("museum_env.env_control.compute_human_fuzzy_debug", return_value=dict(fuzzy_debug)):
+            with patch("museum_env.env_control.in_ahead_region", return_value=True):
+                with patch("museum_env.env_control.record_fuzzy_debug") as record_mock:
+                    with patch("museum_env.env_control.apply_fuzzy_transition"):
+                        env_control._maybe_apply_fuzzy(
+                            env,
+                            humans[0],
+                            idx=0,
+                            context="listening",
+                            session_steps=1,
+                            world_frame=world_frame,
+                        )
 
-        self.assertEqual(compute_batch_mock.call_count, 2)
-        normal_args, normal_kwargs = compute_batch_mock.call_args_list[0]
-        nd_args, nd_kwargs = compute_batch_mock.call_args_list[1]
-        np.testing.assert_allclose(
-            normal_args[0],
-            np.array([[1.0, 2.0, 3.0, 4.0, 5.0], [11.0, 12.0, 13.0, 14.0, 15.0]], dtype=np.float32),
-        )
-        self.assertEqual(normal_kwargs["context"], "following")
-        self.assertEqual(normal_kwargs["profile"], HumanProfile.NORMAL)
-        np.testing.assert_allclose(
-            nd_args[0],
-            np.array([[6.0, 7.0, 8.0, 9.0, 10.0]], dtype=np.float32),
-        )
-        self.assertEqual(nd_kwargs["profile"], HumanProfile.NEURODIVERGENT)
-        self.assertEqual([entry["idx"] for entry in fuzzy_batch], [0, 1, 2])
-        self.assertTrue(all(bool(entry["ahead_active"]) for entry in fuzzy_batch))
+        self.assertFalse(bool(record_mock.call_args.kwargs["fuzzy_debug"]["ahead_active"]))
 
-    def test_compute_fuzzy_batch_only_sets_ahead_active_for_following(self):
-        env = SimpleNamespace(
-            following_fuzzy_engine=SimpleNamespace(
-                compute_batch=Mock(
-                    return_value=[
-                        {
-                            "dominant_state": "engaged",
-                            "overwhelmed": 0.0,
-                            "distracted": 0.0,
-                            "impatient": 0.0,
-                            "engaged": 1.0,
-                            "curiosity": 0.0,
-                        }
-                    ]
-                )
-            )
-        )
-        candidates = [
-            {
-                "idx": 0,
-                "profile": HumanProfile.NORMAL,
-                "inputs": {"following_time": 1.0, "hhd": 2.0, "hrd": 3.0, "density": 4.0, "angle": 5.0},
-            }
-        ]
-
-        with patch("museum_env.env_control.in_ahead_region", return_value=True):
-            fuzzy_batch = env_control._compute_fuzzy_batch(env, candidates, context="listening")
-
-        self.assertFalse(bool(fuzzy_batch[0]["ahead_active"]))
-
-    def test_apply_fuzzy_batch_calls_record_and_transition_once_per_result(self):
+    def test_maybe_apply_fuzzy_calls_record_and_transition_once_per_result(self):
         humans = [
             _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
-            _FakeHuman("person2", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
         ]
-        env = self._build_env(humans)
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
         world_frame = self._build_world_frame(len(humans))
-        fuzzy_batch = [
-            {
-                "idx": 0,
-                "inputs": {"following_time": 0.2, "hhd": 0.6, "hrd": 1.2, "density": 2.0, "angle": 0.0},
-                "result": {"dominant_state": "engaged", "overwhelmed": 0.0, "distracted": 0.0, "impatient": 0.0, "engaged": 1.0, "curiosity": 0.0},
-                "ahead_active": True,
+        fuzzy_debug = {
+            "inputs": {"following_time": 0.2, "hhd": 0.6, "hrd": 1.2, "density": 2.0, "angle": 0.0},
+            "result": {
+                "dominant_state": "distracted",
+                "overwhelmed": 0.0,
+                "distracted": 0.7,
+                "impatient": 0.0,
+                "engaged": 0.2,
+                "curiosity": 0.0,
             },
-            {
-                "idx": 1,
-                "inputs": {"following_time": 0.3, "hhd": 1.0, "hrd": 1.3, "density": 3.0, "angle": 10.0},
-                "result": {"dominant_state": "distracted", "overwhelmed": 0.0, "distracted": 0.7, "impatient": 0.0, "engaged": 0.2, "curiosity": 0.0},
-                "ahead_active": False,
-            },
-        ]
+        }
 
-        with patch("museum_env.env_control.record_fuzzy_debug") as record_mock:
-            with patch("museum_env.env_control.apply_fuzzy_transition") as transition_mock:
-                env_control._apply_fuzzy_batch(env, fuzzy_batch, context="following", world_frame=world_frame)
+        with patch("museum_env.env_control.compute_human_fuzzy_debug", return_value=dict(fuzzy_debug)):
+            with patch("museum_env.env_control.in_ahead_region", return_value=False):
+                with patch("museum_env.env_control.record_fuzzy_debug") as record_mock:
+                    with patch("museum_env.env_control.apply_fuzzy_transition") as transition_mock:
+                        env_control._maybe_apply_fuzzy(
+                            env,
+                            humans[0],
+                            idx=0,
+                            context="following",
+                            session_steps=4,
+                            world_frame=world_frame,
+                        )
 
-        self.assertEqual(record_mock.call_count, 2)
-        self.assertEqual(transition_mock.call_count, 2)
-        self.assertEqual(record_mock.call_args_list[0].args[1], 0)
-        self.assertEqual(record_mock.call_args_list[1].args[1], 1)
-        self.assertEqual(transition_mock.call_args_list[0].kwargs["idx"], 0)
-        self.assertEqual(transition_mock.call_args_list[1].kwargs["idx"], 1)
+        self.assertEqual(record_mock.call_count, 1)
+        self.assertEqual(transition_mock.call_count, 1)
+        self.assertEqual(record_mock.call_args.args[1], 0)
+        self.assertEqual(transition_mock.call_args.kwargs["idx"], 0)
 
-    def test_apply_human_controls_max_cleanup_uses_post_transition_global_mode_snapshot(self):
+    def test_apply_human_controls_uses_live_mode_snapshot_after_each_transition(self):
         humans = [
             _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL, following_steps=4),
             _FakeHuman("person2", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL, following_steps=5),
         ]
         env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
         world_frame = self._build_world_frame(len(humans))
-        fuzzy_batch = [
+        distracted_result = {
+            "dominant_state": "distracted",
+            "overwhelmed": 0.0,
+            "distracted": 0.8,
+            "impatient": 0.0,
+            "engaged": 0.1,
+            "curiosity": 0.0,
+        }
+        fuzzy_debug_sequence = [
             {
-                "idx": 0,
                 "inputs": {"following_time": 0.2, "hhd": 0.6, "hrd": 1.2, "density": 2.0, "angle": 0.0},
-                "result": {"dominant_state": "distracted", "overwhelmed": 0.0, "distracted": 0.8, "impatient": 0.0, "engaged": 0.1, "curiosity": 0.0},
-                "ahead_active": True,
+                "result": dict(distracted_result),
             },
             {
-                "idx": 1,
                 "inputs": {"following_time": 0.25, "hhd": 1.1, "hrd": 1.4, "density": 3.0, "angle": 5.0},
-                "result": {"dominant_state": "distracted", "overwhelmed": 0.0, "distracted": 0.9, "impatient": 0.0, "engaged": 0.1, "curiosity": 0.0},
-                "ahead_active": True,
+                "result": dict(distracted_result),
             },
         ]
 
-        def set_distracted_mode(_env, human, **_kwargs):
-            human.set_mode(HumanMode.DISTRACTED)
+        with patch("museum_env.env_control.compute_human_fuzzy_debug", side_effect=fuzzy_debug_sequence):
+            with patch("museum_env.env_control.in_ahead_region", return_value=True):
+                env_control.apply_human_controls(env, world_frame)
 
-        with patch("museum_env.env_control._collect_fuzzy_candidates", return_value=[{"idx": 0}, {"idx": 1}]):
-            with patch("museum_env.env_control._compute_fuzzy_batch", return_value=fuzzy_batch):
-                with patch("museum_env.env_control.record_fuzzy_debug"):
-                    with patch("museum_env.env_control.apply_fuzzy_transition", side_effect=set_distracted_mode):
-                        env_control.apply_human_controls(env, world_frame)
-
-        self.assertEqual(humans[0].seen_human_modes, [(HumanMode.DISTRACTED, HumanMode.DISTRACTED)])
+        self.assertEqual(humans[0].seen_human_modes, [(HumanMode.DISTRACTED, HumanMode.FOLLOWING)])
         self.assertEqual(humans[1].seen_human_modes, [(HumanMode.DISTRACTED, HumanMode.DISTRACTED)])
+
+    def test_front_blocking_skips_following_engaged_human(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans)
+        env.fuzzy_debug[0].dominant_state = "engaged"
+        world_frame = self._build_front_blocking_world_frame([0.3])
+
+        with patch("museum_env.env_control.in_ahead_region", return_value=True):
+            blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
+
+        self.assertIsNone(blocker_idx)
+
+    def test_front_blocking_keeps_following_non_engaged_human_eligible(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans)
+        env.fuzzy_debug[0].dominant_state = "distracted"
+        world_frame = self._build_front_blocking_world_frame([0.3])
+
+        with patch("museum_env.env_control.in_ahead_region", return_value=True):
+            blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
+
+        self.assertEqual(blocker_idx, 0)
+
+    def test_front_blocking_keeps_non_following_human_eligible(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.IMPATIENT, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans)
+        env.fuzzy_debug[0].dominant_state = "engaged"
+        world_frame = self._build_front_blocking_world_frame([0.3])
+
+        with patch("museum_env.env_control.in_ahead_region", return_value=True):
+            blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
+
+        self.assertEqual(blocker_idx, 0)
+
+    def test_front_blocking_treats_missing_dominant_state_as_eligible(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans)
+        env.fuzzy_debug[0].dominant_state = None
+        world_frame = self._build_front_blocking_world_frame([0.3])
+
+        with patch("museum_env.env_control.in_ahead_region", return_value=True):
+            blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
+
+        self.assertEqual(blocker_idx, 0)
+
+    def test_front_blocking_skips_engaged_follower_and_selects_next_eligible_human(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+            _FakeHuman("person2", mode=HumanMode.DISTRACTED, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans)
+        env.fuzzy_debug[0].dominant_state = "engaged"
+        env.fuzzy_debug[1].dominant_state = "engaged"
+        world_frame = self._build_front_blocking_world_frame([0.2, 0.35])
+
+        with patch("museum_env.env_control.in_ahead_region", return_value=True):
+            blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
+
+        self.assertEqual(blocker_idx, 1)
 
 
 if __name__ == "__main__":

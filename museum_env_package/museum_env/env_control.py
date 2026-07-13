@@ -68,6 +68,16 @@ def _compute_robot_relative_angle_deg(world_frame, idx: int) -> float:
     return np.rad2deg(wrap_to_pi(float(np.arctan2(diff_xy[1], diff_xy[0])) - robot_yaw))
 
 
+def _is_front_blocking_pass_request_candidate(env, idx: int) -> bool:
+    """Return whether a nearby human is eligible for pass-request blocking logic."""
+    human = env.humans[idx]
+    if human.mode != HumanMode.FOLLOWING:
+        return True
+    if not (0 <= int(idx) < len(env.fuzzy_debug)):
+        return True
+    return str(env.fuzzy_debug[idx].dominant_state) != "engaged"
+
+
 def should_evaluate_fuzzy(env, idx: int, context: str) -> bool:
     """Decide whether fuzzy state should be recomputed for this human and phase."""
     # Fuzzy transitions are only meaningful in the phase that owns the behavior:
@@ -432,6 +442,8 @@ def get_nearest_front_blocking_human_idx(env, world_frame) -> Optional[int]:
             context="following",
             profile=env.humans[idx].profile,
         ):
+            continue
+        if not _is_front_blocking_pass_request_candidate(env, idx):
             continue
         if float(distance) < best_distance:
             best_idx = int(idx)
