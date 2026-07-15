@@ -1,0 +1,15 @@
+{
+  "trial_id": "control_default",
+  "epochs": 20,
+  "samples_per_epoch": 30,
+  "seed": 42,
+  "beta": 0.1,
+  "train_seeds_per_epoch": 1,
+  "n_humans": 15,
+  "reward_config": {
+    "time_penalty_per_second": 0.1,
+    "overwhelmed_trigger_penalty": 4.0,
+    "impatient_trigger_penalty": 2.0,
+    "distracted_trigger_penalty": 2.0
+  }
+}

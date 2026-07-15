@@ -1,0 +1,53 @@
+{
+  "best_theta_seen": [
+    3.360221449380634,
+    4.87884300304107,
+    1.0596554668599558,
+    0.7807433978374501,
+    0.6045722043627518
+  ],
+  "best_policy_params": {
+    "slow_down_distance_m": 3.360221449380634,
+    "callback_distance_m": 4.87884300304107,
+    "callback_wait_seconds": 1.0596554668599558,
+    "slowdown_speed_scale": 0.7807433978374501,
+    "explanation_time_scale": 0.7,
+    "explanation_wait_seconds": 21.0
+  },
+  "final_theta": [
+    3.360221449380634,
+    4.87884300304107,
+    1.0596554668599558,
+    0.7807433978374501,
+    0.6045722043627518
+  ],
+  "final_policy_params": {
+    "slow_down_distance_m": 3.360221449380634,
+    "callback_distance_m": 4.87884300304107,
+    "callback_wait_seconds": 1.0596554668599558,
+    "slowdown_speed_scale": 0.7807433978374501,
+    "explanation_time_scale": 0.7,
+    "explanation_wait_seconds": 21.0
+  },
+  "best_return": -14.055000000000001,
+  "best_mean_duration_seconds": 100.55000000000001,
+  "best_mean_overwhelmed_triggers": 0.0,
+  "best_mean_impatient_triggers": 2.0,
+  "best_mean_distracted_triggers": 0.0,
+  "best_epoch": 18,
+  "best_sample_index_within_epoch": 18,
+  "final_mu": [
+    3.4263481829593507,
+    5.117204585884367,
+    1.1096367428227774,
+    0.7828776229885747,
+    0.6101395459488346
+  ],
+  "final_std": [
+    0.08412458080767929,
+    0.061823145395122334,
+    0.1456396196770399,
+    0.008680326973007598,
+    0.03296200444005903
+  ]
+}

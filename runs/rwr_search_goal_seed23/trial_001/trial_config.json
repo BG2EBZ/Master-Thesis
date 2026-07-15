@@ -1,0 +1,12 @@
+{
+  "epochs": 15,
+  "samples_per_epoch": 40,
+  "seed": 777,
+  "beta": 0.2,
+  "train_seeds_per_epoch": 1,
+  "n_humans": 15,
+  "time_penalty_per_second": 0.05,
+  "overwhelmed_trigger_penalty": 6.0,
+  "impatient_trigger_penalty": 1.0,
+  "distracted_trigger_penalty": 1.0
+}

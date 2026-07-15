@@ -1,0 +1,53 @@
+{
+  "baseline_theta": [
+    3.0,
+    4.0,
+    2.0,
+    0.7,
+    1.0
+  ],
+  "comparison_theta": [
+    3.0945531667750465,
+    3.99158408777766,
+    1.1693562842092495,
+    0.9257846277379403,
+    0.6545877000194271
+  ],
+  "baseline_policy_params": {
+    "slow_down_distance_m": 3.0,
+    "callback_distance_m": 4.0,
+    "callback_wait_seconds": 2.0,
+    "slowdown_speed_scale": 0.7,
+    "explanation_time_scale": 1.0,
+    "explanation_wait_seconds": 30.0
+  },
+  "comparison_policy_params": {
+    "slow_down_distance_m": 3.0945531667750465,
+    "callback_distance_m": 3.99158408777766,
+    "callback_wait_seconds": 1.1693562842092495,
+    "slowdown_speed_scale": 0.9257846277379403,
+    "explanation_time_scale": 0.7,
+    "explanation_wait_seconds": 21.0
+  },
+  "learned_params_json": "runs/targeted_search_20260713_full/aggressive_time/train/best_params.json",
+  "evaluation_seeds": [
+    191664963,
+    1662057957,
+    1405681631,
+    942484272,
+    929893137
+  ],
+  "num_runs": 5,
+  "baseline_mean_return": -48.083,
+  "baseline_best_return": -18.2675,
+  "baseline_mean_duration_seconds": 257.66,
+  "baseline_mean_overwhelmed_triggers": 1.2,
+  "baseline_mean_impatient_triggers": 24.2,
+  "baseline_mean_distracted_triggers": 3.8,
+  "comparison_mean_return": -36.59,
+  "comparison_best_return": -14.75,
+  "comparison_mean_duration_seconds": 187.8,
+  "comparison_mean_overwhelmed_triggers": 1.0,
+  "comparison_mean_impatient_triggers": 17.0,
+  "comparison_mean_distracted_triggers": 4.2
+}

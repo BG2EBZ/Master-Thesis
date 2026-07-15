@@ -13,6 +13,7 @@ import numpy as np
 
 from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
+from museum_env.reward import RewardConfig
 from train_rwr import EpisodeResult, _evaluate_episode_task
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -315,19 +316,26 @@ def evaluate_baseline(
     num_runs: int,
     output_dir: Path,
     max_workers: int,
+    n_humans: int = DEFAULT_N_HUMANS,
+    baseline_theta: np.ndarray | None = None,
+    reward_config: RewardConfig | None = None,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     learned_params_payload = _load_learned_params_payload(learned_params_json)
-    baseline_theta = PolicySearchParams().to_theta()
+    resolved_baseline_theta = (
+        PolicySearchParams().to_theta()
+        if baseline_theta is None
+        else np.asarray(baseline_theta, dtype=np.float64)
+    )
     comparison_theta = _load_comparison_theta(learned_params_payload)
     evaluation_seeds = _select_evaluation_seeds(num_runs)
     baseline_tasks = [
-        (baseline_theta, int(evaluation_seed), DEFAULT_N_HUMANS, False)
+        (resolved_baseline_theta, int(evaluation_seed), int(n_humans), False, reward_config)
         for evaluation_seed in evaluation_seeds
     ]
     comparison_tasks = [
-        (comparison_theta, int(evaluation_seed), DEFAULT_N_HUMANS, False)
+        (comparison_theta, int(evaluation_seed), int(n_humans), False, reward_config)
         for evaluation_seed in evaluation_seeds
     ]
     episode_tasks = baseline_tasks + comparison_tasks
@@ -364,9 +372,9 @@ def evaluate_baseline(
         for baseline, comparison in zip(baseline_results, comparison_results)
     )
     summary_payload: dict[str, object] = {
-        "baseline_theta": [float(value) for value in baseline_theta],
+        "baseline_theta": [float(value) for value in resolved_baseline_theta],
         "comparison_theta": [float(value) for value in comparison_theta],
-        "baseline_policy_params": _policy_params_dict(baseline_theta),
+        "baseline_policy_params": _policy_params_dict(resolved_baseline_theta),
         "comparison_policy_params": _policy_params_dict(comparison_theta),
         "learned_params_json": str(learned_params_json),
         "evaluation_seeds": [int(value) for value in evaluation_seeds],
@@ -439,12 +447,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_MAX_WORKERS,
         help="Maximum worker processes for rollout evaluation.",
     )
+    parser.add_argument(
+        "--n-humans",
+        type=_positive_int,
+        default=DEFAULT_N_HUMANS,
+        help="Number of humans to simulate during evaluation rollouts.",
+    )
     args = parser.parse_args(argv)
     evaluate_baseline(
         learned_params_json=args.learned_params_json,
         num_runs=args.num_runs,
         output_dir=args.output_dir,
         max_workers=args.max_workers,
+        n_humans=int(args.n_humans),
     )
     return 0
 

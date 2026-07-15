@@ -23,9 +23,10 @@ import numpy as np
 from museum_env import MuseumEnv
 from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
+from museum_env.reward import DEFAULT_REWARD_CONFIG, RewardConfig
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EPOCHS = 20
+DEFAULT_EPOCHS = 30
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.1
@@ -76,7 +77,7 @@ INITIAL_STD = np.array(
         0.6,
         0.8,
         0.1,
-        0.08,
+        0.05,
     ],
     dtype=np.float64,
 )
@@ -103,6 +104,7 @@ class ThetaEvaluation:
 
 _CACHED_ENV: MuseumEnv | None = None
 _CACHED_ENV_N_HUMANS: int | None = None
+_CACHED_ENV_REWARD_CONFIG: RewardConfig | None = None
 
 
 def _positive_int(value: str) -> int:
@@ -112,32 +114,55 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def _get_cached_env(n_humans: int) -> MuseumEnv:
-    global _CACHED_ENV, _CACHED_ENV_N_HUMANS
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError("must be a positive float")
+    return parsed
+
+
+def _resolve_reward_config(reward_config: RewardConfig | None) -> RewardConfig:
+    return DEFAULT_REWARD_CONFIG if reward_config is None else reward_config
+
+
+def _get_cached_env(n_humans: int, reward_config: RewardConfig | None = None) -> MuseumEnv:
+    global _CACHED_ENV, _CACHED_ENV_N_HUMANS, _CACHED_ENV_REWARD_CONFIG
     requested_n_humans = int(n_humans)
+    requested_reward_config = _resolve_reward_config(reward_config)
     if _CACHED_ENV is None:
         _CACHED_ENV = MuseumEnv(
             render_mode=None,
             enable_event_logs=False,
             n_humans=requested_n_humans,
+            reward_config=requested_reward_config,
         )
         _CACHED_ENV_N_HUMANS = requested_n_humans
+        _CACHED_ENV_REWARD_CONFIG = requested_reward_config
         return _CACHED_ENV
 
-    if _CACHED_ENV_N_HUMANS != requested_n_humans:
-        raise RuntimeError(
-            "Cached MuseumEnv was initialized with "
-            f"n_humans={_CACHED_ENV_N_HUMANS}, but received n_humans={requested_n_humans}."
+    if (
+        _CACHED_ENV_N_HUMANS != requested_n_humans
+        or _CACHED_ENV_REWARD_CONFIG != requested_reward_config
+    ):
+        _close_cached_env()
+        _CACHED_ENV = MuseumEnv(
+            render_mode=None,
+            enable_event_logs=False,
+            n_humans=requested_n_humans,
+            reward_config=requested_reward_config,
         )
+        _CACHED_ENV_N_HUMANS = requested_n_humans
+        _CACHED_ENV_REWARD_CONFIG = requested_reward_config
     return _CACHED_ENV
 
 
 def _close_cached_env() -> None:
-    global _CACHED_ENV, _CACHED_ENV_N_HUMANS
+    global _CACHED_ENV, _CACHED_ENV_N_HUMANS, _CACHED_ENV_REWARD_CONFIG
     if _CACHED_ENV is not None:
         _CACHED_ENV.close()
     _CACHED_ENV = None
     _CACHED_ENV_N_HUMANS = None
+    _CACHED_ENV_REWARD_CONFIG = None
 
 
 atexit.register(_close_cached_env)
@@ -190,9 +215,15 @@ def run_episode(
     )
 
 
-def _evaluate_episode_task(task: tuple[np.ndarray, int, int, bool]) -> EpisodeResult:
-    theta, seed, n_humans, print_explanations = task
-    env = _get_cached_env(n_humans)
+def _evaluate_episode_task(
+    task: tuple[np.ndarray, int, int, bool] | tuple[np.ndarray, int, int, bool, RewardConfig | None]
+) -> EpisodeResult:
+    if len(task) == 4:
+        theta, seed, n_humans, print_explanations = task
+        reward_config = None
+    else:
+        theta, seed, n_humans, print_explanations, reward_config = task
+    env = _get_cached_env(n_humans, reward_config=reward_config)
     return run_episode(
         env,
         theta=theta,
@@ -390,9 +421,14 @@ def train(
     samples_per_epoch: int,
     seed: int,
     output_dir: Path,
+    beta: float = DEFAULT_BETA,
+    train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+    n_humans: int = DEFAULT_N_HUMANS,
+    reward_config: RewardConfig | None = None,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    resolved_reward_config = _resolve_reward_config(reward_config)
     master_seed = int(seed)
     theta_seed_sequence, train_seed_sequence = np.random.SeedSequence(master_seed).spawn(2)
     theta_rng = np.random.default_rng(theta_seed_sequence)
@@ -400,7 +436,7 @@ def train(
     epoch_training_seeds = _build_epoch_training_seed_schedule(
         train_seed_rng,
         epochs=epochs,
-        seeds_per_epoch=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+        seeds_per_epoch=int(train_seeds_per_epoch),
     )
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
@@ -435,7 +471,7 @@ def train(
             )
             epoch_training_seed_batch = epoch_training_seeds[epoch_idx]
             episode_tasks = [
-                (theta, int(seed), DEFAULT_N_HUMANS, print_explanations)
+                (theta, int(seed), int(n_humans), print_explanations, resolved_reward_config)
                 for theta in theta_batch
                 for seed in epoch_training_seed_batch
             ]
@@ -461,7 +497,7 @@ def train(
             mu, std = update_distribution(
                 theta_batch=theta_batch,
                 returns=returns,
-                beta=DEFAULT_BETA,
+                beta=float(beta),
             )
 
             epoch_metrics = {
@@ -577,17 +613,69 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Experiment master seed for policy sampling and rollout seeding.",
     )
     parser.add_argument(
+        "--beta",
+        type=_positive_float,
+        default=DEFAULT_BETA,
+        help="RWR reward-weight temperature used in the distribution update.",
+    )
+    parser.add_argument(
+        "--train-seeds-per-epoch",
+        type=_positive_int,
+        default=DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+        help="Number of rollout seeds used to evaluate each sampled theta per epoch.",
+    )
+    parser.add_argument(
+        "--n-humans",
+        type=_positive_int,
+        default=DEFAULT_N_HUMANS,
+        help="Number of humans to simulate during training rollouts.",
+    )
+    parser.add_argument(
+        "--time-penalty-per-second",
+        type=_positive_float,
+        default=DEFAULT_REWARD_CONFIG.time_penalty_per_second,
+        help="Reward penalty applied per simulated second.",
+    )
+    parser.add_argument(
+        "--overwhelmed-trigger-penalty",
+        type=_positive_float,
+        default=DEFAULT_REWARD_CONFIG.overwhelmed_trigger_penalty,
+        help="Reward penalty applied per overwhelmed trigger.",
+    )
+    parser.add_argument(
+        "--impatient-trigger-penalty",
+        type=_positive_float,
+        default=DEFAULT_REWARD_CONFIG.impatient_trigger_penalty,
+        help="Reward penalty applied per impatient trigger.",
+    )
+    parser.add_argument(
+        "--distracted-trigger-penalty",
+        type=_positive_float,
+        default=DEFAULT_REWARD_CONFIG.distracted_trigger_penalty,
+        help="Reward penalty applied per distracted trigger.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
         help="Directory where training metrics, exploration plots, and best_params.json are written.",
     )
     args = parser.parse_args(argv)
+    reward_config = RewardConfig(
+        time_penalty_per_second=float(args.time_penalty_per_second),
+        overwhelmed_trigger_penalty=float(args.overwhelmed_trigger_penalty),
+        impatient_trigger_penalty=float(args.impatient_trigger_penalty),
+        distracted_trigger_penalty=float(args.distracted_trigger_penalty),
+    )
     train(
         epochs=args.epochs,
         samples_per_epoch=args.samples_per_epoch,
         seed=args.seed,
         output_dir=args.output_dir,
+        beta=float(args.beta),
+        train_seeds_per_epoch=int(args.train_seeds_per_epoch),
+        n_humans=int(args.n_humans),
+        reward_config=reward_config,
     )
     return 0
 
