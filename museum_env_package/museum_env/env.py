@@ -413,6 +413,9 @@ class MuseumEnv(gym.Env):
                 impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
+                callback_same_person_cooldown_seconds=(
+                    self.policy_params.callback_same_person_cooldown_seconds
+                ),
                 rng=self.np_random,
             )
 

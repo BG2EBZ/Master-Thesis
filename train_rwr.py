@@ -38,13 +38,14 @@ DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
 DEFAULT_EXPLORATION_PLOT_NAME = "exploration_metrics.png"
 DEFAULT_BEST_PARAMS_NAME = "best_params.json"
-EXPLORATION_STD_FIELDNAMES = ("std_0", "std_1", "std_2", "std_3", "std_4")
+EXPLORATION_STD_FIELDNAMES = ("std_0", "std_1", "std_2", "std_3", "std_4", "std_5")
 EXPLORATION_PARAMETER_LABELS = (
     "slow_down_distance_m",
     "callback_distance_m",
     "callback_wait_seconds",
     "slowdown_speed_scale",
     "explanation_time_scale",
+    "callback_same_person_cooldown_seconds",
 )
 METRIC_FIELDNAMES = (
     "epoch",
@@ -55,6 +56,7 @@ METRIC_FIELDNAMES = (
     "std_2",
     "std_3",
     "std_4",
+    "std_5",
     "distribution_entropy",
     "mean_duration_seconds",
     "mean_overwhelmed_triggers",
@@ -68,6 +70,7 @@ INITIAL_MU = np.array(
         2.0,
         0.7,
         1.0,
+        20.0,
     ],
     dtype=np.float64,
 )
@@ -78,6 +81,7 @@ INITIAL_STD = np.array(
         0.8,
         0.1,
         0.05,
+        5.0,
     ],
     dtype=np.float64,
 )
@@ -316,6 +320,9 @@ def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
         "slowdown_speed_scale": float(params.slowdown_speed_scale),
         "explanation_time_scale": float(params.explanation_time_scale),
         "explanation_wait_seconds": float(params.explanation_wait_seconds),
+        "callback_same_person_cooldown_seconds": float(
+            params.callback_same_person_cooldown_seconds
+        ),
     }
 
 
@@ -509,6 +516,7 @@ def train(
                 "std_2": float(sampling_std[2]),
                 "std_3": float(sampling_std[3]),
                 "std_4": float(sampling_std[4]),
+                "std_5": float(sampling_std[5]),
                 "distribution_entropy": _diagonal_gaussian_entropy(sampling_std),
                 "mean_duration_seconds": float(
                     np.mean([item.mean_duration_seconds for item in evaluations])
@@ -585,6 +593,8 @@ def train(
         f"slowdown_speed_scale={float(final_policy_params['slowdown_speed_scale']):.3f}, "
         f"explanation_time_scale={float(final_policy_params['explanation_time_scale']):.3f}, "
         f"explanation_wait_seconds={float(final_policy_params['explanation_wait_seconds']):.3f}, "
+        f"callback_same_person_cooldown_seconds="
+        f"{float(final_policy_params['callback_same_person_cooldown_seconds']):.3f}, "
         f"best_return={float(best_params_payload['best_return']):.3f}, "
         f"epoch={int(best_params_payload['best_epoch'])}, "
         f"sample={int(best_params_payload['best_sample_index_within_epoch'])}"

@@ -39,6 +39,7 @@ LISTENING_IMPATIENT_YAW_DEVIATION_MAX_DEG = 90.0
 LISTENING_IMPATIENT_TARGET_REACHED_DEG = 5.0
 CURIOUS_STOP_DURATION_SECONDS_DEFAULT = 5.0
 CURIOSITY_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 10.0
+CALLBACK_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 20.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
 HR_DISTANCE_MAX = 2.0
@@ -165,6 +166,11 @@ class Human:
             self.curiosity_retrigger_cooldown_seconds / DEFAULT_SIM_TIMESTEP_SECONDS
         )
         self.curiosity_retrigger_cooldown_steps_remaining = 0
+        self.callback_retrigger_cooldown_seconds = float(CALLBACK_RETRIGGER_COOLDOWN_SECONDS_DEFAULT)
+        self.callback_retrigger_cooldown_steps = round(
+            self.callback_retrigger_cooldown_seconds / DEFAULT_SIM_TIMESTEP_SECONDS
+        )
+        self.callback_retrigger_cooldown_steps_remaining = 0
 
         self.overwhelmed_stage = None
         self.overwhelmed_backoff_dist = 0.3
@@ -243,6 +249,7 @@ class Human:
         self.reset_following_duration()
         self.listening_steps = 0
         self.reset_curiosity_state()
+        self.callback_retrigger_cooldown_steps_remaining = 0
         self.reset_overwhelmed_state()
         self._reset_wall_query_state()
 
@@ -264,6 +271,7 @@ class Human:
         impatient_speed_multiplier: float,
         impatient_front_offset: float,
         listening_impatient_glance_seconds: float,
+        callback_same_person_cooldown_seconds: float,
         rng=None,
     ) -> None:
         dt = float(dt)
@@ -287,6 +295,12 @@ class Human:
         self.curiosity_retrigger_cooldown_steps_remaining = min(
             int(self.curiosity_retrigger_cooldown_steps_remaining),
             int(self.curiosity_retrigger_cooldown_steps),
+        )
+        self.callback_retrigger_cooldown_seconds = float(callback_same_person_cooldown_seconds)
+        self.callback_retrigger_cooldown_steps = round(self.callback_retrigger_cooldown_seconds / dt)
+        self.callback_retrigger_cooldown_steps_remaining = min(
+            int(self.callback_retrigger_cooldown_steps_remaining),
+            int(self.callback_retrigger_cooldown_steps),
         )
 
     def reset_following_duration(self):

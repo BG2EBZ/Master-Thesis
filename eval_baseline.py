@@ -86,6 +86,9 @@ def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
         "slowdown_speed_scale": float(params.slowdown_speed_scale),
         "explanation_time_scale": float(params.explanation_time_scale),
         "explanation_wait_seconds": float(params.explanation_wait_seconds),
+        "callback_same_person_cooldown_seconds": float(
+            params.callback_same_person_cooldown_seconds
+        ),
     }
 
 

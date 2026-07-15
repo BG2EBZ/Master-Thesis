@@ -415,6 +415,10 @@ def apply_human_controls(env, world_frame) -> None:
     for idx, human in enumerate(env.humans):
         if int(human.curiosity_retrigger_cooldown_steps_remaining) > 0:
             human.curiosity_retrigger_cooldown_steps_remaining = int(human.curiosity_retrigger_cooldown_steps_remaining) - 1
+        if int(human.callback_retrigger_cooldown_steps_remaining) > 0:
+            human.callback_retrigger_cooldown_steps_remaining = (
+                int(human.callback_retrigger_cooldown_steps_remaining) - 1
+            )
         if env.post_explanation_state.active:
             human_action = apply_post_explanation_phase_strategy(env, human, idx, world_frame)
         elif env.listening_state.controller_active:
@@ -724,6 +728,19 @@ def get_following_front_sector_target_idx(env, world_frame) -> Optional[int]:
     return int(candidate_indices[nearest_idx])
 
 
+def get_farthest_lagging_callback_target_idx(env, distances: np.ndarray) -> Optional[int]:
+    """Pick the farthest callback target that is not in same-person cooldown."""
+    farthest_idx = None
+    farthest_distance = -np.inf
+    for idx, distance in enumerate(np.asarray(distances, dtype=np.float32)):
+        if int(env.humans[idx].callback_retrigger_cooldown_steps_remaining) > 0:
+            continue
+        if float(distance) > farthest_distance:
+            farthest_distance = float(distance)
+            farthest_idx = int(idx)
+    return farthest_idx
+
+
 def apply_callback_response_if_needed(env, events) -> None:
     """Resolve the targeted stress-state human's response when a callback cue ends."""
     target_idx = env.robot.callback_target_idx
@@ -763,7 +780,7 @@ def start_following_callback(env, world_frame) -> bool:
     # Use the front-sector override when available; otherwise fall back to the
     # more general "farthest person from the robot" callback target.
     if target_idx is None or not (0 <= int(target_idx) < human_xy.shape[0]):
-        target_idx = int(np.argmax(distances))
+        target_idx = get_farthest_lagging_callback_target_idx(env, distances)
     if not (0 <= target_idx < human_xy.shape[0]):
         return False
     env.robot.start_callback(
@@ -821,7 +838,17 @@ def apply_following_crowd_regulation_if_needed(
         reset_following_wait_episode(env)
         return adjusted_action, should_start_callback
     max_hr_distance = float(np.max(distances))
-    if (not grace_active) and max_hr_distance > float(env.policy_params.callback_distance_m):
+    lagging_target_idx = get_farthest_lagging_callback_target_idx(env, distances)
+    lagging_target_distance = (
+        float(distances[int(lagging_target_idx)])
+        if lagging_target_idx is not None
+        else None
+    )
+    if (
+        (not grace_active)
+        and lagging_target_distance is not None
+        and lagging_target_distance > float(env.policy_params.callback_distance_m)
+    ):
         env.robot.mode = RobotMode.STOP
         env._following_wait_elapsed_steps += 1
         if (

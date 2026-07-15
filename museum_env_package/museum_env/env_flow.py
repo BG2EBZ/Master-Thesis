@@ -538,6 +538,11 @@ def compute_robot_action(env, pre_frame, events) -> tuple[np.ndarray, bool]:
             target_idx = env.robot.callback_target_idx
             person_label = "none" if target_idx is None else f"person{int(target_idx) + 1}"
             env._log_event(f">>> Robot callback completed for {person_label}.")
+            if target_idx is not None and 0 <= int(target_idx) < len(env.humans):
+                target_human = env.humans[int(target_idx)]
+                target_human.callback_retrigger_cooldown_steps_remaining = int(
+                    target_human.callback_retrigger_cooldown_steps
+                )
             env_control.apply_callback_response_if_needed(env, events)
             env._following_callback_resume_grace_steps_remaining = int(
                 env.following_callback_resume_grace_steps

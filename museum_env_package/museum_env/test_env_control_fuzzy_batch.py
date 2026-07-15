@@ -12,9 +12,11 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 import museum_env.env_control as env_control
+import museum_env.env_flow as env_flow
 from museum_env.env_state import FuzzyDebugState
 from museum_env.fuzzy import FollowingFuzzyEngine
 from museum_env.human import HumanMode, HumanProfile
+from museum_env.robot import RobotMode
 
 
 class _FakeHuman:
@@ -33,6 +35,8 @@ class _FakeHuman:
         self.following_steps = int(following_steps)
         self.listening_steps = int(listening_steps)
         self.curiosity_retrigger_cooldown_steps_remaining = 0
+        self.callback_retrigger_cooldown_steps = 400
+        self.callback_retrigger_cooldown_steps_remaining = 0
         self.impatient_front_offset = 1.2
         self.distracted_source = None
         self.distracted_recovery_mode = HumanMode.FOLLOWING
@@ -101,6 +105,18 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             ),
         )
 
+    def _build_callback_world_frame(self, human_xy, distances):
+        human_xy = np.asarray(human_xy, dtype=np.float32)
+        distances = np.asarray(distances, dtype=np.float32)
+        return SimpleNamespace(
+            robot_xy=np.array([0.0, 0.0], dtype=np.float32),
+            robot_pose=(0.0, 0.0, 0.0),
+            human_xy=human_xy,
+            observations=SimpleNamespace(
+                human_robot_distance=distances,
+            ),
+        )
+
     def _build_env(self, humans, *, follow_phase="transit", listening_controller_active=False, listening_fuzzy_active=False):
         n_humans = len(humans)
         return SimpleNamespace(
@@ -115,6 +131,7 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             runtime_cache=SimpleNamespace(refresh_counter=5),
             fuzzy_debug=[FuzzyDebugState() for _ in humans],
             listening_state=SimpleNamespace(
+                phase="idle",
                 controller_active=bool(listening_controller_active),
                 fuzzy_active=bool(listening_fuzzy_active),
                 question_active=False,
@@ -129,6 +146,30 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
                 listen_radii=np.ones((n_humans,), dtype=np.float32),
             ),
             step_count=7,
+            policy_params=SimpleNamespace(
+                slow_down_distance_m=2.5,
+                callback_distance_m=3.5,
+                slowdown_speed_scale=0.7,
+                callback_same_person_cooldown_seconds=20.0,
+            ),
+            callback_trigger_distance_meters=2.0,
+            following_callback_wait_steps=3,
+            following_callback_cue_steps=40,
+            following_callback_resume_grace_steps=100,
+            following_callback_front_sector_half_angle=1.0,
+            _following_wait_elapsed_steps=0,
+            _following_wait_callback_triggered=False,
+            _following_callback_override_target_idx=None,
+            _following_callback_resume_grace_steps_remaining=0,
+            robot=SimpleNamespace(
+                mode=RobotMode.MOVE,
+                callback_target_idx=None,
+                callback_cue_completed_this_step=False,
+                listen_mode=False,
+                start_callback=Mock(),
+                finish_callback=Mock(),
+                step=Mock(return_value=np.zeros(3, dtype=np.float32)),
+            ),
             model=object(),
             data=SimpleNamespace(ctrl=np.zeros(3 + (3 * n_humans), dtype=np.float32)),
             _log_event=lambda _msg: None,
@@ -363,6 +404,93 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             blocker_idx = env_control.get_nearest_front_blocking_human_idx(env, world_frame)
 
         self.assertEqual(blocker_idx, 1)
+
+    def test_callback_completion_starts_same_person_cooldown(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
+        env.robot.mode = RobotMode.CALLBACK
+        env.robot.callback_cue_completed_this_step = True
+        env.robot.callback_target_idx = 0
+        pre_frame = SimpleNamespace(
+            robot_pose=(0.0, 0.0, 0.0),
+            human_xyz=np.zeros((1, 3), dtype=np.float32),
+        )
+        events = SimpleNamespace(
+            callback_completed=False,
+            callback_success=False,
+            callback_ignored=False,
+        )
+
+        env_flow.compute_robot_action(env, pre_frame, events)
+
+        self.assertTrue(bool(events.callback_completed))
+        self.assertEqual(
+            humans[0].callback_retrigger_cooldown_steps_remaining,
+            humans[0].callback_retrigger_cooldown_steps,
+        )
+        env.robot.finish_callback.assert_called_once()
+
+    def test_start_following_callback_skips_generic_target_on_cooldown(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+            _FakeHuman("person2", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        humans[0].callback_retrigger_cooldown_steps_remaining = 50
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
+        world_frame = self._build_callback_world_frame(
+            human_xy=[[-4.5, 0.0], [-4.0, 0.0]],
+            distances=[4.5, 4.0],
+        )
+
+        started = env_control.start_following_callback(env, world_frame)
+
+        self.assertTrue(bool(started))
+        self.assertEqual(env.robot.start_callback.call_args.kwargs["target_idx"], 1)
+
+    def test_following_crowd_regulation_does_not_stop_when_all_lagging_targets_are_on_cooldown(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+            _FakeHuman("person2", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        humans[0].callback_retrigger_cooldown_steps_remaining = 50
+        humans[1].callback_retrigger_cooldown_steps_remaining = 50
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
+        robot_action = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        world_frame = self._build_callback_world_frame(
+            human_xy=[[-4.5, 0.0], [-4.0, 0.0]],
+            distances=[4.5, 4.0],
+        )
+
+        adjusted_action, should_start_callback = env_control.apply_following_crowd_regulation_if_needed(
+            env,
+            robot_action,
+            robot_mode=RobotMode.MOVE,
+            world_frame=world_frame,
+        )
+
+        self.assertFalse(bool(should_start_callback))
+        self.assertEqual(env.robot.mode, RobotMode.MOVE)
+        np.testing.assert_allclose(adjusted_action, np.array([0.7, 0.0, 0.0], dtype=np.float32))
+        self.assertEqual(env._following_wait_elapsed_steps, 0)
+
+    def test_start_following_callback_front_sector_override_ignores_cooldown(self):
+        humans = [
+            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NORMAL),
+        ]
+        humans[0].callback_retrigger_cooldown_steps_remaining = 50
+        env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
+        env._following_callback_override_target_idx = 0
+        world_frame = self._build_callback_world_frame(
+            human_xy=[[3.0, 0.0]],
+            distances=[3.0],
+        )
+
+        started = env_control.start_following_callback(env, world_frame)
+
+        self.assertTrue(bool(started))
+        self.assertEqual(env.robot.start_callback.call_args.kwargs["target_idx"], 0)
 
 
 if __name__ == "__main__":

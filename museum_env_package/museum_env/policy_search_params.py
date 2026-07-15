@@ -16,14 +16,15 @@ class PolicySearchParams:
     callback_wait_seconds: float = 2.0
     slowdown_speed_scale: float = 0.7
     explanation_time_scale: float = 1.0
+    callback_same_person_cooldown_seconds: float = 10.0
 
     @classmethod
     def from_theta(cls, theta) -> "PolicySearchParams":
         """Decode raw policy-search parameters into a valid robot policy."""
         theta = np.asarray(theta, dtype=np.float64)
 
-        if theta.shape not in ((4,), (5,)):
-            raise ValueError(f"Expected theta shape (4,) or (5,), got {theta.shape}")
+        if theta.shape not in ((4,), (5,), (6,)):
+            raise ValueError(f"Expected theta shape (4,), (5,), or (6,), got {theta.shape}")
 
         slow_down_distance_m = float(np.clip(theta[0], 1.5, 3.5))
 
@@ -35,8 +36,11 @@ class PolicySearchParams:
         callback_wait_seconds = float(np.clip(theta[2], 0.5, 8.0))
         slowdown_speed_scale = float(np.clip(theta[3], 0.3, 0.95))
         explanation_time_scale = 1.0
-        if theta.shape == (5,):
+        if theta.shape in ((5,), (6,)):
             explanation_time_scale = float(np.clip(theta[4], 0.7, 1.0))
+        callback_same_person_cooldown_seconds = 20.0
+        if theta.shape == (6,):
+            callback_same_person_cooldown_seconds = float(np.clip(theta[5], 0.0, 30.0))
 
         return cls(
             slow_down_distance_m=slow_down_distance_m,
@@ -44,6 +48,7 @@ class PolicySearchParams:
             callback_wait_seconds=callback_wait_seconds,
             slowdown_speed_scale=slowdown_speed_scale,
             explanation_time_scale=explanation_time_scale,
+            callback_same_person_cooldown_seconds=callback_same_person_cooldown_seconds,
         )
 
     @property
@@ -58,6 +63,7 @@ class PolicySearchParams:
                 self.callback_wait_seconds,
                 self.slowdown_speed_scale,
                 self.explanation_time_scale,
+                self.callback_same_person_cooldown_seconds,
             ],
             dtype=np.float64,
         )
