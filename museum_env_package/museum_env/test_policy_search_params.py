@@ -12,7 +12,7 @@ for path in (PACKAGE_ROOT, REPO_ROOT):
         sys.path.insert(0, str(path))
 
 from museum_env.policy_search_params import PolicySearchParams
-from train_rwr import _policy_params_dict as train_policy_params_dict
+from training.common import policy_params_dict as train_policy_params_dict
 from eval_baseline import _policy_params_dict as eval_policy_params_dict
 
 

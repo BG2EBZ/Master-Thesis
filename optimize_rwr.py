@@ -17,7 +17,7 @@ from eval_baseline import (
 )
 from museum_env.policy_search_params import PolicySearchParams
 from museum_env.reward import RewardConfig
-from train_rwr import (
+from training.algorithms.rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_N_HUMANS,
     DEFAULT_SEED,
@@ -377,7 +377,7 @@ def run_search(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run a minimal multi-phase search over train_rwr and reward settings."
+        description="Run a minimal multi-phase search over RWR training and reward settings."
     )
     parser.add_argument(
         "--output-dir",

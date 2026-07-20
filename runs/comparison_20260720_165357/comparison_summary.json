@@ -1,0 +1,72 @@
+{
+  "baseline_theta": [
+    3.0,
+    4.0,
+    2.0,
+    0.7,
+    1.0,
+    10.0
+  ],
+  "comparison_theta": [
+    3.2075191898716233,
+    4.284316761897414,
+    1.6285118641481227,
+    0.670160188603665,
+    1.0067935839287696,
+    18.065882077937502
+  ],
+  "baseline_policy_params": {
+    "slow_down_distance_m": 3.0,
+    "callback_distance_m": 4.0,
+    "callback_wait_seconds": 2.0,
+    "slowdown_speed_scale": 0.7,
+    "explanation_time_scale": 1.0,
+    "explanation_wait_seconds": 30.0,
+    "callback_same_person_cooldown_seconds": 10.0
+  },
+  "comparison_policy_params": {
+    "slow_down_distance_m": 3.2075191898716233,
+    "callback_distance_m": 4.284316761897414,
+    "callback_wait_seconds": 1.6285118641481227,
+    "slowdown_speed_scale": 0.670160188603665,
+    "explanation_time_scale": 1.0,
+    "explanation_wait_seconds": 30.0,
+    "callback_same_person_cooldown_seconds": 18.065882077937502
+  },
+  "learned_params_json": "/home/tianci/Polimi/workspace/Master-Thesis/runs/rwr_20260717_161443/best_params.json",
+  "evaluation_seeds": [
+    191664963,
+    1662057957,
+    1405681631,
+    942484272,
+    929893137,
+    1843824992,
+    184566854,
+    1497586438,
+    432652533,
+    202244314,
+    1130604997,
+    2095133045,
+    1580016183,
+    1634535062,
+    1540770719,
+    1688060240,
+    1102145672,
+    275121930,
+    1803345590,
+    967196436
+  ],
+  "num_runs": 20,
+  "baseline_mean_return": -71.99725000000001,
+  "baseline_best_return": -35.015,
+  "baseline_mean_duration_seconds": 217.9725,
+  "baseline_mean_overwhelmed_triggers": 0.65,
+  "baseline_mean_impatient_triggers": 20.0,
+  "baseline_mean_distracted_triggers": 3.8,
+  "comparison_mean_return": -51.60675,
+  "comparison_best_return": -21.855000000000004,
+  "comparison_mean_duration_seconds": 164.06750000000005,
+  "comparison_mean_overwhelmed_triggers": 0.65,
+  "comparison_mean_impatient_triggers": 12.75,
+  "comparison_mean_distracted_triggers": 3.55
+}

@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 # Keep BLAS/OpenMP libraries from oversubscribing CPU cores across workers
 # unless the caller explicitly sets a different thread count.
@@ -23,13 +23,14 @@ import numpy as np
 from museum_env import MuseumEnv
 from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
+from museum_env.plot_utils import compute_mean_confidence_band, plot_mean_confidence_interval
 from museum_env.reward import DEFAULT_REWARD_CONFIG, RewardConfig
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_EPOCHS = 30
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
-DEFAULT_BETA = 0.1
+DEFAULT_BETA = 0.2
 DEFAULT_EPOCH_TRAIN_SEED_COUNT = 1
 DEFAULT_N_HUMANS = 15
 DEFAULT_MAX_WORKERS = 10
@@ -38,14 +39,26 @@ DEFAULT_CSV_NAME = "training_metrics.csv"
 DEFAULT_PLOT_NAME = "training_metrics.png"
 DEFAULT_EXPLORATION_PLOT_NAME = "exploration_metrics.png"
 DEFAULT_BEST_PARAMS_NAME = "best_params.json"
-EXPLORATION_STD_FIELDNAMES = ("std_0", "std_1", "std_2", "std_3", "std_4", "std_5")
+DEFAULT_LEARNING_CURVE_RAW_CSV_NAME = "learning_curve_raw.csv"
+DEFAULT_LEARNING_CURVE_PLOT_NAME = "learning_curve_plot.png"
+DEFAULT_LEARNING_CURVE_SUMMARY_NAME = "learning_curve_summary.json"
+DEFAULT_N_LEARNING_SEEDS = 1
+DEFAULT_N_EVAL_SEEDS = min(20, len(FIXED_EVALUATION_SEEDS))
+EXPLORATION_STD_FIELDNAMES = (
+    "std_0",
+    "std_1",
+    "std_2",
+    "std_3",
+    "std_4",
+    # "std_5",  # Temporarily disabled: callback_same_person_cooldown_seconds
+)
 EXPLORATION_PARAMETER_LABELS = (
     "slow_down_distance_m",
     "callback_distance_m",
     "callback_wait_seconds",
     "slowdown_speed_scale",
     "explanation_time_scale",
-    "callback_same_person_cooldown_seconds",
+    # "callback_same_person_cooldown_seconds",
 )
 METRIC_FIELDNAMES = (
     "epoch",
@@ -56,8 +69,17 @@ METRIC_FIELDNAMES = (
     "std_2",
     "std_3",
     "std_4",
-    "std_5",
+    # "std_5",  # Temporarily disabled: callback_same_person_cooldown_seconds
     "distribution_entropy",
+    "mean_duration_seconds",
+    "mean_overwhelmed_triggers",
+    "mean_impatient_triggers",
+    "mean_distracted_triggers",
+)
+LEARNING_CURVE_RAW_FIELDNAMES = (
+    "learning_seed",
+    "epoch",
+    "mean_return",
     "mean_duration_seconds",
     "mean_overwhelmed_triggers",
     "mean_impatient_triggers",
@@ -70,7 +92,7 @@ INITIAL_MU = np.array(
         2.0,
         0.7,
         1.0,
-        20.0,
+        # 20.0,  # Temporarily disabled: callback_same_person_cooldown_seconds
     ],
     dtype=np.float64,
 )
@@ -81,7 +103,7 @@ INITIAL_STD = np.array(
         0.8,
         0.1,
         0.05,
-        5.0,
+        # 5.0,  # Temporarily disabled: callback_same_person_cooldown_seconds
     ],
     dtype=np.float64,
 )
@@ -104,6 +126,19 @@ class ThetaEvaluation:
     mean_overwhelmed_triggers: float
     mean_impatient_triggers: float
     mean_distracted_triggers: float
+
+
+@dataclass(frozen=True)
+class SingleSeedTrainingResult:
+    metrics: list[dict[str, float | int]]
+    best_theta_seen: np.ndarray
+    best_evaluation: ThetaEvaluation
+    best_return_seen: float
+    best_epoch: int
+    best_sample_index: int
+    final_mu: np.ndarray
+    final_std: np.ndarray
+    learning_curve_rows: list[dict[str, float | int]]
 
 
 _CACHED_ENV: MuseumEnv | None = None
@@ -311,6 +346,60 @@ def write_metrics_csv(
             writer.writerow({field: row[field] for field in METRIC_FIELDNAMES})
 
 
+def write_learning_curve_raw_csv(
+    rows: Sequence[dict[str, float | int]],
+    output_path: Path,
+) -> None:
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=LEARNING_CURVE_RAW_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row[field] for field in LEARNING_CURVE_RAW_FIELDNAMES})
+
+
+def _build_learning_curve_row(
+    *,
+    learning_seed: int,
+    epoch: int,
+    evaluation: ThetaEvaluation,
+) -> dict[str, float | int]:
+    return {
+        "learning_seed": int(learning_seed),
+        "epoch": int(epoch),
+        "mean_return": float(evaluation.mean_return),
+        "mean_duration_seconds": float(evaluation.mean_duration_seconds),
+        "mean_overwhelmed_triggers": float(evaluation.mean_overwhelmed_triggers),
+        "mean_impatient_triggers": float(evaluation.mean_impatient_triggers),
+        "mean_distracted_triggers": float(evaluation.mean_distracted_triggers),
+    }
+
+
+def _build_learning_curve_return_matrix(
+    rows: Sequence[dict[str, float | int]],
+) -> tuple[np.ndarray, list[int], list[int]]:
+    learning_seeds = sorted({int(row["learning_seed"]) for row in rows})
+    epochs = sorted({int(row["epoch"]) for row in rows})
+    seed_to_idx = {seed: idx for idx, seed in enumerate(learning_seeds)}
+    epoch_to_idx = {epoch: idx for idx, epoch in enumerate(epochs)}
+    matrix = np.full((len(learning_seeds), len(epochs)), np.nan, dtype=np.float64)
+    for row in rows:
+        matrix[seed_to_idx[int(row["learning_seed"])], epoch_to_idx[int(row["epoch"])]] = float(
+            row["mean_return"]
+        )
+    if np.isnan(matrix).any():
+        raise ValueError("Learning curve rows do not form a complete seed x epoch matrix.")
+    return matrix, learning_seeds, epochs
+
+
+def write_learning_curve_summary_json(
+    payload: dict[str, Any],
+    output_path: Path,
+) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+
+
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
     params = PolicySearchParams.from_theta(theta)
     return {
@@ -422,19 +511,97 @@ def plot_exploration_metrics(
     plt.close(fig)
 
 
-def train(
+def plot_learning_curve_metrics(
+    *,
+    epochs: Sequence[int],
+    return_matrix: np.ndarray,
+    output_path: Path,
+    x_label: str = "# Epochs",
+) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(1, 1, figsize=(8.4, 5.8), constrained_layout=False)
+    x_values = np.asarray(epochs, dtype=np.float64)
+    plot_mean_confidence_interval(
+        ax,
+        x_values,
+        np.asarray(return_matrix, dtype=np.float64),
+        color="#f28e2b",
+        label="RWR",
+        alpha=0.24,
+        linewidth=2.2,
+    )
+
+    ax.set_xlabel(x_label, fontsize=16, fontweight="semibold")
+    ax.set_ylabel("J", fontsize=16, fontweight="semibold")
+    ax.set_xlim(float(x_values[0]), float(x_values[-1]))
+    ax.set_xticks(x_values)
+    ax.tick_params(axis="both", labelsize=12)
+    ax.grid(True, color="#d6d6d6", linewidth=1.0, alpha=0.9)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#b0b0b0")
+    ax.spines["bottom"].set_color("#b0b0b0")
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        frameon=False,
+        ncol=1,
+        fontsize=13,
+        handlelength=2.0,
+    )
+    fig.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.26)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _run_episode_batch(
+    tasks: Sequence[tuple[Any, ...]],
+    executor: ProcessPoolExecutor | None,
+) -> list[EpisodeResult]:
+    if executor is None:
+        return [_evaluate_episode_task(task) for task in tasks]
+    return list(executor.map(_evaluate_episode_task, tasks))
+
+
+def _evaluate_theta_on_seeds(
+    theta: np.ndarray,
+    *,
+    seeds: Sequence[int],
+    n_humans: int,
+    reward_config: RewardConfig | None,
+    executor: ProcessPoolExecutor | None,
+) -> list[EpisodeResult]:
+    eval_tasks = [
+        (
+            np.asarray(theta, dtype=np.float64),
+            int(eval_seed),
+            int(n_humans),
+            False,
+            reward_config,
+        )
+        for eval_seed in seeds
+    ]
+    return _run_episode_batch(eval_tasks, executor)
+
+
+def _train_single_learning_seed(
     *,
     epochs: int,
     samples_per_epoch: int,
     seed: int,
-    output_dir: Path,
-    beta: float = DEFAULT_BETA,
-    train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
-    n_humans: int = DEFAULT_N_HUMANS,
-    reward_config: RewardConfig | None = None,
-) -> list[dict[str, float | int]]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+    beta: float,
+    train_seeds_per_epoch: int,
+    n_humans: int,
+    reward_config: RewardConfig | None,
+    evaluation_seeds: Sequence[int] | None = None,
+) -> SingleSeedTrainingResult:
     resolved_reward_config = _resolve_reward_config(reward_config)
     master_seed = int(seed)
     theta_seed_sequence, train_seed_sequence = np.random.SeedSequence(master_seed).spawn(2)
@@ -448,28 +615,48 @@ def train(
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
     metrics: list[dict[str, float | int]] = []
+    learning_curve_rows: list[dict[str, float | int]] = []
     best_theta_seen: np.ndarray | None = None
     best_evaluation: ThetaEvaluation | None = None
     best_return_seen = float("-inf")
     best_epoch = 0
     best_sample_index = 0
     max_workers = min(samples_per_epoch, os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
-    # Only print if running single-process
     print_explanations = max_workers == 1
+    initial_theta = INITIAL_MU.copy()
 
-    def _run_episode_batch(tasks, executor: ProcessPoolExecutor | None) -> list[EpisodeResult]:
-        if executor is None:
-            return [_evaluate_episode_task(task) for task in tasks]
-        return list(executor.map(_evaluate_episode_task, tasks))
+    def _record_learning_curve_epoch(
+        *,
+        epoch: int,
+        theta: np.ndarray,
+        executor: ProcessPoolExecutor | None,
+    ) -> None:
+        if evaluation_seeds is None:
+            return
+        evaluation = _aggregate_episode_results(
+            _evaluate_theta_on_seeds(
+                np.asarray(theta, dtype=np.float64),
+                seeds=evaluation_seeds,
+                n_humans=int(n_humans),
+                reward_config=resolved_reward_config,
+                executor=executor,
+            )
+        )
+        learning_curve_rows.append(
+            _build_learning_curve_row(
+                learning_seed=int(master_seed),
+                epoch=int(epoch),
+                evaluation=evaluation,
+            )
+        )
 
     def _run_training_loop(
         *,
         executor: ProcessPoolExecutor | None,
-        start_epoch_idx: int,
-        end_epoch_idx: int,
     ) -> None:
         nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
-        for epoch_idx in range(start_epoch_idx, end_epoch_idx):
+        _record_learning_curve_epoch(epoch=0, theta=initial_theta, executor=executor)
+        for epoch_idx in range(epochs):
             sampling_std = np.array(std, dtype=np.float64, copy=True)
             theta_batch = theta_rng.normal(
                 loc=mu,
@@ -478,9 +665,9 @@ def train(
             )
             epoch_training_seed_batch = epoch_training_seeds[epoch_idx]
             episode_tasks = [
-                (theta, int(seed), int(n_humans), print_explanations, resolved_reward_config)
+                (theta, int(train_seed), int(n_humans), print_explanations, resolved_reward_config)
                 for theta in theta_batch
-                for seed in epoch_training_seed_batch
+                for train_seed in epoch_training_seed_batch
             ]
             episode_results = _run_episode_batch(episode_tasks, executor)
             seed_count = len(epoch_training_seed_batch)
@@ -489,10 +676,7 @@ def train(
                 for idx in range(0, len(episode_results), seed_count)
             ]
 
-            returns = np.array(
-                [evaluation.mean_return for evaluation in evaluations],
-                dtype=np.float64,
-            )
+            returns = np.array([evaluation.mean_return for evaluation in evaluations], dtype=np.float64)
             best_idx = int(np.argmax(returns))
             best_return_this_epoch = float(returns[best_idx])
             if best_return_this_epoch > best_return_seen:
@@ -501,11 +685,13 @@ def train(
                 best_return_seen = best_return_this_epoch
                 best_epoch = int(epoch_idx + 1)
                 best_sample_index = int(best_idx + 1)
+
             mu, std = update_distribution(
                 theta_batch=theta_batch,
                 returns=returns,
                 beta=float(beta),
             )
+            _record_learning_curve_epoch(epoch=int(epoch_idx + 1), theta=mu, executor=executor)
 
             epoch_metrics = {
                 "epoch": int(epoch_idx + 1),
@@ -516,7 +702,7 @@ def train(
                 "std_2": float(sampling_std[2]),
                 "std_3": float(sampling_std[3]),
                 "std_4": float(sampling_std[4]),
-                "std_5": float(sampling_std[5]),
+                # "std_5": float(sampling_std[5]),  # Temporarily disabled
                 "distribution_entropy": _diagonal_gaussian_entropy(sampling_std),
                 "mean_duration_seconds": float(
                     np.mean([item.mean_duration_seconds for item in evaluations])
@@ -541,43 +727,74 @@ def train(
 
     if max_workers == 1:
         try:
-            _run_training_loop(executor=None, start_epoch_idx=0, end_epoch_idx=epochs)
+            _run_training_loop(executor=None)
         finally:
             _close_cached_env()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            _run_training_loop(
-                executor=executor,
-                start_epoch_idx=0,
-                end_epoch_idx=epochs,
-            )
+            _run_training_loop(executor=executor)
+
+    if best_theta_seen is None or best_evaluation is None:
+        raise RuntimeError("Training completed without evaluating any parameter samples.")
+    return SingleSeedTrainingResult(
+        metrics=metrics,
+        best_theta_seen=best_theta_seen,
+        best_evaluation=best_evaluation,
+        best_return_seen=float(best_return_seen),
+        best_epoch=int(best_epoch),
+        best_sample_index=int(best_sample_index),
+        final_mu=np.array(mu, dtype=np.float64, copy=True),
+        final_std=np.array(std, dtype=np.float64, copy=True),
+        learning_curve_rows=learning_curve_rows,
+    )
+
+
+def train(
+    *,
+    epochs: int,
+    samples_per_epoch: int,
+    seed: int,
+    output_dir: Path,
+    beta: float = DEFAULT_BETA,
+    train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+    n_humans: int = DEFAULT_N_HUMANS,
+    reward_config: RewardConfig | None = None,
+) -> list[dict[str, float | int]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = _train_single_learning_seed(
+        epochs=int(epochs),
+        samples_per_epoch=int(samples_per_epoch),
+        seed=int(seed),
+        beta=float(beta),
+        train_seeds_per_epoch=int(train_seeds_per_epoch),
+        n_humans=int(n_humans),
+        reward_config=reward_config,
+        evaluation_seeds=None,
+    )
 
     csv_path = output_dir / DEFAULT_CSV_NAME
     plot_path = output_dir / DEFAULT_PLOT_NAME
     exploration_plot_path = output_dir / DEFAULT_EXPLORATION_PLOT_NAME
     best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
-    if best_theta_seen is None or best_evaluation is None:
-        raise RuntimeError("Training completed without evaluating any parameter samples.")
 
     best_params_payload = {
-        "best_theta_seen": [float(value) for value in best_theta_seen],
-        "best_policy_params": _policy_params_dict(best_theta_seen),
-        "final_theta": [float(value) for value in best_theta_seen],
-        "final_policy_params": _policy_params_dict(best_theta_seen),
-        "best_return": float(best_return_seen),
-        "best_mean_duration_seconds": float(best_evaluation.mean_duration_seconds),
-        "best_mean_overwhelmed_triggers": float(best_evaluation.mean_overwhelmed_triggers),
-        "best_mean_impatient_triggers": float(best_evaluation.mean_impatient_triggers),
-        "best_mean_distracted_triggers": float(best_evaluation.mean_distracted_triggers),
-        "best_epoch": int(best_epoch),
-        "best_sample_index_within_epoch": int(best_sample_index),
-        # These remain optimizer-space values; the environment clips them on application.
-        "final_mu": [float(value) for value in mu],
-        "final_std": [float(value) for value in std],
+        "best_theta_seen": [float(value) for value in result.best_theta_seen],
+        "best_policy_params": _policy_params_dict(result.best_theta_seen),
+        "final_theta": [float(value) for value in result.best_theta_seen],
+        "final_policy_params": _policy_params_dict(result.best_theta_seen),
+        "best_return": float(result.best_return_seen),
+        "best_mean_duration_seconds": float(result.best_evaluation.mean_duration_seconds),
+        "best_mean_overwhelmed_triggers": float(result.best_evaluation.mean_overwhelmed_triggers),
+        "best_mean_impatient_triggers": float(result.best_evaluation.mean_impatient_triggers),
+        "best_mean_distracted_triggers": float(result.best_evaluation.mean_distracted_triggers),
+        "best_epoch": int(result.best_epoch),
+        "best_sample_index_within_epoch": int(result.best_sample_index),
+        "final_mu": [float(value) for value in result.final_mu],
+        "final_std": [float(value) for value in result.final_std],
     }
-    write_metrics_csv(metrics, csv_path)
-    plot_training_metrics(metrics, plot_path)
-    plot_exploration_metrics(metrics, exploration_plot_path)
+    write_metrics_csv(result.metrics, csv_path)
+    plot_training_metrics(result.metrics, plot_path)
+    plot_exploration_metrics(result.metrics, exploration_plot_path)
     write_best_params_json(best_params_payload, best_params_path)
 
     print(f"Saved metrics CSV to {csv_path}")
@@ -599,7 +816,88 @@ def train(
         f"epoch={int(best_params_payload['best_epoch'])}, "
         f"sample={int(best_params_payload['best_sample_index_within_epoch'])}"
     )
-    return metrics
+    return result.metrics
+
+
+def train_across_learning_seeds(
+    *,
+    epochs: int,
+    samples_per_epoch: int,
+    seed: int,
+    output_dir: Path,
+    beta: float = DEFAULT_BETA,
+    train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+    n_humans: int = DEFAULT_N_HUMANS,
+    reward_config: RewardConfig | None = None,
+    n_learning_seeds: int = DEFAULT_N_LEARNING_SEEDS,
+    n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
+) -> list[dict[str, float | int]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_n_learning_seeds = int(n_learning_seeds)
+    resolved_n_eval_seeds = int(n_eval_seeds)
+    if resolved_n_learning_seeds <= 0:
+        raise ValueError("n_learning_seeds must be positive")
+    if resolved_n_eval_seeds <= 0:
+        raise ValueError("n_eval_seeds must be positive")
+    if resolved_n_eval_seeds > len(FIXED_EVALUATION_SEEDS):
+        raise ValueError(
+            f"n_eval_seeds={resolved_n_eval_seeds} exceeds fixed evaluation seed count "
+            f"of {len(FIXED_EVALUATION_SEEDS)}."
+        )
+
+    evaluation_seeds = [int(seed_value) for seed_value in FIXED_EVALUATION_SEEDS[:resolved_n_eval_seeds]]
+    learning_seed_sequences = np.random.SeedSequence(int(seed)).spawn(resolved_n_learning_seeds)
+    learning_seeds = [
+        int(seed_sequence.generate_state(1, dtype=np.uint32)[0])
+        for seed_sequence in learning_seed_sequences
+    ]
+
+    learning_curve_rows: list[dict[str, float | int]] = []
+    for learning_seed in learning_seeds:
+        seed_result = _train_single_learning_seed(
+            epochs=int(epochs),
+            samples_per_epoch=int(samples_per_epoch),
+            seed=int(learning_seed),
+            beta=float(beta),
+            train_seeds_per_epoch=int(train_seeds_per_epoch),
+            n_humans=int(n_humans),
+            reward_config=reward_config,
+            evaluation_seeds=evaluation_seeds,
+        )
+        learning_curve_rows.extend(seed_result.learning_curve_rows)
+
+    raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+    plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
+    summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
+    write_learning_curve_raw_csv(learning_curve_rows, raw_csv_path)
+
+    return_matrix, ordered_learning_seeds, ordered_epochs = _build_learning_curve_return_matrix(
+        learning_curve_rows
+    )
+    band = compute_mean_confidence_band(return_matrix)
+    plot_learning_curve_metrics(
+        epochs=ordered_epochs,
+        return_matrix=return_matrix,
+        output_path=plot_path,
+    )
+    summary_payload = {
+        "learning_seeds": [int(value) for value in ordered_learning_seeds],
+        "evaluation_seeds": [int(value) for value in evaluation_seeds],
+        "epochs": [int(value) for value in ordered_epochs],
+        "n_learning_seeds": int(resolved_n_learning_seeds),
+        "n_eval_seeds": int(resolved_n_eval_seeds),
+        "mean_return": [float(value) for value in band.mean],
+        "ci95_low_return": [float(value) for value in band.low],
+        "ci95_high_return": [float(value) for value in band.high],
+        "learning_curve_raw_csv": str(raw_csv_path),
+        "learning_curve_plot": str(plot_path),
+    }
+    write_learning_curve_summary_json(summary_payload, summary_path)
+
+    print(f"Saved learning curve raw CSV to {raw_csv_path}")
+    print(f"Saved learning curve plot to {plot_path}")
+    print(f"Saved learning curve summary to {summary_path}")
+    return learning_curve_rows
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -641,6 +939,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Number of humans to simulate during training rollouts.",
     )
     parser.add_argument(
+        "--n-learning-seeds",
+        type=_positive_int,
+        default=DEFAULT_N_LEARNING_SEEDS,
+        help="Number of independent learning seeds used for benchmark learning curves.",
+    )
+    parser.add_argument(
+        "--n-eval-seeds",
+        type=_positive_int,
+        default=DEFAULT_N_EVAL_SEEDS,
+        help="Number of fixed evaluation seeds used to estimate each epoch point.",
+    )
+    parser.add_argument(
         "--time-penalty-per-second",
         type=_positive_float,
         default=DEFAULT_REWARD_CONFIG.time_penalty_per_second,
@@ -668,7 +978,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Directory where training metrics, exploration plots, and best_params.json are written.",
+        help="Directory where training artifacts and optional learning-curve outputs are written.",
     )
     args = parser.parse_args(argv)
     reward_config = RewardConfig(
@@ -677,16 +987,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         impatient_trigger_penalty=float(args.impatient_trigger_penalty),
         distracted_trigger_penalty=float(args.distracted_trigger_penalty),
     )
-    train(
-        epochs=args.epochs,
-        samples_per_epoch=args.samples_per_epoch,
-        seed=args.seed,
-        output_dir=args.output_dir,
-        beta=float(args.beta),
-        train_seeds_per_epoch=int(args.train_seeds_per_epoch),
-        n_humans=int(args.n_humans),
-        reward_config=reward_config,
-    )
+    if int(args.n_learning_seeds) == 1:
+        train(
+            epochs=args.epochs,
+            samples_per_epoch=args.samples_per_epoch,
+            seed=args.seed,
+            output_dir=args.output_dir,
+            beta=float(args.beta),
+            train_seeds_per_epoch=int(args.train_seeds_per_epoch),
+            n_humans=int(args.n_humans),
+            reward_config=reward_config,
+        )
+    else:
+        train_across_learning_seeds(
+            epochs=int(args.epochs),
+            samples_per_epoch=int(args.samples_per_epoch),
+            seed=int(args.seed),
+            output_dir=args.output_dir,
+            beta=float(args.beta),
+            train_seeds_per_epoch=int(args.train_seeds_per_epoch),
+            n_humans=int(args.n_humans),
+            reward_config=reward_config,
+            n_learning_seeds=int(args.n_learning_seeds),
+            n_eval_seeds=int(args.n_eval_seeds),
+        )
     return 0
 
 

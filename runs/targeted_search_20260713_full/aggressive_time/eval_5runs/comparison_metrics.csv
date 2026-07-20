@@ -1,6 +1,0 @@
-run,seed,baseline_return,comparison_return,baseline_duration_seconds,comparison_duration_seconds,baseline_overwhelmed_triggers,comparison_overwhelmed_triggers,baseline_impatient_triggers,comparison_impatient_triggers,baseline_distracted_triggers,comparison_distracted_triggers
-1,191664963,-42.485,-32.06,209.70000000000002,161.20000000000002,1,1,21,11,5,7
-2,1662057957,-36.175,-38.3275,143.5,166.55,2,2,13,14,4,4
-3,1405681631,-96.77000000000001,-40.79,495.40000000000003,215.8,2,1,56,21,4,3
-4,942484272,-18.2675,-57.0225,145.35,280.45,0,1,9,32,2,5
-5,929893137,-46.7175,-14.75,294.35,115.0,1,0,22,7,4,2

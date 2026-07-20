@@ -17,10 +17,79 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
 import optimize_rwr
 from eval_baseline import DEFAULT_SUMMARY_NAME, evaluate_baseline
 from museum_env.reward import RewardConfig
-from train_rwr import DEFAULT_BEST_PARAMS_NAME, EpisodeResult, train
+from training.algorithms.rwr import (
+    DEFAULT_BEST_PARAMS_NAME,
+    INITIAL_MU,
+    SingleSeedTrainingResult,
+    _train_single_learning_seed,
+    train,
+    train_across_learning_seeds,
+    update_distribution,
+)
+from training.common import (
+    DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
+    DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
+)
+from training.rollout import (
+    EpisodeResult,
+    ThetaEvaluation,
+)
 
 
 class RWREntrypointTests(unittest.TestCase):
+    @staticmethod
+    def _theta_evaluation(
+        mean_return: float,
+        duration_seconds: float = 12.0,
+        overwhelmed_triggers: float = 1.0,
+        impatient_triggers: float = 2.0,
+        distracted_triggers: float = 3.0,
+    ) -> ThetaEvaluation:
+        return ThetaEvaluation(
+            mean_return=mean_return,
+            mean_duration_seconds=duration_seconds,
+            mean_overwhelmed_triggers=overwhelmed_triggers,
+            mean_impatient_triggers=impatient_triggers,
+            mean_distracted_triggers=distracted_triggers,
+        )
+
+    @staticmethod
+    def _learning_curve_row(
+        learning_seed: int,
+        epoch: int,
+        mean_return: float,
+        duration_seconds: float = 12.0,
+        overwhelmed_triggers: float = 1.0,
+        impatient_triggers: float = 2.0,
+        distracted_triggers: float = 3.0,
+    ) -> dict[str, float | int]:
+        return {
+            "learning_seed": int(learning_seed),
+            "epoch": int(epoch),
+            "mean_return": float(mean_return),
+            "mean_duration_seconds": float(duration_seconds),
+            "mean_overwhelmed_triggers": float(overwhelmed_triggers),
+            "mean_impatient_triggers": float(impatient_triggers),
+            "mean_distracted_triggers": float(distracted_triggers),
+        }
+
+    @staticmethod
+    def _episode_result(
+        episode_return: float,
+        duration_seconds: float = 12.0,
+        overwhelmed_triggers: int = 1,
+        impatient_triggers: int = 2,
+        distracted_triggers: int = 3,
+    ) -> EpisodeResult:
+        return EpisodeResult(
+            episode_return=episode_return,
+            duration_seconds=duration_seconds,
+            overwhelmed_triggers=overwhelmed_triggers,
+            impatient_triggers=impatient_triggers,
+            distracted_triggers=distracted_triggers,
+            success=True,
+        )
+
     def test_train_accepts_custom_reward_config_and_hyperparameters(self):
         reward_config = RewardConfig(
             time_penalty_per_second=0.12,
@@ -28,20 +97,13 @@ class RWREntrypointTests(unittest.TestCase):
             impatient_trigger_penalty=2.5,
             distracted_trigger_penalty=1.5,
         )
-        episode_result = EpisodeResult(
-            episode_return=-10.0,
-            duration_seconds=12.0,
-            overwhelmed_triggers=1,
-            impatient_triggers=2,
-            distracted_triggers=3,
-            success=True,
-        )
+        episode_result = self._episode_result(-10.0)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "train"
-            with patch("train_rwr._evaluate_episode_task", return_value=episode_result) as task_mock:
-                with patch("train_rwr.plot_training_metrics"):
-                    with patch("train_rwr.plot_exploration_metrics"):
+            with patch("training.rollout.evaluate_episode_task", return_value=episode_result) as task_mock:
+                with patch("training.algorithms.rwr.plot_training_metrics"):
+                    with patch("training.algorithms.rwr.plot_exploration_metrics"):
                         metrics = train(
                             epochs=1,
                             samples_per_epoch=1,
@@ -59,6 +121,116 @@ class RWREntrypointTests(unittest.TestCase):
             self.assertEqual(task[2], 2)
             self.assertEqual(task[4], reward_config)
             self.assertTrue((output_dir / DEFAULT_BEST_PARAMS_NAME).exists())
+
+    def test_single_learning_seed_records_epoch_zero_and_evaluates_current_mu(self):
+        evaluation_seeds = [101, 102]
+        seen_tasks: list[tuple[np.ndarray, int, int, bool, RewardConfig | None]] = []
+        side_effect = iter(
+            [
+                self._episode_result(-30.0),
+                self._episode_result(-20.0),
+                self._episode_result(-100.0),
+                self._episode_result(-50.0),
+                self._episode_result(-10.0),
+                self._episode_result(-5.0),
+            ]
+        )
+
+        def fake_evaluate(task):
+            seen_tasks.append(task)
+            return next(side_effect)
+
+        with patch("training.algorithms.rwr.os.cpu_count", return_value=1):
+            with patch("training.rollout.evaluate_episode_task", side_effect=fake_evaluate):
+                result = _train_single_learning_seed(
+                    epochs=1,
+                    samples_per_epoch=2,
+                    seed=123,
+                    beta=0.2,
+                    train_seeds_per_epoch=1,
+                    n_humans=2,
+                    reward_config=None,
+                    evaluation_seeds=evaluation_seeds,
+                )
+
+        self.assertEqual([row["epoch"] for row in result.learning_curve_rows], [0, 1])
+        eval_tasks = [task for task in seen_tasks if task[1] in evaluation_seeds]
+        train_tasks = [task for task in seen_tasks if task[1] not in evaluation_seeds]
+        self.assertEqual(len(eval_tasks), 4)
+        self.assertEqual(len(train_tasks), 2)
+
+        initial_theta = INITIAL_MU.copy()
+        np.testing.assert_allclose(eval_tasks[0][0], initial_theta)
+        np.testing.assert_allclose(eval_tasks[1][0], initial_theta)
+
+        theta_batch = np.vstack([np.asarray(task[0], dtype=np.float64) for task in train_tasks])
+        expected_mu, _expected_std = update_distribution(
+            theta_batch=theta_batch,
+            returns=np.array([-100.0, -50.0], dtype=np.float64),
+            beta=0.2,
+        )
+        np.testing.assert_allclose(eval_tasks[2][0], expected_mu)
+        np.testing.assert_allclose(eval_tasks[3][0], expected_mu)
+
+    def test_train_across_learning_seeds_writes_learning_curve_outputs(self):
+        first_result = SingleSeedTrainingResult(
+            metrics=[{"epoch": 1, "mean_return": -1.0}],
+            best_theta_seen=np.array([1.0], dtype=np.float64),
+            best_evaluation=self._theta_evaluation(-1.0),
+            best_return_seen=-1.0,
+            best_epoch=1,
+            best_sample_index=1,
+            final_mu=np.array([1.0], dtype=np.float64),
+            final_std=np.array([0.1], dtype=np.float64),
+            learning_curve_rows=[
+                self._learning_curve_row(11, 0, -100.0),
+                self._learning_curve_row(11, 1, -60.0),
+            ],
+        )
+        second_result = SingleSeedTrainingResult(
+            metrics=[{"epoch": 1, "mean_return": -2.0}],
+            best_theta_seen=np.array([2.0], dtype=np.float64),
+            best_evaluation=self._theta_evaluation(-2.0),
+            best_return_seen=-2.0,
+            best_epoch=1,
+            best_sample_index=1,
+            final_mu=np.array([2.0], dtype=np.float64),
+            final_std=np.array([0.2], dtype=np.float64),
+            learning_curve_rows=[
+                self._learning_curve_row(22, 0, -80.0),
+                self._learning_curve_row(22, 1, -40.0),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "curve"
+            with patch("training.algorithms.rwr._train_single_learning_seed", side_effect=[first_result, second_result]):
+                with patch("training.algorithms.rwr.plot_learning_curve_metrics") as plot_mock:
+                    rows = train_across_learning_seeds(
+                        epochs=1,
+                        samples_per_epoch=1,
+                        seed=123,
+                        output_dir=output_dir,
+                        n_learning_seeds=2,
+                        n_eval_seeds=2,
+                    )
+
+            self.assertEqual(len(rows), 4)
+            raw_csv = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            summary_json = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
+            self.assertTrue(raw_csv.exists())
+            self.assertTrue(summary_json.exists())
+            raw_lines = raw_csv.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(raw_lines), 1 + 4)
+
+            summary_payload = json.loads(summary_json.read_text(encoding="utf-8"))
+            self.assertEqual(summary_payload["epochs"], [0, 1])
+            self.assertEqual(summary_payload["n_learning_seeds"], 2)
+            self.assertEqual(summary_payload["n_eval_seeds"], 2)
+            self.assertEqual(summary_payload["mean_return"], [-90.0, -50.0])
+            plot_mock.assert_called_once()
+            return_matrix = plot_mock.call_args.kwargs["return_matrix"]
+            self.assertEqual(return_matrix.shape, (2, 2))
 
     def test_evaluate_baseline_accepts_n_humans_and_reward_config(self):
         reward_config = RewardConfig(
@@ -81,7 +253,7 @@ class RWREntrypointTests(unittest.TestCase):
             learned_params_json = root / "best_params.json"
             learned_params_json.write_text(json.dumps(learned_payload), encoding="utf-8")
             output_dir = root / "eval"
-            with patch("eval_baseline._evaluate_episode_task", side_effect=episode_results) as task_mock:
+            with patch("eval_baseline.evaluate_episode_task", side_effect=episode_results) as task_mock:
                 with patch("eval_baseline.plot_comparison_metrics"):
                     metrics = evaluate_baseline(
                         learned_params_json=learned_params_json,
