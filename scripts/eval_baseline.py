@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -11,16 +12,23 @@ from typing import Sequence
 
 import numpy as np
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
+for path in (REPO_ROOT, PACKAGE_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
 from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from museum_env.policy_search_params import PolicySearchParams
 from museum_env.reward import RewardConfig
-from train_rwr import EpisodeResult, _evaluate_episode_task
+from scripts.train_rwr import EpisodeResult, _evaluate_episode_task
 
-REPO_ROOT = Path(__file__).resolve().parent
+ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_NUM_RUNS = 20
 DEFAULT_N_HUMANS = 15
 DEFAULT_MAX_WORKERS = 10
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+DEFAULT_OUTPUT_DIR = ARTIFACTS_ROOT / "runs" / f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 DEFAULT_CSV_NAME = "comparison_metrics.csv"
 DEFAULT_PLOT_NAME = "comparison_plot.png"
 DEFAULT_SUMMARY_NAME = "comparison_summary.json"

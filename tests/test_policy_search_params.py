@@ -1,19 +1,19 @@
-import sys
-from pathlib import Path
 import unittest
+from pathlib import Path
+import sys
 
 import numpy as np
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
 for path in (PACKAGE_ROOT, REPO_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 from museum_env.policy_search_params import PolicySearchParams
-from training.common import policy_params_dict as train_policy_params_dict
-from eval_baseline import _policy_params_dict as eval_policy_params_dict
+from scripts.eval_baseline import _policy_params_dict as eval_policy_params_dict
+from scripts.train_rwr import _policy_params_dict as train_policy_params_dict
 
 
 class PolicySearchParamsTests(unittest.TestCase):

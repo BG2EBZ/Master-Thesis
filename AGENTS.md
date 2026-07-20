@@ -5,7 +5,7 @@
 - Repository root: `/home/tianci/Polimi/workspace/Master-Thesis`
 - Main environment ID: `MuseumEnv-v0`
 - Core stack: MuJoCo + Gymnasium + NumPy, with a robot guide and a human crowd moving through a virtual museum layout.
-- The main terminal entrypoint is `test_env.py`, which provides `demo`, `train`, and `record` workflows.
+- The main terminal entrypoint is `scripts/run_env.py`, which provides `demo`, `train`, and `record` workflows.
 - Most implementation work lives under `museum_env_package/museum_env/`.
 
 ## Key Entry Points
@@ -56,11 +56,11 @@ These commands assume the current shared interpreter on this workstation:
 
 ```bash
 cd /home/tianci/Polimi/workspace/Master-Thesis
-/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo
-/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train --print-every 1000
-/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train --max-steps 5 --print-every 1
-/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder
-/home/tianci/Polimi/workspace/venv/bin/python -m unittest /home/tianci/Polimi/workspace/Master-Thesis/museum_env_package/museum_env/test_baseline_policy.py
+/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode demo
+/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train --print-every 1000
+/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train --max-steps 5 --print-every 1
+/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder
+/home/tianci/Polimi/workspace/venv/bin/python -m unittest /home/tianci/Polimi/workspace/Master-Thesis/tests/test_policy_search_params.py
 ```
 
 ## Working Rules
@@ -74,8 +74,8 @@ cd /home/tianci/Polimi/workspace/Master-Thesis
 
 ## Debug Notes
 
-- `test_env.py --mode demo` uses a passive MuJoCo viewer. Press `P` to pause or resume.
-- `test_env.py --mode record` writes video output under `videos/` by default and supports timestamped subfolders.
+- `scripts/run_env.py --mode demo` uses a passive MuJoCo viewer. Press `P` to pause or resume.
+- `scripts/run_env.py --mode record` writes video output under `artifacts/videos/` by default and supports timestamped subfolders.
 - A short non-render smoke run with `--mode train --max-steps 5 --print-every 1` is a safe first check after edits.
 - On this workstation, Matplotlib may warn that `~/.config/matplotlib` is not writable and fall back to a temporary cache under `/tmp`. This warning is currently non-blocking for the runner.
 - The baseline unittest entrypoint is useful, but do not claim it is fully green unless you actually ran it and reported the outcome.

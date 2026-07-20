@@ -1,14 +1,16 @@
-import sys
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-if str(PACKAGE_ROOT) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
+for path in (PACKAGE_ROOT, REPO_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import museum_env.human as human_mod
 from museum_env.human import Human

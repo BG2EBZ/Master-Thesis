@@ -1,7 +1,15 @@
 import argparse
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
+for path in (REPO_ROOT, PACKAGE_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
@@ -15,7 +23,7 @@ DEFAULT_RENDER_EVERY_STEPS = 1
 DEFAULT_VIDEO_FPS = 500
 DEFAULT_SLEEP_SCALE = 1.0
 DEFAULT_RTF_PRINT_EVERY = 2500
-DEFAULT_VIDEO_ROOT = "videos"
+DEFAULT_VIDEO_ROOT = REPO_ROOT / "artifacts" / "videos"
 DEFAULT_NAME_PREFIX = "museum_full_run"
 MIN_SPEED_MULTIPLIER = 0.125
 MAX_SPEED_MULTIPLIER = 8.0
@@ -385,8 +393,8 @@ def build_arg_parser():
     return parser
 
 
-def main():
-    args = build_arg_parser().parse_args()
+def main(argv=None):
+    args = build_arg_parser().parse_args(argv)
     if args.mode == "demo":
         run_demo(args)
         return

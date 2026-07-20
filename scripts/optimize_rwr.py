@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,22 +11,29 @@ from typing import Sequence
 
 import numpy as np
 
-from eval_baseline import (
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
+for path in (REPO_ROOT, PACKAGE_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from scripts.eval_baseline import (
     DEFAULT_MAX_WORKERS as DEFAULT_EVAL_MAX_WORKERS,
     DEFAULT_SUMMARY_NAME as DEFAULT_EVAL_SUMMARY_NAME,
     evaluate_baseline,
 )
 from museum_env.policy_search_params import PolicySearchParams
 from museum_env.reward import RewardConfig
-from training.algorithms.rwr import (
+from scripts.train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_N_HUMANS,
     DEFAULT_SEED,
     train,
 )
 
-REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runs" / f"rwr_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
+DEFAULT_OUTPUT_DIR = ARTIFACTS_ROOT / "runs" / f"rwr_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 EPOCH_CHOICES = (15, 20, 30, 40)
 SAMPLES_PER_EPOCH_CHOICES = (20, 30, 40, 60)

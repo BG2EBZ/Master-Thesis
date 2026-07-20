@@ -1,9 +1,17 @@
 from contextlib import ExitStack
-import unittest
 from copy import deepcopy
+from pathlib import Path
+import sys
+import unittest
 from unittest.mock import patch
 
-import test_env
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = REPO_ROOT / "museum_env_package"
+for path in (PACKAGE_ROOT, REPO_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import scripts.run_env as run_env
 
 
 _STEP_INFO = {
@@ -94,7 +102,7 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         clock = _FakeClock(after_sleep_hooks=after_sleep_hooks)
         env = _FakeEnv(dt=dt, work_durations=work_durations, clock=clock)
         controller_holder = {} if controller_holder is None else controller_holder
-        real_pause_controller = test_env._PauseController
+        real_pause_controller = run_env._PauseController
 
         def build_controller(*args, **kwargs):
             controller = real_pause_controller(*args, **kwargs)
@@ -102,10 +110,10 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
             return controller
 
         with ExitStack() as stack:
-            stack.enter_context(patch("test_env.time.perf_counter", side_effect=clock.perf_counter))
-            stack.enter_context(patch("test_env.time.sleep", side_effect=clock.sleep))
-            stack.enter_context(patch("test_env._PauseController", side_effect=build_controller))
-            test_env._run_loop(
+            stack.enter_context(patch("scripts.run_env.time.perf_counter", side_effect=clock.perf_counter))
+            stack.enter_context(patch("scripts.run_env.time.sleep", side_effect=clock.sleep))
+            stack.enter_context(patch("scripts.run_env._PauseController", side_effect=build_controller))
+            run_env._run_loop(
                 env,
                 max_steps=len(work_durations),
                 print_every=0,
@@ -117,52 +125,52 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         return env, clock, controller_holder.get("controller")
 
     def test_pause_controller_handles_pause_and_speed_hotkeys_with_bounds(self):
-        controller = test_env._PauseController(
-            toggle_key=test_env.mujoco.viewer.glfw.KEY_P,
+        controller = run_env._PauseController(
+            toggle_key=run_env.mujoco.viewer.glfw.KEY_P,
             increase_keys=(
-                test_env.mujoco.viewer.glfw.KEY_EQUAL,
-                test_env.mujoco.viewer.glfw.KEY_KP_ADD,
+                run_env.mujoco.viewer.glfw.KEY_EQUAL,
+                run_env.mujoco.viewer.glfw.KEY_KP_ADD,
             ),
             decrease_keys=(
-                test_env.mujoco.viewer.glfw.KEY_MINUS,
-                test_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT,
+                run_env.mujoco.viewer.glfw.KEY_MINUS,
+                run_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT,
             ),
             initial_speed_multiplier=1.0,
         )
 
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_P)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_P)
         self.assertTrue(controller.paused)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_P)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_P)
         self.assertFalse(controller.paused)
 
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_EQUAL)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_EQUAL)
         self.assertEqual(controller.speed_multiplier, 2.0)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_KP_ADD)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_KP_ADD)
         self.assertEqual(controller.speed_multiplier, 4.0)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_EQUAL)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_EQUAL)
         self.assertEqual(controller.speed_multiplier, 8.0)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_KP_ADD)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_KP_ADD)
         self.assertEqual(controller.speed_multiplier, 8.0)
 
-        controller = test_env._PauseController(
-            toggle_key=test_env.mujoco.viewer.glfw.KEY_P,
+        controller = run_env._PauseController(
+            toggle_key=run_env.mujoco.viewer.glfw.KEY_P,
             increase_keys=(
-                test_env.mujoco.viewer.glfw.KEY_EQUAL,
-                test_env.mujoco.viewer.glfw.KEY_KP_ADD,
+                run_env.mujoco.viewer.glfw.KEY_EQUAL,
+                run_env.mujoco.viewer.glfw.KEY_KP_ADD,
             ),
             decrease_keys=(
-                test_env.mujoco.viewer.glfw.KEY_MINUS,
-                test_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT,
+                run_env.mujoco.viewer.glfw.KEY_MINUS,
+                run_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT,
             ),
             initial_speed_multiplier=1.0,
         )
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_MINUS)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_MINUS)
         self.assertEqual(controller.speed_multiplier, 0.5)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT)
         self.assertEqual(controller.speed_multiplier, 0.25)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_MINUS)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_MINUS)
         self.assertEqual(controller.speed_multiplier, 0.125)
-        controller.on_key(test_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT)
+        controller.on_key(run_env.mujoco.viewer.glfw.KEY_KP_SUBTRACT)
         self.assertEqual(controller.speed_multiplier, 0.125)
 
     def test_realtime_demo_sleeps_to_match_sim_time(self):
@@ -217,7 +225,7 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         controller_holder = {}
 
         def speed_up():
-            controller_holder["controller"].on_key(test_env.mujoco.viewer.glfw.KEY_EQUAL)
+            controller_holder["controller"].on_key(run_env.mujoco.viewer.glfw.KEY_EQUAL)
 
         env, clock, controller = self._run_loop(
             realtime=True,
@@ -238,7 +246,7 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         controller_holder = {}
 
         def slow_down():
-            controller_holder["controller"].on_key(test_env.mujoco.viewer.glfw.KEY_MINUS)
+            controller_holder["controller"].on_key(run_env.mujoco.viewer.glfw.KEY_MINUS)
 
         env, clock, controller = self._run_loop(
             realtime=True,

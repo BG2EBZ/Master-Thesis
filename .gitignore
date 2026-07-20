@@ -2,4 +2,7 @@
 *.pyc
 **/videos/
 museum_env_package/museum_env/rules.py
-tests/
+artifacts/runs/
+!artifacts/runs/.gitkeep
+artifacts/videos/
+!artifacts/videos/.gitkeep

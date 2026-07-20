@@ -88,13 +88,13 @@ if terminated or truncated:
 
 ## Run scripts
 
-- Demo: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode demo`
-- Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode train`
-- Record video: `/home/tianci/Polimi/workspace/venv/bin/python test_env.py --mode record --use-timestamp-subfolder`
-- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python train_rwr.py`
+- Demo: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode demo`
+- Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train`
+- Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder`
+- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
 
 The minimal RWR trainer writes:
 
-- default output directory: `runs/rwr_minimal`
+- default output directory: `artifacts/runs/rwr_minimal`
 - `training_metrics.csv`
 - `training_metrics.png`

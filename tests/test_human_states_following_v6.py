@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIS_PATH = REPO_ROOT / "Matlab fuzzy" / "human_states_following_v8.fis"
+FIS_PATH = REPO_ROOT / "research" / "matlab_fuzzy" / "human_states_following_v8.fis"
 ENV_FUZZY_PATH = REPO_ROOT / "museum_env_package" / "museum_env" / "fuzzy" / "human_states_following.py"
 
 EXPECTED_INPUT_MFS = {
