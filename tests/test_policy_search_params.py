@@ -11,14 +11,15 @@ for path in (PACKAGE_ROOT, REPO_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from museum_env.policy_search_params import PolicySearchParams
+from museum_env.guide_config import GuideBehaviorConfig
 from scripts.eval_baseline import _policy_params_dict as eval_policy_params_dict
 from scripts.train_rwr import _policy_params_dict as train_policy_params_dict
+from train.rwr.policy_codec import guide_config_to_theta, theta_to_guide_config
 
 
-class PolicySearchParamsTests(unittest.TestCase):
+class PolicyCodecTests(unittest.TestCase):
     def test_from_theta_accepts_six_dimensions_and_clips_explanation_scale_and_cooldown(self):
-        params = PolicySearchParams.from_theta(
+        params = theta_to_guide_config(
             np.array([2.5, 3.5, 2.0, 0.7, 0.5, 45.0], dtype=np.float64)
         )
 
@@ -27,24 +28,24 @@ class PolicySearchParamsTests(unittest.TestCase):
         self.assertAlmostEqual(params.callback_same_person_cooldown_seconds, 30.0, places=7)
 
     def test_from_theta_accepts_legacy_four_dimension_theta(self):
-        params = PolicySearchParams.from_theta(np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64))
+        params = theta_to_guide_config(np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64))
 
         self.assertAlmostEqual(params.explanation_time_scale, 1.0, places=7)
         self.assertAlmostEqual(params.explanation_wait_seconds, 30.0, places=7)
         self.assertAlmostEqual(params.callback_same_person_cooldown_seconds, 20.0, places=7)
 
     def test_from_theta_accepts_legacy_five_dimension_theta_with_default_cooldown(self):
-        params = PolicySearchParams.from_theta(np.array([2.5, 3.5, 2.0, 0.7, 0.85], dtype=np.float64))
+        params = theta_to_guide_config(np.array([2.5, 3.5, 2.0, 0.7, 0.85], dtype=np.float64))
 
         self.assertAlmostEqual(params.explanation_time_scale, 0.85, places=7)
         self.assertAlmostEqual(params.callback_same_person_cooldown_seconds, 20.0, places=7)
 
     def test_to_theta_outputs_six_dimensions(self):
-        params = PolicySearchParams(
+        params = GuideBehaviorConfig(
             explanation_time_scale=0.85,
             callback_same_person_cooldown_seconds=12.0,
         )
-        theta = params.to_theta()
+        theta = guide_config_to_theta(params)
 
         self.assertEqual(theta.shape, (6,))
         self.assertAlmostEqual(float(theta[4]), 0.85, places=7)

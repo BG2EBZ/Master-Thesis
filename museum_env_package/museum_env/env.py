@@ -8,7 +8,6 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 
-from .policy_search_params import PolicySearchParams
 from . import env_control, env_flow
 from .env_constants import (
     ACTION_HIGH,
@@ -62,6 +61,7 @@ from .env_constants import (
     ROBOT_PASS_REQUEST_SECONDS,
     SOCIAL_DISTANCE_DEFAULT,
 )
+from .guide_config import GuideBehaviorConfig
 from .env_reporting import (
     HUMAN_SPEAKING_HALO_RGBA_OFF,
     HUMAN_SPEAKING_HALO_RGBA_ON,
@@ -84,7 +84,6 @@ from .env_state import (
 from .human import Human, HumanMode, HumanProfile, LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT
 from .map_layouts import MapLayout, get_map_layout
 from .metrics import VectorizedRollingWindow
-from .reward import DEFAULT_REWARD_CONFIG, RewardConfig, compute_episode_reward
 from .robot import Robot
 
 logger = logging.getLogger(__name__)
@@ -128,7 +127,6 @@ class MuseumEnv(gym.Env):
         listen_question_after_explanation_probability: float = (
             LISTEN_QUESTION_AFTER_EXPLANATION_PROBABILITY_DEFAULT
         ),
-        reward_config: Optional[RewardConfig] = None,
         n_humans: int = 15,
     ):
         super().__init__()
@@ -164,8 +162,7 @@ class MuseumEnv(gym.Env):
         self.render_width = 1920
         self.render_height = 1080
 
-        self.policy_params = PolicySearchParams()
-        self.reward_config = DEFAULT_REWARD_CONFIG if reward_config is None else reward_config
+        self.guide_config = GuideBehaviorConfig()
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -208,7 +205,7 @@ class MuseumEnv(gym.Env):
         self.listen_question_pause_steps = self._steps(self.listen_question_pause_seconds)
         self.listen_distance_shorten_steps = self._steps(LISTEN_DISTANCE_SHORTEN_SECONDS_PER_HUMAN)
         self.following_callback_cue_steps = self._steps(FOLLOWING_CALLBACK_CUE_SECONDS)
-        self._sync_policy_parameter_state()
+        self._sync_guide_config_state()
         self.following_callback_resume_grace_steps = self._steps(5.0)
         self.following_callback_front_sector_half_angle = np.deg2rad(
             FOLLOWING_CALLBACK_FRONT_SECTOR_HALF_ANGLE_DEG
@@ -315,14 +312,10 @@ class MuseumEnv(gym.Env):
     def _steps(self, seconds: float) -> int:
         return max(1, int(round(float(seconds) / self.dt)))
 
-    def _sync_policy_parameter_state(self) -> None:
-        """Project the current episode policy parameters into runtime step fields."""
-        self.following_callback_wait_steps = self._steps(
-            self.policy_params.callback_wait_seconds
-        )
-        self.listen_wait_seconds = float(self.listen_wait_base_seconds) * float(
-            self.policy_params.explanation_time_scale
-        )
+    def _sync_guide_config_state(self) -> None:
+        """Project the current guide behavior config into runtime step fields."""
+        self.following_callback_wait_steps = self._steps(self.guide_config.callback_wait_seconds)
+        self.listen_wait_seconds = float(self.guide_config.explanation_wait_seconds)
         self.listen_wait_steps = self._steps(self.listen_wait_seconds)
 
     def _record_episode_trigger(self, kind: str) -> None:
@@ -337,10 +330,19 @@ class MuseumEnv(gym.Env):
             return
         raise ValueError(f"Unsupported episode trigger kind: {kind}")
 
-    def set_policy_parameters(self, theta) -> None:
-        """Apply one sampled high-level robot policy for the current episode."""
-        self.policy_params = PolicySearchParams.from_theta(theta)
-        self._sync_policy_parameter_state()
+    def set_guide_behavior_config(self, config: GuideBehaviorConfig) -> None:
+        """Apply one guide behavior config for the current episode."""
+        self.guide_config = GuideBehaviorConfig(
+            slow_down_distance_m=float(config.slow_down_distance_m),
+            callback_distance_m=float(config.callback_distance_m),
+            callback_wait_seconds=float(config.callback_wait_seconds),
+            slowdown_speed_scale=float(config.slowdown_speed_scale),
+            explanation_time_scale=float(config.explanation_time_scale),
+            callback_same_person_cooldown_seconds=float(
+                config.callback_same_person_cooldown_seconds
+            ),
+        )
+        self._sync_guide_config_state()
 
 
     def _robot_xy_from_data(self) -> np.ndarray:
@@ -414,7 +416,7 @@ class MuseumEnv(gym.Env):
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
                 callback_same_person_cooldown_seconds=(
-                    self.policy_params.callback_same_person_cooldown_seconds
+                    self.guide_config.callback_same_person_cooldown_seconds
                 ),
                 rng=self.np_random,
             )
@@ -634,26 +636,15 @@ class MuseumEnv(gym.Env):
         env_control.advance_robot_front_blocking_runtime(self)
         if terminated or truncated:
             duration_seconds = float(self.step_count) * float(self.dt)
-            reward, reward_components = compute_episode_reward(
-                completed=terminated,
-                truncated=truncated,
-                duration_seconds=duration_seconds,
-                metrics=self.episode_metrics,
-                config=self.reward_config,
-            )
             info["episode"].update(
                 {
                     "duration_seconds": duration_seconds,
                     "overwhelmed_triggers": int(self.episode_metrics.overwhelmed_triggers),
                     "impatient_triggers": int(self.episode_metrics.impatient_triggers),
                     "distracted_triggers": int(self.episode_metrics.distracted_triggers),
-                    "return": float(reward),
-                    "reward_components": reward_components,
                 }
             )
-        else:
-            reward = 0.0
-        return self._build_observation(post_frame), reward, terminated, truncated, info
+        return self._build_observation(post_frame), 0.0, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "human":

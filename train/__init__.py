@@ -1,0 +1,1 @@
+"""Reusable training-layer helpers."""

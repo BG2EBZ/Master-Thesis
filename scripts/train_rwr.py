@@ -29,15 +29,18 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 import numpy as np
 
 from museum_env import MuseumEnv
-from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
-from museum_env.policy_search_params import PolicySearchParams
-from museum_env.plot_utils import compute_mean_confidence_band
-from museum_env.rwr_plotting import (
+from train.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.plot_utils import compute_mean_confidence_band
+from train.rwr import (
+    DEFAULT_EPISODE_REWARD_WEIGHTS,
+    EpisodeRewardWeights,
+    RWRRewardWrapper,
     plot_exploration_metrics,
     plot_learning_curve_metrics,
     plot_training_metrics,
+    summarize_theta,
+    theta_to_guide_config,
 )
-from museum_env.reward import DEFAULT_REWARD_CONFIG, RewardConfig
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_EPOCHS = 5
@@ -138,9 +141,9 @@ class SingleSeedTrainingResult:
     learning_curve_rows: list[dict[str, float | int]]
 
 
-_CACHED_ENV: MuseumEnv | None = None
+_CACHED_ENV: RWRRewardWrapper | None = None
 _CACHED_ENV_N_HUMANS: int | None = None
-_CACHED_ENV_REWARD_CONFIG: RewardConfig | None = None
+_CACHED_ENV_REWARD_CONFIG: EpisodeRewardWeights | None = None
 
 
 def _positive_int(value: str) -> int:
@@ -157,20 +160,25 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
-def _resolve_reward_config(reward_config: RewardConfig | None) -> RewardConfig:
-    return DEFAULT_REWARD_CONFIG if reward_config is None else reward_config
+def _resolve_reward_config(reward_config: EpisodeRewardWeights | None) -> EpisodeRewardWeights:
+    return DEFAULT_EPISODE_REWARD_WEIGHTS if reward_config is None else reward_config
 
 
-def _get_cached_env(n_humans: int, reward_config: RewardConfig | None = None) -> MuseumEnv:
+def _get_cached_env(
+    n_humans: int,
+    reward_config: EpisodeRewardWeights | None = None,
+) -> RWRRewardWrapper:
     global _CACHED_ENV, _CACHED_ENV_N_HUMANS, _CACHED_ENV_REWARD_CONFIG
     requested_n_humans = int(n_humans)
     requested_reward_config = _resolve_reward_config(reward_config)
     if _CACHED_ENV is None:
-        _CACHED_ENV = MuseumEnv(
-            render_mode=None,
-            enable_event_logs=False,
-            n_humans=requested_n_humans,
-            reward_config=requested_reward_config,
+        _CACHED_ENV = RWRRewardWrapper(
+            MuseumEnv(
+                render_mode=None,
+                enable_event_logs=False,
+                n_humans=requested_n_humans,
+            ),
+            reward_weights=requested_reward_config,
         )
         _CACHED_ENV_N_HUMANS = requested_n_humans
         _CACHED_ENV_REWARD_CONFIG = requested_reward_config
@@ -181,11 +189,13 @@ def _get_cached_env(n_humans: int, reward_config: RewardConfig | None = None) ->
         or _CACHED_ENV_REWARD_CONFIG != requested_reward_config
     ):
         _close_cached_env()
-        _CACHED_ENV = MuseumEnv(
-            render_mode=None,
-            enable_event_logs=False,
-            n_humans=requested_n_humans,
-            reward_config=requested_reward_config,
+        _CACHED_ENV = RWRRewardWrapper(
+            MuseumEnv(
+                render_mode=None,
+                enable_event_logs=False,
+                n_humans=requested_n_humans,
+            ),
+            reward_weights=requested_reward_config,
         )
         _CACHED_ENV_N_HUMANS = requested_n_humans
         _CACHED_ENV_REWARD_CONFIG = requested_reward_config
@@ -205,13 +215,14 @@ atexit.register(_close_cached_env)
 
 
 def run_episode(
-    env: MuseumEnv,
+    env: RWRRewardWrapper,
     theta: np.ndarray,
     seed: int,
     *,
     print_explanations: bool = True,
 ) -> EpisodeResult:
-    env.set_policy_parameters(theta)
+    base_env = env.unwrapped
+    base_env.set_guide_behavior_config(theta_to_guide_config(theta))
     _observation, _info = env.reset(seed=seed)
 
     terminated = False
@@ -225,8 +236,8 @@ def run_episode(
 
         # Print stage trainsition if enabled.
         if print_explanations:
-            step = env.step_count
-            sim_time = step * env.dt
+            step = base_env.step_count
+            sim_time = step * base_env.dt
             events = step_info["events"]
 
             if events.get("started_listen_wait"):
@@ -252,7 +263,8 @@ def run_episode(
 
 
 def _evaluate_episode_task(
-    task: tuple[np.ndarray, int, int, bool] | tuple[np.ndarray, int, int, bool, RewardConfig | None]
+    task: tuple[np.ndarray, int, int, bool]
+    | tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]
 ) -> EpisodeResult:
     if len(task) == 4:
         theta, seed, n_humans, print_explanations = task
@@ -398,18 +410,7 @@ def write_learning_curve_summary_json(
 
 
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
-    params = PolicySearchParams.from_theta(theta)
-    return {
-        "slow_down_distance_m": float(params.slow_down_distance_m),
-        "callback_distance_m": float(params.callback_distance_m),
-        "callback_wait_seconds": float(params.callback_wait_seconds),
-        "slowdown_speed_scale": float(params.slowdown_speed_scale),
-        "explanation_time_scale": float(params.explanation_time_scale),
-        "explanation_wait_seconds": float(params.explanation_wait_seconds),
-        "callback_same_person_cooldown_seconds": float(
-            params.callback_same_person_cooldown_seconds
-        ),
-    }
+    return summarize_theta(theta)
 
 
 def write_best_params_json(payload: dict[str, object], output_path: Path) -> None:
@@ -432,7 +433,7 @@ def _evaluate_theta_on_seeds(
     *,
     seeds: Sequence[int],
     n_humans: int,
-    reward_config: RewardConfig | None,
+    reward_config: EpisodeRewardWeights | None,
     executor: ProcessPoolExecutor | None,
 ) -> list[EpisodeResult]:
     eval_tasks = [
@@ -456,7 +457,7 @@ def _train_single_learning_seed(
     beta: float,
     train_seeds_per_epoch: int,
     n_humans: int,
-    reward_config: RewardConfig | None,
+    reward_config: EpisodeRewardWeights | None,
     evaluation_seeds: Sequence[int] | None = None,
 ) -> SingleSeedTrainingResult:
     resolved_reward_config = _resolve_reward_config(reward_config)
@@ -615,7 +616,7 @@ def train(
     beta: float = DEFAULT_BETA,
     train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     n_humans: int = DEFAULT_N_HUMANS,
-    reward_config: RewardConfig | None = None,
+    reward_config: EpisodeRewardWeights | None = None,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     result = _train_single_learning_seed(
@@ -685,7 +686,7 @@ def train_across_learning_seeds(
     beta: float = DEFAULT_BETA,
     train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     n_humans: int = DEFAULT_N_HUMANS,
-    reward_config: RewardConfig | None = None,
+    reward_config: EpisodeRewardWeights | None = None,
     n_learning_seeds: int = DEFAULT_N_LEARNING_SEEDS,
     n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
 ) -> list[dict[str, float | int]]:
@@ -810,25 +811,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--time-penalty-per-second",
         type=_positive_float,
-        default=DEFAULT_REWARD_CONFIG.time_penalty_per_second,
+        default=DEFAULT_EPISODE_REWARD_WEIGHTS.time_penalty_per_second,
         help="Reward penalty applied per simulated second.",
     )
     parser.add_argument(
         "--overwhelmed-trigger-penalty",
         type=_positive_float,
-        default=DEFAULT_REWARD_CONFIG.overwhelmed_trigger_penalty,
+        default=DEFAULT_EPISODE_REWARD_WEIGHTS.overwhelmed_trigger_penalty,
         help="Reward penalty applied per overwhelmed trigger.",
     )
     parser.add_argument(
         "--impatient-trigger-penalty",
         type=_positive_float,
-        default=DEFAULT_REWARD_CONFIG.impatient_trigger_penalty,
+        default=DEFAULT_EPISODE_REWARD_WEIGHTS.impatient_trigger_penalty,
         help="Reward penalty applied per impatient trigger.",
     )
     parser.add_argument(
         "--distracted-trigger-penalty",
         type=_positive_float,
-        default=DEFAULT_REWARD_CONFIG.distracted_trigger_penalty,
+        default=DEFAULT_EPISODE_REWARD_WEIGHTS.distracted_trigger_penalty,
         help="Reward penalty applied per distracted trigger.",
     )
     parser.add_argument(
@@ -838,7 +839,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Directory where training artifacts and optional learning-curve outputs are written.",
     )
     args = parser.parse_args(argv)
-    reward_config = RewardConfig(
+    reward_config = EpisodeRewardWeights(
         time_penalty_per_second=float(args.time_penalty_per_second),
         overwhelmed_trigger_penalty=float(args.overwhelmed_trigger_penalty),
         impatient_trigger_penalty=float(args.impatient_trigger_penalty),

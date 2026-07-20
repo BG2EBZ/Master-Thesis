@@ -847,7 +847,7 @@ def apply_following_crowd_regulation_if_needed(
     if (
         (not grace_active)
         and lagging_target_distance is not None
-        and lagging_target_distance > float(env.policy_params.callback_distance_m)
+        and lagging_target_distance > float(env.guide_config.callback_distance_m)
     ):
         env.robot.mode = RobotMode.STOP
         env._following_wait_elapsed_steps += 1
@@ -858,10 +858,10 @@ def apply_following_crowd_regulation_if_needed(
             should_start_callback = True
         return np.zeros(3, dtype=np.float32), should_start_callback
     reset_following_wait_episode(env)
-    if max_hr_distance <= float(env.policy_params.slow_down_distance_m):
+    if max_hr_distance <= float(env.guide_config.slow_down_distance_m):
         return adjusted_action, should_start_callback
 
     # Above the slowdown threshold we keep moving, but deliberately soften the
     # planar command so the crowd has a chance to compress before a callback.
-    adjusted_action[:2] *= float(env.policy_params.slowdown_speed_scale)
+    adjusted_action[:2] *= float(env.guide_config.slowdown_speed_scale)
     return adjusted_action, should_start_callback

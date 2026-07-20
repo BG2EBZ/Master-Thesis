@@ -14,14 +14,14 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from museum_env.reward import RewardConfig
 from scripts.eval_baseline import DEFAULT_SUMMARY_NAME, evaluate_baseline
 from scripts.train_rwr import EpisodeResult
+from train.rwr.rewarding import EpisodeRewardWeights
 
 
 class EvaluateBaselineTests(unittest.TestCase):
     def test_evaluate_baseline_accepts_n_humans_and_reward_config(self):
-        reward_config = RewardConfig(
+        reward_config = EpisodeRewardWeights(
             time_penalty_per_second=0.12,
             overwhelmed_trigger_penalty=5.0,
             impatient_trigger_penalty=2.5,

@@ -13,6 +13,7 @@ for path in (PACKAGE_ROOT, REPO_ROOT):
 
 from museum_env import MuseumEnv
 from museum_env import env_flow
+from museum_env.guide_config import GuideBehaviorConfig
 from museum_env.env_state import StepEvents
 
 
@@ -48,14 +49,32 @@ class MuseumEnvTimingTests(unittest.TestCase):
         self.assertAlmostEqual(self.env.listen_wait_seconds, 30.0, places=7)
         self.assertEqual(self.env.listen_wait_steps, 600)
 
-        self.env.set_policy_parameters(np.array([2.5, 3.5, 2.0, 0.7, 0.7], dtype=np.float64))
+        self.env.set_guide_behavior_config(
+            GuideBehaviorConfig(
+                slow_down_distance_m=2.5,
+                callback_distance_m=3.5,
+                callback_wait_seconds=2.0,
+                slowdown_speed_scale=0.7,
+                explanation_time_scale=0.7,
+                callback_same_person_cooldown_seconds=20.0,
+            )
+        )
 
         self.assertAlmostEqual(self.env.listen_wait_seconds, 21.0, places=7)
         self.assertEqual(self.env.listen_wait_steps, 420)
 
     def test_listening_question_plan_uses_scaled_wait_steps(self):
         self.env.reset(seed=123)
-        self.env.set_policy_parameters(np.array([2.5, 3.5, 2.0, 0.7, 0.7], dtype=np.float64))
+        self.env.set_guide_behavior_config(
+            GuideBehaviorConfig(
+                slow_down_distance_m=2.5,
+                callback_distance_m=3.5,
+                callback_wait_seconds=2.0,
+                slowdown_speed_scale=0.7,
+                explanation_time_scale=0.7,
+                callback_same_person_cooldown_seconds=20.0,
+            )
+        )
         self.env.listen_question_probability = 1.0
         self.env.listen_question_after_explanation_probability = 0.0
         self.env.listening_state.enter_wait(is_final=False)

@@ -148,7 +148,7 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
                 listen_radii=np.ones((n_humans,), dtype=np.float32),
             ),
             step_count=7,
-            policy_params=SimpleNamespace(
+            guide_config=SimpleNamespace(
                 slow_down_distance_m=2.5,
                 callback_distance_m=3.5,
                 slowdown_speed_scale=0.7,

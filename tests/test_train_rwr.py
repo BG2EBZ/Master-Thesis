@@ -14,7 +14,6 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from museum_env.reward import RewardConfig
 from scripts.train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
@@ -28,6 +27,7 @@ from scripts.train_rwr import (
     train_across_learning_seeds,
     update_distribution,
 )
+from train.rwr.rewarding import EpisodeRewardWeights
 
 
 class TrainRWREntrypointTests(unittest.TestCase):
@@ -85,7 +85,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
         )
 
     def test_train_accepts_custom_reward_config_and_hyperparameters(self):
-        reward_config = RewardConfig(
+        reward_config = EpisodeRewardWeights(
             time_penalty_per_second=0.12,
             overwhelmed_trigger_penalty=5.0,
             impatient_trigger_penalty=2.5,
@@ -118,7 +118,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
 
     def test_single_learning_seed_records_epoch_zero_and_evaluates_current_mu(self):
         evaluation_seeds = [101, 102]
-        seen_tasks: list[tuple[np.ndarray, int, int, bool, RewardConfig | None]] = []
+        seen_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
         side_effect = iter(
             [
                 self._episode_result(-30.0),

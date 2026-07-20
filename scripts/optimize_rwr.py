@@ -18,19 +18,20 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from museum_env.guide_config import GuideBehaviorConfig
 from scripts.eval_baseline import (
     DEFAULT_MAX_WORKERS as DEFAULT_EVAL_MAX_WORKERS,
     DEFAULT_SUMMARY_NAME as DEFAULT_EVAL_SUMMARY_NAME,
     evaluate_baseline,
 )
-from museum_env.policy_search_params import PolicySearchParams
-from museum_env.reward import RewardConfig
 from scripts.train_rwr import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_N_HUMANS,
     DEFAULT_SEED,
     train,
 )
+from train.rwr.policy_codec import guide_config_to_theta
+from train.rwr.rewarding import EpisodeRewardWeights
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_OUTPUT_DIR = ARTIFACTS_ROOT / "runs" / f"rwr_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -90,8 +91,8 @@ class SearchTrialConfig:
     distracted_trigger_penalty: float
 
     @property
-    def reward_config(self) -> RewardConfig:
-        return RewardConfig(
+    def reward_weights(self) -> EpisodeRewardWeights:
+        return EpisodeRewardWeights(
             time_penalty_per_second=float(self.time_penalty_per_second),
             overwhelmed_trigger_penalty=float(self.overwhelmed_trigger_penalty),
             impatient_trigger_penalty=float(self.impatient_trigger_penalty),
@@ -244,7 +245,7 @@ def _run_training_trial(
         beta=float(config.beta),
         train_seeds_per_epoch=int(config.train_seeds_per_epoch),
         n_humans=int(config.n_humans),
-        reward_config=config.reward_config,
+        reward_config=config.reward_weights,
     )
     learned_params_json = train_output_dir / DEFAULT_BEST_PARAMS_NAME
     return trial_dir, learned_params_json
@@ -270,7 +271,7 @@ def _evaluate_existing_trial(
         max_workers=int(eval_max_workers),
         n_humans=int(config.n_humans),
         baseline_theta=baseline_theta,
-        reward_config=config.reward_config,
+        reward_config=config.reward_weights,
     )
     summary = _load_json(eval_output_dir / DEFAULT_EVAL_SUMMARY_NAME)
     result = SearchTrialResult(
@@ -307,7 +308,7 @@ def run_search(
 ) -> list[SearchTrialResult]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(int(search_seed))
-    baseline_theta = PolicySearchParams().to_theta()
+    baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
     phase_results: dict[str, list[SearchTrialResult]] = {"coarse": [], "refine": [], "final": []}
 
     for trial_id in range(1, int(coarse_trials) + 1):

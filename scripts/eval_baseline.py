@@ -19,10 +19,11 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from museum_env.evaluation_seeds import FIXED_EVALUATION_SEEDS
-from museum_env.policy_search_params import PolicySearchParams
-from museum_env.reward import RewardConfig
+from museum_env.guide_config import GuideBehaviorConfig
 from scripts.train_rwr import EpisodeResult, _evaluate_episode_task
+from train.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.rwr.policy_codec import guide_config_to_theta, summarize_theta
+from train.rwr.rewarding import EpisodeRewardWeights
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_NUM_RUNS = 20
@@ -86,18 +87,7 @@ def _select_evaluation_seeds(num_runs: int) -> list[int]:
 
 
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
-    params = PolicySearchParams.from_theta(theta)
-    return {
-        "slow_down_distance_m": float(params.slow_down_distance_m),
-        "callback_distance_m": float(params.callback_distance_m),
-        "callback_wait_seconds": float(params.callback_wait_seconds),
-        "slowdown_speed_scale": float(params.slowdown_speed_scale),
-        "explanation_time_scale": float(params.explanation_time_scale),
-        "explanation_wait_seconds": float(params.explanation_wait_seconds),
-        "callback_same_person_cooldown_seconds": float(
-            params.callback_same_person_cooldown_seconds
-        ),
-    }
+    return summarize_theta(theta)
 
 
 def _build_comparison_run_metrics(
@@ -329,13 +319,13 @@ def evaluate_baseline(
     max_workers: int,
     n_humans: int = DEFAULT_N_HUMANS,
     baseline_theta: np.ndarray | None = None,
-    reward_config: RewardConfig | None = None,
+    reward_config: EpisodeRewardWeights | None = None,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     learned_params_payload = _load_learned_params_payload(learned_params_json)
     resolved_baseline_theta = (
-        PolicySearchParams().to_theta()
+        guide_config_to_theta(GuideBehaviorConfig())
         if baseline_theta is None
         else np.asarray(baseline_theta, dtype=np.float64)
     )

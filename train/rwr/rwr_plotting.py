@@ -6,7 +6,7 @@ from typing import Sequence
 
 import numpy as np
 
-from museum_env.plot_utils import plot_mean_confidence_interval
+from train.plot_utils import plot_mean_confidence_interval
 
 EXPLORATION_STD_FIELDNAMES = (
     "std_0",
