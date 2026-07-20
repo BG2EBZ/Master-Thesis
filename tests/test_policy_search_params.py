@@ -13,8 +13,7 @@ for path in (PACKAGE_ROOT, REPO_ROOT):
 
 from museum_env.guide_config import GuideBehaviorConfig
 from scripts.eval_baseline import _policy_params_dict as eval_policy_params_dict
-from scripts.train_rwr import _policy_params_dict as train_policy_params_dict
-from train.rwr.policy_codec import guide_config_to_theta, theta_to_guide_config
+from train.rwr.policy_codec import guide_config_to_theta, summarize_theta, theta_to_guide_config
 
 
 class PolicyCodecTests(unittest.TestCase):
@@ -55,7 +54,7 @@ class PolicyCodecTests(unittest.TestCase):
         legacy_theta = np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64)
         learned_theta = np.array([2.5, 3.5, 2.0, 0.7, 0.8, 12.0], dtype=np.float64)
 
-        train_summary = train_policy_params_dict(legacy_theta)
+        train_summary = summarize_theta(legacy_theta)
         eval_summary = eval_policy_params_dict(learned_theta)
 
         self.assertEqual(train_summary["explanation_time_scale"], 1.0)

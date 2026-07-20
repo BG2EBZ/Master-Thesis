@@ -6,7 +6,7 @@ from typing import Sequence
 
 import numpy as np
 
-from train.plot_utils import plot_mean_confidence_interval
+from train.common.plot_utils import plot_mean_confidence_interval
 
 EXPLORATION_STD_FIELDNAMES = (
     "std_0",
@@ -14,7 +14,6 @@ EXPLORATION_STD_FIELDNAMES = (
     "std_2",
     "std_3",
     "std_4",
-    # "std_5",  # Temporarily disabled: callback_same_person_cooldown_seconds
 )
 EXPLORATION_PARAMETER_LABELS = (
     "slow_down_distance_m",
@@ -22,7 +21,6 @@ EXPLORATION_PARAMETER_LABELS = (
     "callback_wait_seconds",
     "slowdown_speed_scale",
     "explanation_time_scale",
-    # "callback_same_person_cooldown_seconds",
 )
 
 

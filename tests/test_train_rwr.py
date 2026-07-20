@@ -14,18 +14,19 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from scripts.train_rwr import (
+from train.common.rollout import EpisodeResult
+from train.rwr.algorithm import ThetaEvaluation, update_distribution
+from train.rwr.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     INITIAL_MU,
-    EpisodeResult,
+)
+from train.rwr.training import (
     SingleSeedTrainingResult,
-    ThetaEvaluation,
     _train_single_learning_seed,
     train,
     train_across_learning_seeds,
-    update_distribution,
 )
 from train.rwr.rewarding import EpisodeRewardWeights
 
@@ -95,9 +96,9 @@ class TrainRWREntrypointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "train"
-            with patch("scripts.train_rwr._evaluate_episode_task", return_value=episode_result) as task_mock:
-                with patch("scripts.train_rwr.plot_training_metrics"):
-                    with patch("scripts.train_rwr.plot_exploration_metrics"):
+            with patch("train.rwr.training._evaluate_episode_task", return_value=episode_result) as task_mock:
+                with patch("train.rwr.training.plot_training_metrics"):
+                    with patch("train.rwr.training.plot_exploration_metrics"):
                         metrics = train(
                             epochs=1,
                             samples_per_epoch=1,
@@ -134,8 +135,8 @@ class TrainRWREntrypointTests(unittest.TestCase):
             seen_tasks.append(task)
             return next(side_effect)
 
-        with patch("scripts.train_rwr.os.cpu_count", return_value=1):
-            with patch("scripts.train_rwr._evaluate_episode_task", side_effect=fake_evaluate):
+        with patch("train.rwr.training.os.cpu_count", return_value=1):
+            with patch("train.rwr.training._evaluate_episode_task", side_effect=fake_evaluate):
                 result = _train_single_learning_seed(
                     epochs=1,
                     samples_per_epoch=2,
@@ -199,10 +200,10 @@ class TrainRWREntrypointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "curve"
             with patch(
-                "scripts.train_rwr._train_single_learning_seed",
+                "train.rwr.training._train_single_learning_seed",
                 side_effect=[first_result, second_result],
             ):
-                with patch("scripts.train_rwr.plot_learning_curve_metrics") as plot_mock:
+                with patch("train.rwr.training.plot_learning_curve_metrics") as plot_mock:
                     rows = train_across_learning_seeds(
                         epochs=1,
                         samples_per_epoch=1,

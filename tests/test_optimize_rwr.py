@@ -14,7 +14,7 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
 
 from scripts import optimize_rwr
 from scripts.eval_baseline import DEFAULT_SUMMARY_NAME
-from scripts.train_rwr import DEFAULT_BEST_PARAMS_NAME
+from train.rwr.defaults import DEFAULT_BEST_PARAMS_NAME
 
 
 class OptimizeRWRTests(unittest.TestCase):

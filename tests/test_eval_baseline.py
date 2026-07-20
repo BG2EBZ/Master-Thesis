@@ -15,7 +15,7 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
         sys.path.insert(0, str(path))
 
 from scripts.eval_baseline import DEFAULT_SUMMARY_NAME, evaluate_baseline
-from scripts.train_rwr import EpisodeResult
+from train.common.rollout import EpisodeResult
 from train.rwr.rewarding import EpisodeRewardWeights
 
 

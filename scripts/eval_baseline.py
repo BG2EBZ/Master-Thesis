@@ -20,10 +20,11 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
         sys.path.insert(0, str(path))
 
 from museum_env.guide_config import GuideBehaviorConfig
-from scripts.train_rwr import EpisodeResult, _evaluate_episode_task
-from train.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.common.rollout import EpisodeResult
 from train.rwr.policy_codec import guide_config_to_theta, summarize_theta
 from train.rwr.rewarding import EpisodeRewardWeights
+from train.rwr.training import _evaluate_episode_task
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_NUM_RUNS = 20
