@@ -411,7 +411,7 @@ class MuseumEnv(gym.Env):
             human.apply_runtime_config(
                 dt=self.dt,
                 max_distracted_duration_seconds=self.max_distracted_duration_seconds,
-                impatient_duration_seconds=6.0,
+                impatient_duration_seconds=7.0,
                 impatient_speed_multiplier=1.5,
                 impatient_front_offset=1.0,
                 listening_impatient_glance_seconds=LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT,
