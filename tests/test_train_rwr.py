@@ -57,9 +57,11 @@ class TrainRWREntrypointTests(unittest.TestCase):
         overwhelmed_triggers: float = 1.0,
         impatient_triggers: float = 2.0,
         distracted_triggers: float = 3.0,
-    ) -> dict[str, float | int]:
+    ) -> dict[str, float | int | str]:
         return {
+            "policy": "rwr",
             "learning_seed": int(learning_seed),
+            "evaluation_seed": -1,
             "epoch": int(epoch),
             "mean_return": float(mean_return),
             "mean_duration_seconds": float(duration_seconds),
@@ -149,6 +151,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
                 )
 
         self.assertEqual([row["epoch"] for row in result.learning_curve_rows], [0, 1])
+        self.assertEqual([row["policy"] for row in result.learning_curve_rows], ["rwr", "rwr"])
         eval_tasks = [task for task in seen_tasks if task[1] in evaluation_seeds]
         train_tasks = [task for task in seen_tasks if task[1] not in evaluation_seeds]
         self.assertEqual(len(eval_tasks), 4)
@@ -203,32 +206,48 @@ class TrainRWREntrypointTests(unittest.TestCase):
                 "train.rwr.training._train_single_learning_seed",
                 side_effect=[first_result, second_result],
             ):
-                with patch("train.rwr.training.plot_learning_curve_metrics") as plot_mock:
-                    rows = train_across_learning_seeds(
-                        epochs=1,
-                        samples_per_epoch=1,
-                        seed=123,
-                        output_dir=output_dir,
-                        n_learning_seeds=2,
-                        n_eval_seeds=2,
-                    )
+                with patch(
+                    "train.rwr.training._evaluate_baseline_learning_curve",
+                    return_value=[
+                        self._episode_result(-70.0),
+                        self._episode_result(-50.0),
+                    ],
+                ) as baseline_mock:
+                    with patch("train.rwr.training.plot_learning_curve_metrics") as plot_mock:
+                        rows = train_across_learning_seeds(
+                            epochs=1,
+                            samples_per_epoch=1,
+                            seed=123,
+                            output_dir=output_dir,
+                            n_learning_seeds=2,
+                            n_eval_seeds=2,
+                        )
 
-            self.assertEqual(len(rows), 4)
+            self.assertEqual(len(rows), 8)
             raw_csv = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
             summary_json = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
             self.assertTrue(raw_csv.exists())
             self.assertTrue(summary_json.exists())
             raw_lines = raw_csv.read_text(encoding="utf-8").strip().splitlines()
-            self.assertEqual(len(raw_lines), 1 + 4)
+            self.assertEqual(len(raw_lines), 1 + 8)
+            self.assertIn("rwr", raw_lines[1])
+            self.assertIn("baseline", "\n".join(raw_lines))
 
             summary_payload = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(summary_payload["epochs"], [0, 1])
             self.assertEqual(summary_payload["n_learning_seeds"], 2)
             self.assertEqual(summary_payload["n_eval_seeds"], 2)
             self.assertEqual(summary_payload["mean_return"], [-90.0, -50.0])
+            np.testing.assert_allclose(summary_payload["baseline_mean_return"], [-60.0, -60.0])
+            np.testing.assert_allclose(summary_payload["baseline_ci95_low_return"], [-79.6, -79.6])
+            np.testing.assert_allclose(summary_payload["baseline_ci95_high_return"], [-40.4, -40.4])
+            self.assertIn("baseline_policy_params", summary_payload)
+            baseline_mock.assert_called_once()
             plot_mock.assert_called_once()
             return_matrix = plot_mock.call_args.kwargs["return_matrix"]
+            baseline_return_matrix = plot_mock.call_args.kwargs["baseline_return_matrix"]
             self.assertEqual(return_matrix.shape, (2, 2))
+            self.assertEqual(baseline_return_matrix.shape, (2, 2))
 
 
 if __name__ == "__main__":

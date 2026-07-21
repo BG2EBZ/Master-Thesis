@@ -25,7 +25,7 @@ DEFAULT_BEST_PARAMS_NAME = "best_params.json"
 DEFAULT_LEARNING_CURVE_RAW_CSV_NAME = "learning_curve_raw.csv"
 DEFAULT_LEARNING_CURVE_PLOT_NAME = "learning_curve_plot.png"
 DEFAULT_LEARNING_CURVE_SUMMARY_NAME = "learning_curve_summary.json"
-DEFAULT_N_LEARNING_SEEDS = 1
+DEFAULT_N_LEARNING_SEEDS = 2
 DEFAULT_N_EVAL_SEEDS = min(20, len(FIXED_EVALUATION_SEEDS))
 
 METRIC_FIELDNAMES = (
@@ -44,7 +44,9 @@ METRIC_FIELDNAMES = (
     "mean_distracted_triggers",
 )
 LEARNING_CURVE_RAW_FIELDNAMES = (
+    "policy",
     "learning_seed",
+    "evaluation_seed",
     "epoch",
     "mean_return",
     "mean_duration_seconds",

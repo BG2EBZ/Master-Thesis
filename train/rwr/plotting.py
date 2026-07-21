@@ -118,6 +118,7 @@ def plot_learning_curve_metrics(
     *,
     epochs: Sequence[int],
     return_matrix: np.ndarray,
+    baseline_return_matrix: np.ndarray | None = None,
     output_path: Path,
     x_label: str = "# Epochs",
 ) -> None:
@@ -139,6 +140,17 @@ def plot_learning_curve_metrics(
         alpha=0.24,
         linewidth=2.2,
     )
+    has_baseline = baseline_return_matrix is not None
+    if has_baseline:
+        plot_mean_confidence_interval(
+            ax,
+            x_values,
+            np.asarray(baseline_return_matrix, dtype=np.float64),
+            color="#4e79a7",
+            label="Baseline",
+            alpha=0.18,
+            linewidth=2.0,
+        )
 
     ax.set_xlabel(x_label, fontsize=16, fontweight="semibold")
     ax.set_ylabel("J", fontsize=16, fontweight="semibold")
@@ -154,7 +166,7 @@ def plot_learning_curve_metrics(
         loc="upper center",
         bbox_to_anchor=(0.5, -0.18),
         frameon=False,
-        ncol=1,
+        ncol=2 if has_baseline else 1,
         fontsize=13,
         handlelength=2.0,
     )

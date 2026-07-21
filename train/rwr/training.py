@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from museum_env.guide_config import GuideBehaviorConfig
 from train.common.artifacts import build_dense_metric_matrix, write_csv_rows, write_json
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from train.common.plot_utils import compute_mean_confidence_band
@@ -47,7 +48,11 @@ from train.rwr.plotting import (
     plot_learning_curve_metrics,
     plot_training_metrics,
 )
-from train.rwr.policy_codec import summarize_theta, theta_to_guide_config
+from train.rwr.policy_codec import (
+    guide_config_to_theta,
+    summarize_theta,
+    theta_to_guide_config,
+)
 from train.rwr.rewarding import (
     DEFAULT_EPISODE_REWARD_WEIGHTS,
     EpisodeRewardWeights,
@@ -65,7 +70,7 @@ class SingleSeedTrainingResult:
     best_sample_index: int
     final_mu: np.ndarray
     final_std: np.ndarray
-    learning_curve_rows: list[dict[str, float | int]]
+    learning_curve_rows: list[dict[str, float | int | str]]
 
 
 def _wrap_env(env, reward_config: EpisodeRewardWeights) -> RWRRewardWrapper:
@@ -125,9 +130,11 @@ def _build_learning_curve_row(
     learning_seed: int,
     epoch: int,
     evaluation: ThetaEvaluation,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | str]:
     return {
+        "policy": "rwr",
         "learning_seed": int(learning_seed),
+        "evaluation_seed": -1,
         "epoch": int(epoch),
         "mean_return": float(evaluation.mean_return),
         "mean_duration_seconds": float(evaluation.mean_duration_seconds),
@@ -135,6 +142,77 @@ def _build_learning_curve_row(
         "mean_impatient_triggers": float(evaluation.mean_impatient_triggers),
         "mean_distracted_triggers": float(evaluation.mean_distracted_triggers),
     }
+
+
+def _build_learning_curve_metrics_from_episode_result(
+    result: EpisodeResult,
+) -> dict[str, float]:
+    return {
+        "mean_return": float(result.episode_return),
+        "mean_duration_seconds": float(result.duration_seconds),
+        "mean_overwhelmed_triggers": float(result.overwhelmed_triggers),
+        "mean_impatient_triggers": float(result.impatient_triggers),
+        "mean_distracted_triggers": float(result.distracted_triggers),
+    }
+
+
+def _evaluate_baseline_learning_curve(
+    *,
+    seeds: Sequence[int],
+    n_humans: int,
+    reward_config: EpisodeRewardWeights | None,
+) -> list[EpisodeResult]:
+    baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
+    max_workers = min(len(seeds), os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
+    if max_workers == 1:
+        try:
+            return _evaluate_theta_on_seeds(
+                baseline_theta,
+                seeds=seeds,
+                n_humans=int(n_humans),
+                reward_config=reward_config,
+                executor=None,
+            )
+        finally:
+            from train.common.rollout import close_cached_env
+
+            close_cached_env()
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        return _evaluate_theta_on_seeds(
+            baseline_theta,
+            seeds=seeds,
+            n_humans=int(n_humans),
+            reward_config=reward_config,
+            executor=executor,
+        )
+
+
+def _build_baseline_learning_curve_rows(
+    *,
+    evaluation_seeds: Sequence[int],
+    episode_results: Sequence[EpisodeResult],
+    epochs: Sequence[int],
+) -> list[dict[str, float | int | str]]:
+    if len(evaluation_seeds) != len(episode_results):
+        raise ValueError(
+            "Baseline evaluation seeds and episode results must have the same length."
+        )
+
+    rows: list[dict[str, float | int | str]] = []
+    for evaluation_seed, result in zip(evaluation_seeds, episode_results):
+        metrics = _build_learning_curve_metrics_from_episode_result(result)
+        for epoch in epochs:
+            rows.append(
+                {
+                    "policy": "baseline",
+                    "learning_seed": -1,
+                    "evaluation_seed": int(evaluation_seed),
+                    "epoch": int(epoch),
+                    **metrics,
+                }
+            )
+    return rows
 
 
 def _evaluate_theta_on_seeds(
@@ -184,7 +262,7 @@ def _train_single_learning_seed(
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
     metrics: list[dict[str, float | int]] = []
-    learning_curve_rows: list[dict[str, float | int]] = []
+    learning_curve_rows: list[dict[str, float | int | str]] = []
     best_theta_seen: np.ndarray | None = None
     best_evaluation: ThetaEvaluation | None = None
     best_return_seen = float("-inf")
@@ -401,7 +479,7 @@ def train_across_learning_seeds(
     reward_config: EpisodeRewardWeights | None = None,
     n_learning_seeds: int = DEFAULT_N_LEARNING_SEEDS,
     n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
-) -> list[dict[str, float | int]]:
+) -> list[dict[str, float | int | str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_n_learning_seeds = int(n_learning_seeds)
     resolved_n_eval_seeds = int(n_eval_seeds)
@@ -415,14 +493,16 @@ def train_across_learning_seeds(
             f"of {len(FIXED_EVALUATION_SEEDS)}."
         )
 
-    evaluation_seeds = [int(seed_value) for seed_value in FIXED_EVALUATION_SEEDS[:resolved_n_eval_seeds]]
+    evaluation_seeds = [
+        int(seed_value) for seed_value in FIXED_EVALUATION_SEEDS[:resolved_n_eval_seeds]
+    ]
     learning_seed_sequences = np.random.SeedSequence(int(seed)).spawn(resolved_n_learning_seeds)
     learning_seeds = [
         int(seed_sequence.generate_state(1, dtype=np.uint32)[0])
         for seed_sequence in learning_seed_sequences
     ]
 
-    learning_curve_rows: list[dict[str, float | int]] = []
+    learning_curve_rows: list[dict[str, float | int | str]] = []
     for learning_seed in learning_seeds:
         seed_result = _train_single_learning_seed(
             epochs=int(epochs),
@@ -436,32 +516,61 @@ def train_across_learning_seeds(
         )
         learning_curve_rows.extend(seed_result.learning_curve_rows)
 
-    raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
-    plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
-    summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
-    write_csv_rows(learning_curve_rows, LEARNING_CURVE_RAW_FIELDNAMES, raw_csv_path)
-
     return_matrix, ordered_learning_seeds, ordered_epochs = build_dense_metric_matrix(
         learning_curve_rows,
         row_key="learning_seed",
         column_key="epoch",
         value_key="mean_return",
     )
+    baseline_episode_results = _evaluate_baseline_learning_curve(
+        seeds=evaluation_seeds,
+        n_humans=int(n_humans),
+        reward_config=reward_config,
+    )
+    baseline_learning_curve_rows = _build_baseline_learning_curve_rows(
+        evaluation_seeds=evaluation_seeds,
+        episode_results=baseline_episode_results,
+        epochs=ordered_epochs,
+    )
+    all_learning_curve_rows = learning_curve_rows + baseline_learning_curve_rows
+
+    raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+    plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
+    summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
+    write_csv_rows(all_learning_curve_rows, LEARNING_CURVE_RAW_FIELDNAMES, raw_csv_path)
+
+    baseline_return_matrix, ordered_baseline_eval_seeds, baseline_epochs = build_dense_metric_matrix(
+        baseline_learning_curve_rows,
+        row_key="evaluation_seed",
+        column_key="epoch",
+        value_key="mean_return",
+    )
+    if baseline_epochs != ordered_epochs:
+        raise ValueError("Baseline epochs do not match RWR learning curve epochs.")
+
     band = compute_mean_confidence_band(return_matrix)
+    baseline_band = compute_mean_confidence_band(baseline_return_matrix)
+    baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
     plot_learning_curve_metrics(
         epochs=ordered_epochs,
         return_matrix=return_matrix,
+        baseline_return_matrix=baseline_return_matrix,
         output_path=plot_path,
     )
     summary_payload = {
         "learning_seeds": [int(value) for value in ordered_learning_seeds],
         "evaluation_seeds": [int(value) for value in evaluation_seeds],
+        "baseline_evaluation_seeds": [int(value) for value in ordered_baseline_eval_seeds],
         "epochs": [int(value) for value in ordered_epochs],
         "n_learning_seeds": int(resolved_n_learning_seeds),
         "n_eval_seeds": int(resolved_n_eval_seeds),
         "mean_return": [float(value) for value in band.mean],
         "ci95_low_return": [float(value) for value in band.low],
         "ci95_high_return": [float(value) for value in band.high],
+        "baseline_mean_return": [float(value) for value in baseline_band.mean],
+        "baseline_ci95_low_return": [float(value) for value in baseline_band.low],
+        "baseline_ci95_high_return": [float(value) for value in baseline_band.high],
+        "baseline_policy_params": _policy_params_dict(baseline_theta),
         "learning_curve_raw_csv": str(raw_csv_path),
         "learning_curve_plot": str(plot_path),
     }
@@ -470,4 +579,4 @@ def train_across_learning_seeds(
     print(f"Saved learning curve raw CSV to {raw_csv_path}")
     print(f"Saved learning curve plot to {plot_path}")
     print(f"Saved learning curve summary to {summary_path}")
-    return learning_curve_rows
+    return all_learning_curve_rows
