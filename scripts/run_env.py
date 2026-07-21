@@ -210,9 +210,13 @@ def _run_loop(
     realtime=False,
     sleep_scale=1.0,
     print_human_robot_distance_periodically=False,
+    seed=None,
 ):
     base_env = env.unwrapped
-    obs, info = env.reset()
+    if seed is None:
+        obs, info = env.reset()
+    else:
+        obs, info = env.reset(seed=seed)
     del obs, info
 
     sim_dt = float(base_env.dt)
@@ -297,6 +301,7 @@ def run_demo(args):
             realtime=True,
             sleep_scale=args.sleep_scale,
             print_human_robot_distance_periodically=True,
+            seed=args.seed,
         )
     finally:
         env.close()
@@ -311,6 +316,7 @@ def run_train(args):
             print_every=args.print_every,
             realtime=False,
             print_human_robot_distance_periodically=False,
+            seed=args.seed,
         )
     finally:
         env.close()
@@ -337,6 +343,7 @@ def run_record(args):
             print_every=args.print_every,
             realtime=False,
             print_human_robot_distance_periodically=False,
+            seed=args.seed,
         )
         print(f"Video saved to {video_folder}")
     finally:
@@ -389,6 +396,12 @@ def build_arg_parser():
         "--use-timestamp-subfolder",
         action="store_true",
         help="Only for record mode. Create a timestamped output folder.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional episode seed passed to env.reset().",
     )
     return parser
 

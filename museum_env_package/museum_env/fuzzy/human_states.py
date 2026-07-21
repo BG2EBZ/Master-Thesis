@@ -152,8 +152,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             return {
                 "following_time": {
                     "short": _trap(0, 0, 8, 15),
-                    "medium": _trap(8, 15, 25, 30),
-                    "long": _trap(25, 30, 60, 60),
+                    "medium": _trap(8, 15, 30, 35),
+                    "long": _trap(30, 35, 60, 60),
                 },
                 "hhd": {
                     "close": _trap(0, 0, 0.7, 1.0),

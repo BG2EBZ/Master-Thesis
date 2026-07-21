@@ -71,9 +71,11 @@ class _FakeEnv:
         self._clock = clock
         self.render_calls = 0
         self.step_calls = 0
+        self.reset_seed = None
 
-    def reset(self):
+    def reset(self, seed=None):
         self.step_calls = 0
+        self.reset_seed = seed
         return None, {}
 
     def step(self, _action):
@@ -98,6 +100,7 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         work_durations,
         after_sleep_hooks=None,
         controller_holder=None,
+        seed=None,
     ):
         clock = _FakeClock(after_sleep_hooks=after_sleep_hooks)
         env = _FakeEnv(dt=dt, work_durations=work_durations, clock=clock)
@@ -120,6 +123,7 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
                 realtime=realtime,
                 sleep_scale=sleep_scale,
                 print_human_robot_distance_periodically=False,
+                seed=seed,
             )
 
         return env, clock, controller_holder.get("controller")
@@ -275,6 +279,32 @@ class TestEnvRealtimePacingTests(unittest.TestCase):
         self.assertEqual(env.render_calls, 0)
         self.assertEqual(clock.sleep_calls, [])
         self.assertIsNone(controller)
+
+    def test_run_loop_passes_seed_to_env_reset(self):
+        env, _clock, _controller = self._run_loop(
+            realtime=False,
+            sleep_scale=1.0,
+            dt=0.5,
+            work_durations=[0.1],
+            seed=2,
+        )
+
+        self.assertEqual(env.reset_seed, 2)
+
+    def test_run_loop_omits_seed_when_not_provided(self):
+        env, _clock, _controller = self._run_loop(
+            realtime=False,
+            sleep_scale=1.0,
+            dt=0.5,
+            work_durations=[0.1],
+        )
+
+        self.assertIsNone(env.reset_seed)
+
+    def test_arg_parser_accepts_seed(self):
+        args = run_env.build_arg_parser().parse_args(["--seed", "2"])
+
+        self.assertEqual(args.seed, 2)
 
 
 if __name__ == "__main__":

@@ -15,12 +15,17 @@
 - `entered_listen`
 - `started_listen_wait`
 - `completed_listen_wait`
+- `question_started`
+- `question_completed`
 - `final_listen_ready`
 - `callback_triggered`
 - `callback_completed`
 - `callback_success`
+- `callback_ignored`
 - `happy_triggered`
 - `happy_completed`
+
+These event fields are boolean edge markers for the current step.
 
 `info["episode"]` contains episode-level metadata:
 
@@ -33,6 +38,8 @@
 - `distracted_triggers`
 - `return`
 - `reward_components`
+
+`duration_seconds` is simulated episode duration, computed from `step_count * dt`, not wall-clock runtime.
 
 `info["phase"]` contains the current orchestration phase:
 
@@ -73,6 +80,12 @@ The old debug-heavy `metrics`, per-human fuzzy dumps, timers, and callback inter
 - final-step reward breakdown is exposed under `info["episode"]["reward_components"]`
 - each env step still represents `0.05s` of simulated decision time, even though MuJoCo may integrate smaller internal physics substeps
 
+Timing note:
+
+- public decision timestep: `dt = 0.05s`
+- MuJoCo integrates finer internal physics substeps underneath that decision timestep
+- final `info["episode"]["duration_seconds"]` is based on simulated time, not real execution time
+
 Example:
 
 ```python
@@ -88,10 +101,16 @@ if terminated or truncated:
 
 ## Run scripts
 
-- Demo: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode demo`
-- Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train`
-- Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder`
+- Demo: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode demo [--seed 2]`
+- Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train [--seed 2]`
+- Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder [--seed 2]`
 - Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
+
+Reproducibility example:
+
+- `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train --seed 2 --max-steps 5 --print-every 1`
+
+`--seed` is optional and is passed only to the initial `env.reset(...)` for that invocation.
 
 The minimal RWR trainer writes:
 
