@@ -17,7 +17,9 @@ DEFAULT_WAYPOINT_THRESHOLD = 0.2
 DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
 HUMAN_YAW_RATE_GAIN = 1.5
 HUMAN_ROTATION_STOP_DEG = 3.0
-LISTENING_RING_GAIN = 4.0
+HUMAN_ARRIVAL_STOP_RADIUS = 0.12
+HUMAN_ARRIVAL_SLOW_RADIUS = 0.60
+LISTENING_RING_GAIN = 3.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
 DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
@@ -72,6 +74,23 @@ DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING = "stop_and_go_following"
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 DEFAULT_FOLLOW_RADIUS = FOLLOW_RADIUS_DEFAULT
+
+
+def _compute_arrival_velocity(to_target_xy, max_speed) -> np.ndarray:
+    to_target_xy = np.asarray(to_target_xy, dtype=np.float32)
+    dist = float(np.linalg.norm(to_target_xy))
+    if dist <= HUMAN_ARRIVAL_STOP_RADIUS or dist <= NORM_EPS:
+        return np.zeros(2, dtype=np.float32)
+
+    direction = to_target_xy / dist
+    if dist < HUMAN_ARRIVAL_SLOW_RADIUS:
+        slow_band = HUMAN_ARRIVAL_SLOW_RADIUS - HUMAN_ARRIVAL_STOP_RADIUS
+        speed_scale = (dist - HUMAN_ARRIVAL_STOP_RADIUS) / slow_band
+        speed = float(max_speed) * np.clip(speed_scale, 0.0, 1.0)
+    else:
+        speed = float(max_speed)
+
+    return (speed * direction).astype(np.float32)
 
 
 class HumanMode:
@@ -465,11 +484,7 @@ class Human:
 
     def _move(self, to_target_xy, yaw, ctx, current_xy):
         to_target_xy = np.asarray(to_target_xy, dtype=np.float32)
-        dist = np.linalg.norm(to_target_xy)
-        if dist > NORM_EPS:
-            v_follow = self.max_speed * (to_target_xy / dist)
-        else:
-            v_follow = np.zeros(2, dtype=np.float32)
+        v_follow = _compute_arrival_velocity(to_target_xy, self.max_speed)
 
         v_total = self._compose_move_velocity(
             current_xy=current_xy,

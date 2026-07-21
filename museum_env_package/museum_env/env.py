@@ -177,7 +177,7 @@ class MuseumEnv(gym.Env):
         self.step_count = 0
         self.robot = Robot(
             waypoints=self.map_layout.robot_waypoints,
-            v_max=1.0,
+            v_max=0.8,
             k_v=20.0,
             k_yaw=12.0,
         )

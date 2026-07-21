@@ -4,7 +4,7 @@ import numpy as np
 
 from museum_env.guide_config import GuideBehaviorConfig
 
-
+# Decode a theta vector into a GuideBehaviorConfig object.
 def theta_to_guide_config(theta) -> GuideBehaviorConfig:
     theta = np.asarray(theta, dtype=np.float64)
     if theta.shape not in ((4,), (5,), (6,)):
@@ -32,7 +32,7 @@ def theta_to_guide_config(theta) -> GuideBehaviorConfig:
         callback_same_person_cooldown_seconds=callback_same_person_cooldown_seconds,
     )
 
-
+# Encode a GuideBehaviorConfig object into a theta vector.
 def guide_config_to_theta(config: GuideBehaviorConfig) -> np.ndarray:
     return np.array(
         [
@@ -46,7 +46,7 @@ def guide_config_to_theta(config: GuideBehaviorConfig) -> np.ndarray:
         dtype=np.float64,
     )
 
-
+# Summarize a theta vector into a dictionary of human-readable parameters.
 def summarize_theta(theta) -> dict[str, float]:
     config = theta_to_guide_config(theta)
     return {
