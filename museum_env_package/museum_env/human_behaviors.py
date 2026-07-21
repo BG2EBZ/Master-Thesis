@@ -240,7 +240,7 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
         repulsion_xy=ctx["repulsion"],
         robot_xy=robot_xy,
         hr_distance_min=human.hr_distance_min,
-        hr_distance_max=human.hr_distance_max,
+        hr_distance_max=None,
     )
 
     yaw_err = wrap_to_pi(desired_yaw - yaw)
@@ -504,7 +504,7 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
         repulsion_xy=ctx["repulsion"],
         robot_xy=robot_xy,
         hr_distance_min=human.hr_distance_min,
-        hr_distance_max=human.hr_distance_max,
+        hr_distance_max=None,
     )
 
     yaw_err = wrap_to_pi(desired_yaw - current_yaw)
