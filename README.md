@@ -105,6 +105,11 @@ if terminated or truncated:
 - Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train [--seed 2]`
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder [--seed 2]`
 - Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
+- Evaluate a learned RWR policy: `/home/tianci/Polimi/workspace/venv/bin/python scripts/eval_baseline.py --learned-params-json artifacts/runs/rwr_20260721_155908/best_params.json`
+
+If running the evaluator from inside `scripts/`, use the parent-relative path:
+
+- `/home/tianci/Polimi/workspace/venv/bin/python eval_baseline.py --learned-params-json ../artifacts/runs/rwr_20260721_155908/best_params.json`
 
 Reproducibility example:
 
