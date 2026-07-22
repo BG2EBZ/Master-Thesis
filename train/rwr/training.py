@@ -30,6 +30,7 @@ from train.rwr.defaults import (
     DEFAULT_CSV_NAME,
     DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     DEFAULT_EXPLORATION_PLOT_NAME,
+    DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME,
     DEFAULT_LEARNING_CURVE_PLOT_NAME,
     DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
@@ -213,6 +214,22 @@ def _build_baseline_learning_curve_rows(
                 }
             )
     return rows
+
+
+def _build_learning_curve_matrix_rows(
+    *,
+    return_matrix: np.ndarray,
+    learning_seeds: Sequence[int],
+    epochs: Sequence[int],
+) -> tuple[list[dict[str, float | int]], tuple[str, ...]]:
+    epoch_fieldnames = tuple(f"epoch_{int(epoch)}" for epoch in epochs)
+    rows: list[dict[str, float | int]] = []
+    for row_idx, learning_seed in enumerate(learning_seeds):
+        row: dict[str, float | int] = {"learning_seed": int(learning_seed)}
+        for column_idx, epoch_fieldname in enumerate(epoch_fieldnames):
+            row[epoch_fieldname] = float(return_matrix[row_idx, column_idx])
+        rows.append(row)
+    return rows, ("learning_seed", *epoch_fieldnames)
 
 
 def _evaluate_theta_on_seeds(
@@ -535,9 +552,16 @@ def train_across_learning_seeds(
     all_learning_curve_rows = learning_curve_rows + baseline_learning_curve_rows
 
     raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+    matrix_csv_path = output_dir / DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME
     plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
     summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
     write_csv_rows(all_learning_curve_rows, LEARNING_CURVE_RAW_FIELDNAMES, raw_csv_path)
+    matrix_rows, matrix_fieldnames = _build_learning_curve_matrix_rows(
+        return_matrix=return_matrix,
+        learning_seeds=ordered_learning_seeds,
+        epochs=ordered_epochs,
+    )
+    write_csv_rows(matrix_rows, matrix_fieldnames, matrix_csv_path)
 
     baseline_return_matrix, ordered_baseline_eval_seeds, baseline_epochs = build_dense_metric_matrix(
         baseline_learning_curve_rows,
@@ -572,11 +596,13 @@ def train_across_learning_seeds(
         "baseline_ci95_high_return": [float(value) for value in baseline_band.high],
         "baseline_policy_params": _policy_params_dict(baseline_theta),
         "learning_curve_raw_csv": str(raw_csv_path),
+        "learning_curve_matrix_csv": str(matrix_csv_path),
         "learning_curve_plot": str(plot_path),
     }
     write_json(summary_payload, summary_path)
 
     print(f"Saved learning curve raw CSV to {raw_csv_path}")
+    print(f"Saved learning curve matrix CSV to {matrix_csv_path}")
     print(f"Saved learning curve plot to {plot_path}")
     print(f"Saved learning curve summary to {summary_path}")
     return all_learning_curve_rows

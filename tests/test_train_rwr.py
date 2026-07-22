@@ -1,3 +1,4 @@
+import csv
 import json
 from pathlib import Path
 import sys
@@ -18,6 +19,7 @@ from train.common.rollout import EpisodeResult
 from train.rwr.algorithm import ThetaEvaluation, update_distribution
 from train.rwr.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
+    DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME,
     DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     INITIAL_MU,
@@ -225,13 +227,25 @@ class TrainRWREntrypointTests(unittest.TestCase):
 
             self.assertEqual(len(rows), 8)
             raw_csv = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            matrix_csv = output_dir / DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME
             summary_json = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
             self.assertTrue(raw_csv.exists())
+            self.assertTrue(matrix_csv.exists())
             self.assertTrue(summary_json.exists())
             raw_lines = raw_csv.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(raw_lines), 1 + 8)
             self.assertIn("rwr", raw_lines[1])
             self.assertIn("baseline", "\n".join(raw_lines))
+
+            with matrix_csv.open(newline="", encoding="utf-8") as handle:
+                matrix_rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                matrix_rows,
+                [
+                    {"learning_seed": "11", "epoch_0": "-100.0", "epoch_1": "-60.0"},
+                    {"learning_seed": "22", "epoch_0": "-80.0", "epoch_1": "-40.0"},
+                ],
+            )
 
             summary_payload = json.loads(summary_json.read_text(encoding="utf-8"))
             self.assertEqual(summary_payload["epochs"], [0, 1])
@@ -242,6 +256,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
             np.testing.assert_allclose(summary_payload["baseline_ci95_low_return"], [-79.6, -79.6])
             np.testing.assert_allclose(summary_payload["baseline_ci95_high_return"], [-40.4, -40.4])
             self.assertIn("baseline_policy_params", summary_payload)
+            self.assertEqual(summary_payload["learning_curve_matrix_csv"], str(matrix_csv))
             baseline_mock.assert_called_once()
             plot_mock.assert_called_once()
             return_matrix = plot_mock.call_args.kwargs["return_matrix"]

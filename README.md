@@ -122,3 +122,21 @@ The minimal RWR trainer writes:
 - default output directory: `artifacts/runs/rwr_minimal`
 - `training_metrics.csv`
 - `training_metrics.png`
+
+For a learning-seed by epoch dataset, run the RWR trainer with multiple learning seeds:
+
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py \
+  --epochs 30 \
+  --samples-per-epoch 30 \
+  --n-learning-seeds 10 \
+  --n-eval-seeds 20 \
+  --output-dir artifacts/runs/rwr_dataset_10x31
+```
+
+The multi-seed path writes:
+
+- `learning_curve_raw.csv`: long-form rows for RWR plus baseline
+- `learning_curve_matrix.csv`: RWR-only matrix with `learning_seed,epoch_0,epoch_1,...`
+- `learning_curve_summary.json`
+- `learning_curve_plot.png`
