@@ -24,6 +24,7 @@ from train.rwr.defaults import (
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     INITIAL_MU,
     LEARNING_CURVE_RAW_FIELDNAMES,
+    METRIC_FIELDNAMES,
 )
 from train.rwr.plotting import _build_sparse_epoch_ticks
 from train.rwr.training import (
@@ -129,6 +130,46 @@ class TrainRWREntrypointTests(unittest.TestCase):
             self.assertEqual(task[4], reward_config)
             self.assertTrue((output_dir / DEFAULT_BEST_PARAMS_NAME).exists())
 
+    def test_train_writes_final_policy_params_from_final_mu(self):
+        metrics_row = {field: 0.0 for field in METRIC_FIELDNAMES}
+        metrics_row["epoch"] = 1
+        training_result = SingleSeedTrainingResult(
+            metrics=[metrics_row],
+            best_theta_seen=np.array([1.6, 2.2, 1.0, 0.4, 0.9], dtype=np.float64),
+            best_evaluation=self._theta_evaluation(-1.0),
+            best_return_seen=-1.0,
+            best_epoch=1,
+            best_sample_index=1,
+            final_mu=np.array([2.5, 3.5, 2.0, 0.7, 1.0], dtype=np.float64),
+            final_std=np.array([0.1, 0.2, 0.3, 0.04, 0.05], dtype=np.float64),
+            learning_curve_rows=[],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "train"
+            with patch(
+                "train.rwr.training._train_single_learning_seed",
+                return_value=training_result,
+            ):
+                with patch("train.rwr.training.plot_training_metrics"):
+                    with patch("train.rwr.training.plot_exploration_metrics"):
+                        train(
+                            epochs=1,
+                            samples_per_epoch=1,
+                            seed=123,
+                            output_dir=output_dir,
+                        )
+
+            payload = json.loads(
+                (output_dir / DEFAULT_BEST_PARAMS_NAME).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(payload["best_theta_seen"], [1.6, 2.2, 1.0, 0.4, 0.9])
+        self.assertEqual(payload["final_theta"], [2.5, 3.5, 2.0, 0.7, 1.0])
+        self.assertEqual(payload["final_mu"], [2.5, 3.5, 2.0, 0.7, 1.0])
+        self.assertEqual(payload["best_policy_params"]["slow_down_distance_m"], 1.6)
+        self.assertEqual(payload["final_policy_params"]["slow_down_distance_m"], 2.5)
+
     def test_single_learning_seed_records_epoch_zero_and_evaluates_current_mu(self):
         evaluation_seeds = [101, 102]
         seen_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
@@ -183,13 +224,13 @@ class TrainRWREntrypointTests(unittest.TestCase):
     def test_train_across_learning_seeds_writes_learning_curve_outputs(self):
         first_result = SingleSeedTrainingResult(
             metrics=[{"epoch": 1, "mean_return": -1.0}],
-            best_theta_seen=np.array([1.0], dtype=np.float64),
+            best_theta_seen=np.array([1.6, 2.2, 1.0, 0.4, 0.9], dtype=np.float64),
             best_evaluation=self._theta_evaluation(-1.0),
             best_return_seen=-1.0,
             best_epoch=1,
             best_sample_index=1,
-            final_mu=np.array([1.0], dtype=np.float64),
-            final_std=np.array([0.1], dtype=np.float64),
+            final_mu=np.array([2.5, 3.5, 2.0, 0.7, 1.0], dtype=np.float64),
+            final_std=np.array([0.1, 0.2, 0.3, 0.04, 0.05], dtype=np.float64),
             learning_curve_rows=[
                 self._learning_curve_row(11, 0, -100.0),
                 self._learning_curve_row(11, 1, -60.0),
@@ -197,13 +238,13 @@ class TrainRWREntrypointTests(unittest.TestCase):
         )
         second_result = SingleSeedTrainingResult(
             metrics=[{"epoch": 1, "mean_return": -2.0}],
-            best_theta_seen=np.array([2.0], dtype=np.float64),
+            best_theta_seen=np.array([1.7, 2.4, 1.5, 0.5, 0.8], dtype=np.float64),
             best_evaluation=self._theta_evaluation(-2.0),
             best_return_seen=-2.0,
             best_epoch=1,
             best_sample_index=1,
-            final_mu=np.array([2.0], dtype=np.float64),
-            final_std=np.array([0.2], dtype=np.float64),
+            final_mu=np.array([3.0, 4.0, 3.0, 0.8, 0.95], dtype=np.float64),
+            final_std=np.array([0.2, 0.3, 0.4, 0.05, 0.06], dtype=np.float64),
             learning_curve_rows=[
                 self._learning_curve_row(22, 0, -80.0),
                 self._learning_curve_row(22, 1, -40.0),
@@ -264,6 +305,28 @@ class TrainRWREntrypointTests(unittest.TestCase):
             np.testing.assert_allclose(summary_payload["baseline_ci95_low_return"], [-79.6, -79.6])
             np.testing.assert_allclose(summary_payload["baseline_ci95_high_return"], [-40.4, -40.4])
             self.assertIn("baseline_policy_params", summary_payload)
+            self.assertEqual(
+                summary_payload["final_policy_params_by_learning_seed"][0]["learning_seed"],
+                11,
+            )
+            self.assertEqual(
+                summary_payload["final_policy_params_by_learning_seed"][0]["final_theta"],
+                [2.5, 3.5, 2.0, 0.7, 1.0],
+            )
+            self.assertEqual(
+                summary_payload["final_policy_params_by_learning_seed"][0]["best_theta_seen"],
+                [1.6, 2.2, 1.0, 0.4, 0.9],
+            )
+            self.assertEqual(
+                summary_payload["final_policy_params_by_learning_seed"][0][
+                    "final_policy_params"
+                ]["slow_down_distance_m"],
+                2.5,
+            )
+            self.assertEqual(
+                summary_payload["final_policy_params_by_learning_seed"][1]["learning_seed"],
+                22,
+            )
             self.assertEqual(summary_payload["learning_curve_matrix_csv"], str(matrix_csv))
             baseline_mock.assert_called_once()
             plot_mock.assert_called_once()

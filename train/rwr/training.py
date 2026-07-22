@@ -445,8 +445,8 @@ def train(
     best_params_payload = {
         "best_theta_seen": [float(value) for value in result.best_theta_seen],
         "best_policy_params": _policy_params_dict(result.best_theta_seen),
-        "final_theta": [float(value) for value in result.best_theta_seen],
-        "final_policy_params": _policy_params_dict(result.best_theta_seen),
+        "final_theta": [float(value) for value in result.final_mu],
+        "final_policy_params": _policy_params_dict(result.final_mu),
         "best_return": float(result.best_return_seen),
         "best_mean_duration_seconds": float(result.best_evaluation.mean_duration_seconds),
         "best_mean_overwhelmed_triggers": float(result.best_evaluation.mean_overwhelmed_triggers),
@@ -520,6 +520,7 @@ def train_across_learning_seeds(
     ]
 
     learning_curve_rows: list[dict[str, float | int | str]] = []
+    learning_seed_results: dict[int, SingleSeedTrainingResult] = {}
     for learning_seed in learning_seeds:
         seed_result = _train_single_learning_seed(
             epochs=int(epochs),
@@ -531,6 +532,12 @@ def train_across_learning_seeds(
             reward_config=reward_config,
             evaluation_seeds=evaluation_seeds,
         )
+        result_learning_seed = (
+            int(seed_result.learning_curve_rows[0]["learning_seed"])
+            if seed_result.learning_curve_rows
+            else int(learning_seed)
+        )
+        learning_seed_results[result_learning_seed] = seed_result
         learning_curve_rows.extend(seed_result.learning_curve_rows)
 
     return_matrix, ordered_learning_seeds, ordered_epochs = build_dense_metric_matrix(
@@ -583,6 +590,38 @@ def train_across_learning_seeds(
     )
     summary_payload = {
         "learning_seeds": [int(value) for value in ordered_learning_seeds],
+        "final_policy_params_by_learning_seed": [
+            {
+                "learning_seed": int(learning_seed),
+                "best_theta_seen": [
+                    float(value)
+                    for value in learning_seed_results[int(learning_seed)].best_theta_seen
+                ],
+                "best_policy_params": _policy_params_dict(
+                    learning_seed_results[int(learning_seed)].best_theta_seen
+                ),
+                "final_theta": [
+                    float(value) for value in learning_seed_results[int(learning_seed)].final_mu
+                ],
+                "final_policy_params": _policy_params_dict(
+                    learning_seed_results[int(learning_seed)].final_mu
+                ),
+                "final_mu": [
+                    float(value) for value in learning_seed_results[int(learning_seed)].final_mu
+                ],
+                "final_std": [
+                    float(value) for value in learning_seed_results[int(learning_seed)].final_std
+                ],
+                "best_return": float(
+                    learning_seed_results[int(learning_seed)].best_return_seen
+                ),
+                "best_epoch": int(learning_seed_results[int(learning_seed)].best_epoch),
+                "best_sample_index_within_epoch": int(
+                    learning_seed_results[int(learning_seed)].best_sample_index
+                ),
+            }
+            for learning_seed in ordered_learning_seeds
+        ],
         "evaluation_seeds": [int(value) for value in evaluation_seeds],
         "baseline_evaluation_seeds": [int(value) for value in ordered_baseline_eval_seeds],
         "epochs": [int(value) for value in ordered_epochs],

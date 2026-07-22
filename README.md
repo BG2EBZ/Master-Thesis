@@ -122,6 +122,7 @@ The minimal RWR trainer writes:
 - default output directory: `artifacts/runs/rwr_minimal`
 - `training_metrics.csv`
 - `training_metrics.png`
+- `best_params.json`: best sampled theta plus final distribution-center policy params
 
 For a learning-seed by epoch dataset, run the RWR trainer with multiple learning seeds:
 
@@ -138,7 +139,7 @@ The multi-seed path writes:
 
 - `learning_curve_raw.csv`: long-form rows for RWR plus baseline
 - `learning_curve_matrix.csv`: RWR-only matrix with `learning_seed,epoch_0,epoch_1,...`
-- `learning_curve_summary.json`
+- `learning_curve_summary.json`: aggregate returns plus per-learning-seed final policy params
 - `learning_curve_plot.png`
 
 To replot the saved learning curves without retraining:
