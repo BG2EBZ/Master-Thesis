@@ -33,7 +33,12 @@ from train.rwr.training import (
     train_across_learning_seeds,
 )
 from train.rwr.rewarding import EpisodeRewardWeights
-from scripts.plot_rwr_learning_curve import replot_learning_curve
+from scripts.plot_rwr_learning_curve import (
+    PLOT_KIND_METRICS,
+    load_learning_curve_plot_data,
+    main as plot_learning_curve_main,
+    replot_learning_curve,
+)
 
 
 class TrainRWREntrypointTests(unittest.TestCase):
@@ -355,6 +360,246 @@ class TrainRWREntrypointTests(unittest.TestCase):
         self.assertEqual(plot_mock.call_args.kwargs["epochs"], [0, 1])
         self.assertEqual(plot_mock.call_args.kwargs["output_path"], output_path)
         self.assertEqual(plot_mock.call_args.kwargs["max_x_ticks"], 5)
+
+    def test_replot_learning_curve_main_defaults_to_both_plots(self):
+        input_csv = Path("learning_curve_raw.csv")
+        with patch("scripts.plot_rwr_learning_curve.replot_learning_curve") as replot_mock:
+            exit_code = plot_learning_curve_main(
+                [
+                    "--input-csv",
+                    str(input_csv),
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(replot_mock.call_count, 2)
+        self.assertEqual(
+            [call.kwargs["plot_kind"] for call in replot_mock.call_args_list],
+            ["return", "other-metrics"],
+        )
+        self.assertEqual(
+            [call.kwargs["output_path"] for call in replot_mock.call_args_list],
+            [
+                Path("learning_curve_plot.png"),
+                Path("learning_curve_other_metrics.png"),
+            ],
+        )
+
+    def test_replot_learning_curve_main_uses_output_directory(self):
+        input_csv = Path("learning_curve_raw.csv")
+        output_dir = Path("replots")
+        with patch("scripts.plot_rwr_learning_curve.replot_learning_curve") as replot_mock:
+            exit_code = plot_learning_curve_main(
+                [
+                    "--input-csv",
+                    str(input_csv),
+                    "--output-path",
+                    str(output_dir),
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            [call.kwargs["output_path"] for call in replot_mock.call_args_list],
+            [
+                output_dir / "learning_curve_plot.png",
+                output_dir / "learning_curve_other_metrics.png",
+            ],
+        )
+
+    def test_replot_learning_curve_loads_additional_metric_matrices(self):
+        rows = [
+            self._learning_curve_row(
+                11,
+                0,
+                -100.0,
+                duration_seconds=100.0,
+                overwhelmed_triggers=1.0,
+                impatient_triggers=2.0,
+                distracted_triggers=3.0,
+            ),
+            self._learning_curve_row(
+                11,
+                1,
+                -60.0,
+                duration_seconds=90.0,
+                overwhelmed_triggers=0.5,
+                impatient_triggers=1.5,
+                distracted_triggers=2.5,
+            ),
+            self._learning_curve_row(
+                22,
+                0,
+                -80.0,
+                duration_seconds=110.0,
+                overwhelmed_triggers=1.5,
+                impatient_triggers=2.5,
+                distracted_triggers=3.5,
+            ),
+            self._learning_curve_row(
+                22,
+                1,
+                -40.0,
+                duration_seconds=80.0,
+                overwhelmed_triggers=0.25,
+                impatient_triggers=1.25,
+                distracted_triggers=2.25,
+            ),
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 0,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 120.0,
+                "mean_overwhelmed_triggers": 2.0,
+                "mean_impatient_triggers": 3.0,
+                "mean_distracted_triggers": 4.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 1,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 120.0,
+                "mean_overwhelmed_triggers": 2.0,
+                "mean_impatient_triggers": 3.0,
+                "mean_distracted_triggers": 4.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 102,
+                "epoch": 0,
+                "mean_return": -50.0,
+                "mean_duration_seconds": 115.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 102,
+                "epoch": 1,
+                "mean_return": -50.0,
+                "mean_duration_seconds": 115.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_csv = Path(tmpdir) / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            with input_csv.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=LEARNING_CURVE_RAW_FIELDNAMES)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            plot_data = load_learning_curve_plot_data(
+                input_csv,
+                metric_names=(
+                    "mean_duration_seconds",
+                    "mean_overwhelmed_triggers",
+                    "mean_impatient_triggers",
+                    "mean_distracted_triggers",
+                ),
+            )
+
+        self.assertEqual(plot_data.epochs, [0, 1])
+        self.assertEqual(plot_data.learning_seeds, [11, 22])
+        self.assertEqual(plot_data.evaluation_seeds, [101, 102])
+        self.assertEqual(plot_data.metric_matrices["mean_duration_seconds"].shape, (2, 2))
+        self.assertEqual(
+            plot_data.baseline_metric_matrices["mean_duration_seconds"].shape,
+            (2, 2),
+        )
+        np.testing.assert_allclose(
+            plot_data.metric_matrices["mean_duration_seconds"],
+            np.array([[100.0, 90.0], [110.0, 80.0]], dtype=np.float64),
+        )
+        np.testing.assert_allclose(
+            plot_data.metric_matrices["mean_distracted_triggers"],
+            np.array([[3.0, 2.5], [3.5, 2.25]], dtype=np.float64),
+        )
+        np.testing.assert_allclose(
+            plot_data.baseline_metric_matrices["mean_impatient_triggers"],
+            np.array([[3.0, 3.0], [2.0, 2.0]], dtype=np.float64),
+        )
+
+    def test_replot_learning_curve_other_metrics_calls_panel_plot(self):
+        rows = [
+            self._learning_curve_row(11, 0, -100.0),
+            self._learning_curve_row(11, 1, -60.0),
+            self._learning_curve_row(22, 0, -80.0),
+            self._learning_curve_row(22, 1, -40.0),
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 0,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 1,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_csv = Path(tmpdir) / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            output_path = Path(tmpdir) / "learning_curve_other_metrics.png"
+            with input_csv.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=LEARNING_CURVE_RAW_FIELDNAMES)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            with patch(
+                "scripts.plot_rwr_learning_curve.plot_learning_curve_metric_panels"
+            ) as plot_mock:
+                plot_data = replot_learning_curve(
+                    input_csv=input_csv,
+                    output_path=output_path,
+                    max_x_ticks=5,
+                    plot_kind="other-metrics",
+                )
+
+        self.assertEqual(
+            list(plot_data.metric_matrices),
+            [
+                "mean_duration_seconds",
+                "mean_overwhelmed_triggers",
+                "mean_impatient_triggers",
+                "mean_distracted_triggers",
+            ],
+        )
+        self.assertNotIn("triggers", PLOT_KIND_METRICS)
+        plot_mock.assert_called_once()
+        self.assertEqual(plot_mock.call_args.kwargs["epochs"], [0, 1])
+        self.assertEqual(plot_mock.call_args.kwargs["output_path"], output_path)
+        self.assertEqual(plot_mock.call_args.kwargs["max_x_ticks"], 5)
+        self.assertEqual(
+            [panel[0] for panel in plot_mock.call_args.kwargs["metric_panels"]],
+            [
+                "Episode Duration",
+                "Overwhelmed Triggers",
+                "Impatient Triggers",
+                "Distracted Triggers",
+            ],
+        )
 
 
 if __name__ == "__main__":

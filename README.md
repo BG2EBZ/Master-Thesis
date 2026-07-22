@@ -141,11 +141,19 @@ The multi-seed path writes:
 - `learning_curve_summary.json`
 - `learning_curve_plot.png`
 
-To replot a saved learning curve without retraining:
+To replot the saved learning curves without retraining:
+
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/plot_rwr_learning_curve.py \
+  --input-csv artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv
+```
+
+This writes both `learning_curve_plot.png` and `learning_curve_other_metrics.png`.
+
+To write both plots to another directory:
 
 ```bash
 /home/tianci/Polimi/workspace/venv/bin/python scripts/plot_rwr_learning_curve.py \
   --input-csv artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv \
-  --output-path artifacts/runs/rwr_dataset_10x31/learning_curve_plot_clean.png \
-  --max-x-ticks 8
+  --output-path artifacts/runs/rwr_dataset_10x31/replots
 ```

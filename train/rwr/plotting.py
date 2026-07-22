@@ -215,3 +215,94 @@ def plot_learning_curve_metrics(
 
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
+
+
+def plot_learning_curve_metric_panels(
+    *,
+    epochs: Sequence[int],
+    metric_panels: Sequence[
+        tuple[str, str, np.ndarray, np.ndarray | None]
+    ],
+    output_path: Path,
+    x_label: str = "# Epochs",
+    max_x_ticks: int = 8,
+) -> None:
+    if not metric_panels:
+        raise ValueError("metric_panels must not be empty")
+
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    panel_count = len(metric_panels)
+    if panel_count == 3:
+        nrows, ncols = 1, 3
+        figsize = (14.5, 4.8)
+    elif panel_count == 4:
+        nrows, ncols = 2, 2
+        figsize = (12.5, 8.2)
+    else:
+        nrows, ncols = 1, panel_count
+        figsize = (5.0 * panel_count, 4.8)
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, constrained_layout=False)
+    axes_array = np.atleast_1d(axes).flat
+    x_values = np.asarray(epochs, dtype=np.float64)
+    x_ticks = _build_sparse_epoch_ticks(epochs, max_x_ticks=max_x_ticks)
+    legend_handles = None
+    legend_labels = None
+
+    for ax, (title, y_label, rwr_matrix, baseline_matrix) in zip(axes_array, metric_panels):
+        plot_mean_confidence_interval(
+            ax,
+            x_values,
+            np.asarray(rwr_matrix, dtype=np.float64),
+            color="#f28e2b",
+            label="RWR",
+            alpha=0.24,
+            linewidth=2.0,
+        )
+        if baseline_matrix is not None:
+            plot_mean_confidence_interval(
+                ax,
+                x_values,
+                np.asarray(baseline_matrix, dtype=np.float64),
+                color="#4e79a7",
+                label="Baseline",
+                alpha=0.18,
+                linewidth=1.9,
+            )
+        ax.set_title(title, fontsize=14, fontweight="semibold")
+        ax.set_xlabel(x_label, fontsize=12, fontweight="semibold")
+        ax.set_ylabel(y_label, fontsize=12, fontweight="semibold")
+        ax.set_xlim(float(x_values[0]), float(x_values[-1]))
+        ax.set_xticks(x_ticks)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(True, color="#d6d6d6", linewidth=1.0, alpha=0.9)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#b0b0b0")
+        ax.spines["bottom"].set_color("#b0b0b0")
+        if legend_handles is None or legend_labels is None:
+            legend_handles, legend_labels = ax.get_legend_handles_labels()
+
+    for ax in list(axes_array)[panel_count:]:
+        ax.set_visible(False)
+
+    if legend_handles and legend_labels:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="lower center",
+            frameon=False,
+            ncol=len(legend_labels),
+            fontsize=12,
+            handlelength=2.0,
+        )
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.93, bottom=0.16, hspace=0.34, wspace=0.24)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)

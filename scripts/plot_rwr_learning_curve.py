@@ -19,9 +19,39 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
 from train.common.artifacts import build_dense_metric_matrix
 from train.rwr.defaults import (
     DEFAULT_LEARNING_CURVE_PLOT_NAME,
-    DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
 )
-from train.rwr.plotting import plot_learning_curve_metrics
+from train.rwr.plotting import (
+    plot_learning_curve_metric_panels,
+    plot_learning_curve_metrics,
+)
+
+RETURN_METRIC = "mean_return"
+METRIC_COLUMNS = (
+    RETURN_METRIC,
+    "mean_duration_seconds",
+    "mean_overwhelmed_triggers",
+    "mean_impatient_triggers",
+    "mean_distracted_triggers",
+)
+METRIC_LABELS = {
+    "mean_duration_seconds": ("Episode Duration", "Seconds"),
+    "mean_overwhelmed_triggers": ("Overwhelmed Triggers", "Mean count"),
+    "mean_impatient_triggers": ("Impatient Triggers", "Mean count"),
+    "mean_distracted_triggers": ("Distracted Triggers", "Mean count"),
+}
+PLOT_KIND_METRICS = {
+    "return": (RETURN_METRIC,),
+    "other-metrics": (
+        "mean_duration_seconds",
+        "mean_overwhelmed_triggers",
+        "mean_impatient_triggers",
+        "mean_distracted_triggers",
+    ),
+}
+DEFAULT_PLOT_NAMES = {
+    "return": DEFAULT_LEARNING_CURVE_PLOT_NAME,
+    "other-metrics": "learning_curve_other_metrics.png",
+}
 
 
 @dataclass(frozen=True)
@@ -29,18 +59,22 @@ class LearningCurvePlotData:
     epochs: list[int]
     learning_seeds: list[int]
     evaluation_seeds: list[int]
-    return_matrix: np.ndarray
-    baseline_return_matrix: np.ndarray | None
+    metric_matrices: dict[str, np.ndarray]
+    baseline_metric_matrices: dict[str, np.ndarray]
+
+    @property
+    def return_matrix(self) -> np.ndarray:
+        return self.metric_matrices[RETURN_METRIC]
+
+    @property
+    def baseline_return_matrix(self) -> np.ndarray | None:
+        return self.baseline_metric_matrices.get(RETURN_METRIC)
 
 
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return parsed
-
-
-def _read_learning_curve_rows(input_csv: Path) -> list[dict[str, float | int | str]]:
+def _read_learning_curve_rows(
+    input_csv: Path,
+    metric_names: Sequence[str],
+) -> list[dict[str, float | int | str]]:
     rows: list[dict[str, float | int | str]] = []
     with input_csv.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -51,33 +85,70 @@ def _read_learning_curve_rows(input_csv: Path) -> list[dict[str, float | int | s
                     "learning_seed": int(row["learning_seed"]),
                     "evaluation_seed": int(row["evaluation_seed"]),
                     "epoch": int(row["epoch"]),
-                    "mean_return": float(row["mean_return"]),
+                    **{metric: float(row[metric]) for metric in metric_names},
                 }
             )
     return rows
 
 
-def load_learning_curve_plot_data(input_csv: Path) -> LearningCurvePlotData:
-    rows = _read_learning_curve_rows(input_csv)
+def _build_metric_matrix_bundle(
+    rows: list[dict[str, float | int | str]],
+    *,
+    row_key: str,
+    metric_names: Sequence[str],
+) -> tuple[dict[str, np.ndarray], list[int], list[int]]:
+    matrices: dict[str, np.ndarray] = {}
+    ordered_rows: list[int] | None = None
+    ordered_epochs: list[int] | None = None
+    for metric_name in metric_names:
+        matrix, metric_ordered_rows, metric_ordered_epochs = build_dense_metric_matrix(
+            rows,
+            row_key=row_key,
+            column_key="epoch",
+            value_key=metric_name,
+        )
+        if ordered_rows is None:
+            ordered_rows = metric_ordered_rows
+            ordered_epochs = metric_ordered_epochs
+        elif ordered_rows != metric_ordered_rows or ordered_epochs != metric_ordered_epochs:
+            raise ValueError(f"Matrix keys for {metric_name} do not match previous metrics.")
+        matrices[metric_name] = matrix
+
+    if ordered_rows is None or ordered_epochs is None:
+        raise ValueError("metric_names must not be empty")
+    return matrices, ordered_rows, ordered_epochs
+
+
+def load_learning_curve_plot_data(
+    input_csv: Path,
+    *,
+    metric_names: Sequence[str] = (RETURN_METRIC,),
+) -> LearningCurvePlotData:
+    resolved_metric_names = tuple(metric_names)
+    unknown_metric_names = [
+        metric_name for metric_name in resolved_metric_names if metric_name not in METRIC_COLUMNS
+    ]
+    if unknown_metric_names:
+        raise ValueError(f"Unknown metric columns: {unknown_metric_names}")
+
+    rows = _read_learning_curve_rows(input_csv, resolved_metric_names)
     rwr_rows = [row for row in rows if row["policy"] == "rwr"]
     if not rwr_rows:
         raise ValueError(f"No RWR rows found in {input_csv}")
 
-    return_matrix, learning_seeds, epochs = build_dense_metric_matrix(
+    metric_matrices, learning_seeds, epochs = _build_metric_matrix_bundle(
         rwr_rows,
         row_key="learning_seed",
-        column_key="epoch",
-        value_key="mean_return",
+        metric_names=resolved_metric_names,
     )
     baseline_rows = [row for row in rows if row["policy"] == "baseline"]
-    baseline_return_matrix: np.ndarray | None = None
+    baseline_metric_matrices: dict[str, np.ndarray] = {}
     evaluation_seeds: list[int] = []
     if baseline_rows:
-        baseline_return_matrix, evaluation_seeds, baseline_epochs = build_dense_metric_matrix(
+        baseline_metric_matrices, evaluation_seeds, baseline_epochs = _build_metric_matrix_bundle(
             baseline_rows,
             row_key="evaluation_seed",
-            column_key="epoch",
-            value_key="mean_return",
+            metric_names=resolved_metric_names,
         )
         if baseline_epochs != epochs:
             raise ValueError("Baseline epochs do not match RWR epochs.")
@@ -86,15 +157,13 @@ def load_learning_curve_plot_data(input_csv: Path) -> LearningCurvePlotData:
         epochs=epochs,
         learning_seeds=learning_seeds,
         evaluation_seeds=evaluation_seeds,
-        return_matrix=return_matrix,
-        baseline_return_matrix=baseline_return_matrix,
+        metric_matrices=metric_matrices,
+        baseline_metric_matrices=baseline_metric_matrices,
     )
 
 
-def _default_output_path(input_csv: Path) -> Path:
-    if input_csv.name == DEFAULT_LEARNING_CURVE_RAW_CSV_NAME:
-        return input_csv.with_name(DEFAULT_LEARNING_CURVE_PLOT_NAME)
-    return input_csv.with_suffix(".png")
+def _default_output_dir(input_csv: Path, output_path: Path | None) -> Path:
+    return input_csv.parent if output_path is None else output_path
 
 
 def replot_learning_curve(
@@ -102,16 +171,35 @@ def replot_learning_curve(
     input_csv: Path,
     output_path: Path,
     max_x_ticks: int = 8,
+    plot_kind: str = "return",
 ) -> LearningCurvePlotData:
-    plot_data = load_learning_curve_plot_data(input_csv)
+    metric_names = PLOT_KIND_METRICS[plot_kind]
+    plot_data = load_learning_curve_plot_data(input_csv, metric_names=metric_names)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plot_learning_curve_metrics(
-        epochs=plot_data.epochs,
-        return_matrix=plot_data.return_matrix,
-        baseline_return_matrix=plot_data.baseline_return_matrix,
-        output_path=output_path,
-        max_x_ticks=int(max_x_ticks),
-    )
+    if plot_kind == "return":
+        plot_learning_curve_metrics(
+            epochs=plot_data.epochs,
+            return_matrix=plot_data.return_matrix,
+            baseline_return_matrix=plot_data.baseline_return_matrix,
+            output_path=output_path,
+            max_x_ticks=int(max_x_ticks),
+        )
+    else:
+        metric_panels = [
+            (
+                METRIC_LABELS[metric_name][0],
+                METRIC_LABELS[metric_name][1],
+                plot_data.metric_matrices[metric_name],
+                plot_data.baseline_metric_matrices.get(metric_name),
+            )
+            for metric_name in metric_names
+        ]
+        plot_learning_curve_metric_panels(
+            epochs=plot_data.epochs,
+            metric_panels=metric_panels,
+            output_path=output_path,
+            max_x_ticks=int(max_x_ticks),
+        )
     return plot_data
 
 
@@ -129,31 +217,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--output-path",
         type=Path,
         default=None,
-        help="Destination plot path. Defaults to learning_curve_plot.png next to the input CSV.",
-    )
-    parser.add_argument(
-        "--max-x-ticks",
-        type=_positive_int,
-        default=8,
-        help="Maximum number of integer x-axis ticks to show.",
+        help="Directory where both plot PNGs are written. Defaults to the input CSV directory.",
     )
     args = parser.parse_args(argv)
 
     input_csv = Path(args.input_csv)
-    output_path = (
-        _default_output_path(input_csv)
-        if args.output_path is None
-        else Path(args.output_path)
-    )
-    plot_data = replot_learning_curve(
-        input_csv=input_csv,
-        output_path=output_path,
-        max_x_ticks=int(args.max_x_ticks),
-    )
-    print(
-        f"Saved replot to {output_path} "
-        f"(learning_seeds={len(plot_data.learning_seeds)}, epochs={len(plot_data.epochs)})"
-    )
+    output_dir = _default_output_dir(input_csv, args.output_path)
+    for plot_kind in PLOT_KIND_METRICS:
+        output_path = output_dir / DEFAULT_PLOT_NAMES[plot_kind]
+        plot_data = replot_learning_curve(
+            input_csv=input_csv,
+            output_path=output_path,
+            plot_kind=plot_kind,
+        )
+        print(
+            f"Saved replot to {output_path} "
+            f"(plot_kind={plot_kind}, "
+            f"learning_seeds={len(plot_data.learning_seeds)}, epochs={len(plot_data.epochs)})"
+        )
     return 0
 
 
