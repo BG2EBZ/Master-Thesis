@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Sequence
@@ -22,6 +23,45 @@ EXPLORATION_PARAMETER_LABELS = (
     "slowdown_speed_scale",
     "explanation_time_scale",
 )
+
+
+def _build_sparse_epoch_ticks(epochs: Sequence[int], max_x_ticks: int) -> list[int]:
+    if int(max_x_ticks) <= 0:
+        raise ValueError("max_x_ticks must be positive")
+
+    ordered_epochs = sorted({int(epoch) for epoch in epochs})
+    if len(ordered_epochs) <= int(max_x_ticks):
+        return ordered_epochs
+
+    start = int(ordered_epochs[0])
+    end = int(ordered_epochs[-1])
+    if int(max_x_ticks) == 1:
+        return [start]
+    span = max(1, end - start)
+    raw_step = span / float(max(1, int(max_x_ticks) - 1))
+    magnitude = 10 ** math.floor(math.log10(raw_step))
+    step = int(max(1, magnitude))
+
+    def _ticks_for_step(candidate_step: int) -> list[int]:
+        first_tick = int(math.ceil(start / candidate_step) * candidate_step)
+        candidate_ticks = list(range(first_tick, end + 1, candidate_step))
+        if start not in candidate_ticks:
+            candidate_ticks.insert(0, start)
+        if end not in candidate_ticks:
+            candidate_ticks.append(end)
+        return candidate_ticks
+
+    for multiplier in (1, 2, 5, 10):
+        candidate = int(max(1, multiplier * magnitude))
+        candidate_ticks = _ticks_for_step(candidate)
+        if len(candidate_ticks) <= int(max_x_ticks):
+            step = candidate
+            break
+
+    ticks = _ticks_for_step(step)
+    if len(ticks) > int(max_x_ticks):
+        return [start, end]
+    return ticks
 
 
 def plot_training_metrics(
@@ -121,6 +161,7 @@ def plot_learning_curve_metrics(
     baseline_return_matrix: np.ndarray | None = None,
     output_path: Path,
     x_label: str = "# Epochs",
+    max_x_ticks: int = 8,
 ) -> None:
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     import matplotlib
@@ -155,7 +196,7 @@ def plot_learning_curve_metrics(
     ax.set_xlabel(x_label, fontsize=16, fontweight="semibold")
     ax.set_ylabel("J", fontsize=16, fontweight="semibold")
     ax.set_xlim(float(x_values[0]), float(x_values[-1]))
-    ax.set_xticks(x_values)
+    ax.set_xticks(_build_sparse_epoch_ticks(epochs, max_x_ticks=max_x_ticks))
     ax.tick_params(axis="both", labelsize=12)
     ax.grid(True, color="#d6d6d6", linewidth=1.0, alpha=0.9)
     ax.spines["top"].set_visible(False)

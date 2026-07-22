@@ -23,7 +23,9 @@ from train.rwr.defaults import (
     DEFAULT_LEARNING_CURVE_RAW_CSV_NAME,
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     INITIAL_MU,
+    LEARNING_CURVE_RAW_FIELDNAMES,
 )
+from train.rwr.plotting import _build_sparse_epoch_ticks
 from train.rwr.training import (
     SingleSeedTrainingResult,
     _train_single_learning_seed,
@@ -31,6 +33,7 @@ from train.rwr.training import (
     train_across_learning_seeds,
 )
 from train.rwr.rewarding import EpisodeRewardWeights
+from scripts.plot_rwr_learning_curve import replot_learning_curve
 
 
 class TrainRWREntrypointTests(unittest.TestCase):
@@ -263,6 +266,95 @@ class TrainRWREntrypointTests(unittest.TestCase):
             baseline_return_matrix = plot_mock.call_args.kwargs["baseline_return_matrix"]
             self.assertEqual(return_matrix.shape, (2, 2))
             self.assertEqual(baseline_return_matrix.shape, (2, 2))
+
+    def test_learning_curve_plot_uses_sparse_epoch_ticks(self):
+        self.assertEqual(
+            _build_sparse_epoch_ticks(range(61), max_x_ticks=8),
+            [0, 10, 20, 30, 40, 50, 60],
+        )
+
+    def test_replot_learning_curve_loads_raw_csv_and_calls_plot(self):
+        rows = [
+            self._learning_curve_row(11, 0, -100.0),
+            self._learning_curve_row(11, 1, -60.0),
+            self._learning_curve_row(22, 0, -80.0),
+            self._learning_curve_row(22, 1, -40.0),
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 0,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 101,
+                "epoch": 1,
+                "mean_return": -70.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 102,
+                "epoch": 0,
+                "mean_return": -50.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+            {
+                "policy": "baseline",
+                "learning_seed": -1,
+                "evaluation_seed": 102,
+                "epoch": 1,
+                "mean_return": -50.0,
+                "mean_duration_seconds": 12.0,
+                "mean_overwhelmed_triggers": 1.0,
+                "mean_impatient_triggers": 2.0,
+                "mean_distracted_triggers": 3.0,
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_csv = Path(tmpdir) / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            output_path = Path(tmpdir) / "learning_curve_plot_clean.png"
+            with input_csv.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=LEARNING_CURVE_RAW_FIELDNAMES)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            with patch("scripts.plot_rwr_learning_curve.plot_learning_curve_metrics") as plot_mock:
+                plot_data = replot_learning_curve(
+                    input_csv=input_csv,
+                    output_path=output_path,
+                    max_x_ticks=5,
+                )
+
+        self.assertEqual(plot_data.epochs, [0, 1])
+        self.assertEqual(plot_data.learning_seeds, [11, 22])
+        self.assertEqual(plot_data.evaluation_seeds, [101, 102])
+        np.testing.assert_allclose(
+            plot_data.return_matrix,
+            np.array([[-100.0, -60.0], [-80.0, -40.0]], dtype=np.float64),
+        )
+        np.testing.assert_allclose(
+            plot_data.baseline_return_matrix,
+            np.array([[-70.0, -70.0], [-50.0, -50.0]], dtype=np.float64),
+        )
+        plot_mock.assert_called_once()
+        self.assertEqual(plot_mock.call_args.kwargs["epochs"], [0, 1])
+        self.assertEqual(plot_mock.call_args.kwargs["output_path"], output_path)
+        self.assertEqual(plot_mock.call_args.kwargs["max_x_ticks"], 5)
 
 
 if __name__ == "__main__":
