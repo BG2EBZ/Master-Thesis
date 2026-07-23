@@ -97,7 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--n-eval-seeds",
         type=_positive_int,
         default=DEFAULT_N_EVAL_SEEDS,
-        help="Number of fixed evaluation seeds used to estimate each epoch point.",
+        help="Number of fresh learning-curve evaluation episodes generated per epoch.",
     )
     parser.add_argument(
         "--time-penalty-per-second",

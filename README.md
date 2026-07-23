@@ -137,10 +137,12 @@ For a learning-seed by epoch dataset, run the RWR trainer with multiple learning
 
 The multi-seed path writes:
 
-- `learning_curve_raw.csv`: long-form rows for RWR plus baseline
+- `learning_curve_raw.csv`: long-form rows for RWR plus baseline, evaluated on fresh per-epoch seeds
 - `learning_curve_matrix.csv`: RWR-only matrix with `learning_seed,epoch_0,epoch_1,...`
-- `learning_curve_summary.json`: aggregate returns plus per-learning-seed final policy params
+- `learning_curve_summary.json`: aggregate returns, per-learning-seed final policy params, and per-epoch eval seeds
 - `learning_curve_plot.png`
+
+For each learning seed and epoch, RWR and baseline are evaluated on the same fresh `--n-eval-seeds` episodes.
 
 To replot the saved learning curves without retraining:
 

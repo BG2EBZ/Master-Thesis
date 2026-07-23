@@ -16,6 +16,7 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
         sys.path.insert(0, str(path))
 
 from train.common.rollout import EpisodeResult
+from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from train.rwr.algorithm import ThetaEvaluation, update_distribution
 from train.rwr.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
@@ -143,6 +144,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
             final_mu=np.array([2.5, 3.5, 2.0, 0.7, 1.0], dtype=np.float64),
             final_std=np.array([0.1, 0.2, 0.3, 0.04, 0.05], dtype=np.float64),
             learning_curve_rows=[],
+            learning_curve_eval_seed_schedule=[],
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -171,7 +173,6 @@ class TrainRWREntrypointTests(unittest.TestCase):
         self.assertEqual(payload["final_policy_params"]["slow_down_distance_m"], 2.5)
 
     def test_single_learning_seed_records_epoch_zero_and_evaluates_current_mu(self):
-        evaluation_seeds = [101, 102]
         seen_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
         side_effect = iter(
             [
@@ -198,15 +199,31 @@ class TrainRWREntrypointTests(unittest.TestCase):
                     train_seeds_per_epoch=1,
                     n_humans=2,
                     reward_config=None,
-                    evaluation_seeds=evaluation_seeds,
+                    learning_curve_eval_seeds_per_epoch=2,
                 )
 
         self.assertEqual([row["epoch"] for row in result.learning_curve_rows], [0, 1])
         self.assertEqual([row["policy"] for row in result.learning_curve_rows], ["rwr", "rwr"])
-        eval_tasks = [task for task in seen_tasks if task[1] in evaluation_seeds]
-        train_tasks = [task for task in seen_tasks if task[1] not in evaluation_seeds]
+        eval_tasks = seen_tasks[:2] + seen_tasks[4:]
+        train_tasks = seen_tasks[2:4]
         self.assertEqual(len(eval_tasks), 4)
         self.assertEqual(len(train_tasks), 2)
+        self.assertEqual(len(result.learning_curve_eval_seed_schedule), 2)
+        self.assertEqual(len(result.learning_curve_eval_seed_schedule[0]), 2)
+        self.assertNotEqual(
+            result.learning_curve_eval_seed_schedule[0],
+            result.learning_curve_eval_seed_schedule[1],
+        )
+        self.assertTrue(
+            set(result.learning_curve_eval_seed_schedule[0]).isdisjoint(
+                FIXED_EVALUATION_SEEDS
+            )
+        )
+        self.assertTrue(
+            set(result.learning_curve_eval_seed_schedule[1]).isdisjoint(
+                FIXED_EVALUATION_SEEDS
+            )
+        )
 
         initial_theta = INITIAL_MU.copy()
         np.testing.assert_allclose(eval_tasks[0][0], initial_theta)
@@ -235,6 +252,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
                 self._learning_curve_row(11, 0, -100.0),
                 self._learning_curve_row(11, 1, -60.0),
             ],
+            learning_curve_eval_seed_schedule=[[1011, 1012], [1111, 1112]],
         )
         second_result = SingleSeedTrainingResult(
             metrics=[{"epoch": 1, "mean_return": -2.0}],
@@ -249,6 +267,7 @@ class TrainRWREntrypointTests(unittest.TestCase):
                 self._learning_curve_row(22, 0, -80.0),
                 self._learning_curve_row(22, 1, -40.0),
             ],
+            learning_curve_eval_seed_schedule=[[2021, 2022], [2121, 2122]],
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -258,10 +277,24 @@ class TrainRWREntrypointTests(unittest.TestCase):
                 side_effect=[first_result, second_result],
             ):
                 with patch(
-                    "train.rwr.training._evaluate_baseline_learning_curve",
+                    "train.rwr.training._evaluate_baseline_learning_curve_rows",
                     return_value=[
-                        self._episode_result(-70.0),
-                        self._episode_result(-50.0),
+                        {
+                            **self._learning_curve_row(11, 0, -70.0),
+                            "policy": "baseline",
+                        },
+                        {
+                            **self._learning_curve_row(11, 1, -65.0),
+                            "policy": "baseline",
+                        },
+                        {
+                            **self._learning_curve_row(22, 0, -50.0),
+                            "policy": "baseline",
+                        },
+                        {
+                            **self._learning_curve_row(22, 1, -55.0),
+                            "policy": "baseline",
+                        },
                     ],
                 ) as baseline_mock:
                     with patch("train.rwr.training.plot_learning_curve_metrics") as plot_mock:
@@ -302,9 +335,36 @@ class TrainRWREntrypointTests(unittest.TestCase):
             self.assertEqual(summary_payload["n_eval_seeds"], 2)
             self.assertEqual(summary_payload["mean_return"], [-90.0, -50.0])
             np.testing.assert_allclose(summary_payload["baseline_mean_return"], [-60.0, -60.0])
-            np.testing.assert_allclose(summary_payload["baseline_ci95_low_return"], [-79.6, -79.6])
-            np.testing.assert_allclose(summary_payload["baseline_ci95_high_return"], [-40.4, -40.4])
+            np.testing.assert_allclose(
+                summary_payload["baseline_ci95_low_return"],
+                [-79.6, -69.8],
+            )
+            np.testing.assert_allclose(
+                summary_payload["baseline_ci95_high_return"],
+                [-40.4, -50.2],
+            )
             self.assertIn("baseline_policy_params", summary_payload)
+            self.assertNotIn("evaluation_seeds", summary_payload)
+            self.assertNotIn("baseline_evaluation_seeds", summary_payload)
+            self.assertEqual(
+                summary_payload["learning_curve_eval_seeds_by_learning_seed"],
+                [
+                    {
+                        "learning_seed": 11,
+                        "epoch_eval_seeds": [
+                            {"epoch": 0, "seeds": [1011, 1012]},
+                            {"epoch": 1, "seeds": [1111, 1112]},
+                        ],
+                    },
+                    {
+                        "learning_seed": 22,
+                        "epoch_eval_seeds": [
+                            {"epoch": 0, "seeds": [2021, 2022]},
+                            {"epoch": 1, "seeds": [2121, 2122]},
+                        ],
+                    },
+                ],
+            )
             self.assertEqual(
                 summary_payload["final_policy_params_by_learning_seed"][0]["learning_seed"],
                 11,
@@ -329,6 +389,13 @@ class TrainRWREntrypointTests(unittest.TestCase):
             )
             self.assertEqual(summary_payload["learning_curve_matrix_csv"], str(matrix_csv))
             baseline_mock.assert_called_once()
+            self.assertEqual(
+                baseline_mock.call_args.kwargs["eval_seed_schedule_by_learning_seed"],
+                {
+                    11: [[1011, 1012], [1111, 1112]],
+                    22: [[2021, 2022], [2121, 2122]],
+                },
+            )
             plot_mock.assert_called_once()
             return_matrix = plot_mock.call_args.kwargs["return_matrix"]
             baseline_return_matrix = plot_mock.call_args.kwargs["baseline_return_matrix"]
@@ -423,6 +490,34 @@ class TrainRWREntrypointTests(unittest.TestCase):
         self.assertEqual(plot_mock.call_args.kwargs["epochs"], [0, 1])
         self.assertEqual(plot_mock.call_args.kwargs["output_path"], output_path)
         self.assertEqual(plot_mock.call_args.kwargs["max_x_ticks"], 5)
+
+    def test_replot_learning_curve_loads_learning_seed_aligned_baseline_rows(self):
+        rows = [
+            self._learning_curve_row(11, 0, -100.0),
+            self._learning_curve_row(11, 1, -60.0),
+            self._learning_curve_row(22, 0, -80.0),
+            self._learning_curve_row(22, 1, -40.0),
+            {**self._learning_curve_row(11, 0, -70.0), "policy": "baseline"},
+            {**self._learning_curve_row(11, 1, -65.0), "policy": "baseline"},
+            {**self._learning_curve_row(22, 0, -50.0), "policy": "baseline"},
+            {**self._learning_curve_row(22, 1, -55.0), "policy": "baseline"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_csv = Path(tmpdir) / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+            with input_csv.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=LEARNING_CURVE_RAW_FIELDNAMES)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            plot_data = load_learning_curve_plot_data(input_csv)
+
+        self.assertEqual(plot_data.learning_seeds, [11, 22])
+        self.assertEqual(plot_data.evaluation_seeds, [])
+        np.testing.assert_allclose(
+            plot_data.baseline_return_matrix,
+            np.array([[-70.0, -65.0], [-50.0, -55.0]], dtype=np.float64),
+        )
 
     def test_replot_learning_curve_main_defaults_to_both_plots(self):
         input_csv = Path("learning_curve_raw.csv")

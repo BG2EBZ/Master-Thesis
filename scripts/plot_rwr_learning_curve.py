@@ -145,13 +145,23 @@ def load_learning_curve_plot_data(
     baseline_metric_matrices: dict[str, np.ndarray] = {}
     evaluation_seeds: list[int] = []
     if baseline_rows:
-        baseline_metric_matrices, evaluation_seeds, baseline_epochs = _build_metric_matrix_bundle(
+        baseline_row_key = (
+            "evaluation_seed"
+            if all(int(row["learning_seed"]) == -1 for row in baseline_rows)
+            else "learning_seed"
+        )
+        baseline_metric_matrices, baseline_rows_order, baseline_epochs = _build_metric_matrix_bundle(
             baseline_rows,
-            row_key="evaluation_seed",
+            row_key=baseline_row_key,
             metric_names=resolved_metric_names,
         )
         if baseline_epochs != epochs:
             raise ValueError("Baseline epochs do not match RWR epochs.")
+        if baseline_row_key == "learning_seed":
+            if baseline_rows_order != learning_seeds:
+                raise ValueError("Baseline learning seeds do not match RWR learning seeds.")
+        else:
+            evaluation_seeds = baseline_rows_order
 
     return LearningCurvePlotData(
         epochs=epochs,
