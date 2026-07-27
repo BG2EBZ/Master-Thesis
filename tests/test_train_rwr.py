@@ -272,9 +272,26 @@ class TrainRWREntrypointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "curve"
+
+            train_results = iter([first_result, second_result])
+
+            def fake_train_single_learning_seed(**kwargs):
+                del kwargs
+                raw_csv = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+                if raw_csv.exists():
+                    with raw_csv.open(newline="", encoding="utf-8") as handle:
+                        raw_rows = list(csv.DictReader(handle))
+                    self.assertEqual(
+                        [int(row["learning_seed"]) for row in raw_rows],
+                        [11, 11],
+                    )
+                    self.assertEqual([int(row["epoch"]) for row in raw_rows], [0, 1])
+                    self.assertEqual({row["policy"] for row in raw_rows}, {"rwr"})
+                return next(train_results)
+
             with patch(
                 "train.rwr.training._train_single_learning_seed",
-                side_effect=[first_result, second_result],
+                side_effect=fake_train_single_learning_seed,
             ):
                 with patch(
                     "train.rwr.training._evaluate_baseline_learning_curve_rows",

@@ -560,6 +560,11 @@ def train_across_learning_seeds(
         for seed_sequence in learning_seed_sequences
     ]
 
+    raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
+    matrix_csv_path = output_dir / DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME
+    plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
+    summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
+
     learning_curve_rows: list[dict[str, float | int | str]] = []
     learning_seed_results: dict[int, SingleSeedTrainingResult] = {}
     eval_seed_schedule_by_learning_seed: dict[int, list[list[int]]] = {}
@@ -584,6 +589,11 @@ def train_across_learning_seeds(
             seed_result.learning_curve_eval_seed_schedule
         )
         learning_curve_rows.extend(seed_result.learning_curve_rows)
+        write_csv_rows(learning_curve_rows, LEARNING_CURVE_RAW_FIELDNAMES, raw_csv_path)
+        print(
+            "Checkpointed learning curve raw CSV "
+            f"after learning_seed={result_learning_seed} to {raw_csv_path}"
+        )
 
     return_matrix, ordered_learning_seeds, ordered_epochs = build_dense_metric_matrix(
         learning_curve_rows,
@@ -599,10 +609,6 @@ def train_across_learning_seeds(
     )
     all_learning_curve_rows = learning_curve_rows + baseline_learning_curve_rows
 
-    raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
-    matrix_csv_path = output_dir / DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME
-    plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
-    summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
     write_csv_rows(all_learning_curve_rows, LEARNING_CURVE_RAW_FIELDNAMES, raw_csv_path)
     matrix_rows, matrix_fieldnames = _build_learning_curve_matrix_rows(
         return_matrix=return_matrix,
