@@ -2,10 +2,10 @@
 Fast human-state fuzzy inference for following and listening contexts.
 
 Inputs:
-    following_time : float, [0, 60]   seconds in the active phase
+    following_time : float, [0, 120]  seconds in the active phase
     hhd            : float, [0, 4]    head-to-head distance (front)
-    hrd            : float, [0, 4]    head-to-rear distance (back)
-    density        : float, [0, 10]   crowd density
+    hrd            : float, [0, 5]    head-to-rear distance (back)
+    density        : float, [0, 12]   crowd density
     angle          : float, [-180, 180] robot-relative bearing in degrees
 
 Outputs:
@@ -43,10 +43,10 @@ _OUTPUT_DEFAULTS = {
 }
 _OUTPUT_UNIVERSE = np.linspace(0.0, 1.0, _RES, dtype=np.float64)
 _INPUT_UNIVERSES = {
-    "following_time": np.linspace(0.0, 60.0, _RES, dtype=np.float64),
+    "following_time": np.linspace(0.0, 120.0, _RES, dtype=np.float64),
     "hhd": np.linspace(0.0, 4.0, _RES, dtype=np.float64),
-    "hrd": np.linspace(0.0, 4.0, _RES, dtype=np.float64),
-    "density": np.linspace(0.0, 10.0, _RES, dtype=np.float64),
+    "hrd": np.linspace(0.0, 5.0, _RES, dtype=np.float64),
+    "density": np.linspace(0.0, 12.0, _RES, dtype=np.float64),
     "angle": np.linspace(-180.0, 180.0, _RES, dtype=np.float64),
 }
 
@@ -147,60 +147,7 @@ def _mf(values, spec: MFSpec) -> np.ndarray:
 
 
 def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec]]:
-    if profile == HumanProfile.NEURODIVERGENT:
-        if context == "following":
-            return {
-                "following_time": {
-                    "short": _trap(0, 0, 8, 15),
-                    "medium": _trap(8, 15, 30, 35),
-                    "long": _trap(30, 35, 60, 60),
-                },
-                "hhd": {
-                    "close": _trap(0, 0, 0.7, 1.0),
-                    "medium": _trap(0.7, 1.0, 1.3, 1.6),
-                    "far": _trap(1.3, 1.6, 4.0, 4.0),
-                },
-                "hrd": {
-                    "close": _trap(0, 0, 1.0, 1.3),
-                    "medium": _trap(1.0, 1.3, 2.3, 2.5),
-                    "far": _trap(2.3, 2.5, 5.0, 5.0),
-                },
-                "density": {
-                    "low": _trap(0, 0, 2, 2),
-                    "medium": _trap(3, 3, 6, 6),
-                    "crowded": _trap(7, 7, 10, 10),
-                },
-                "angle": {
-                    "ahead": _trap(-35, -15, 15, 35),
-                },
-            }
-        return {
-            "following_time": {
-                "short": _trap(0, 0, 4, 8),
-                "medium": _trap(8, 12, 18, 22),
-                "long": _trap(18, 22, 60, 60),
-            },
-            "hhd": {
-                "close": _trap(0, 0, 0.8, 1.0),
-                "medium": _trap(0.8, 1.0, 1.2, 1.4),
-                "far": _trap(1.2, 1.4, 4.0, 4.0),
-            },
-            "hrd": {
-                "close": _trap(0, 0, 0.9, 1.1),
-                "medium": _trap(0.9, 1.1, 2.2, 2.4),
-                "far": _trap(2.2, 2.4, 5.0, 5.0),
-            },
-            "density": {
-                "low": _trap(0, 0, 2, 2),
-                "medium": _trap(3, 3, 6, 6),
-                "crowded": _trap(7, 7, 10, 10),
-            },
-            "angle": {
-                "ahead": _trap(-45, -20, 20, 45),
-            },
-        }
-
-    if context == "following":
+    if profile == HumanProfile.NORMAL and context == "following":
         return {
             "following_time": {
                 "short": _trap(0, 0, 20, 30),
@@ -208,8 +155,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "long": _trap(40, 50, 120, 120),
             },
             "hhd": {
-                "close": _trap(0, 0, 0.5, 0.7),
-                "medium": _trap(0.5, 0.7, 1.3, 1.5),
+                "close": _trap(0, 0, 0.6, 0.8),
+                "medium": _trap(0.6, 0.8, 1.3, 1.5),
                 "far": _trap(1.3, 1.5, 4.0, 4.0),
             },
             "hrd": {
@@ -223,35 +170,92 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "crowded": _trap(9, 9, 12, 12),
             },
             "angle": {
+                "ahead": _trap(-35, -20, 20, 35),
+            },
+        }
+
+    if profile == HumanProfile.NORMAL and context == "listening":
+        return {
+            "following_time": {
+                "short": _trap(0, 0, 17, 20),
+                "medium": _trap(17, 20, 27, 30),
+                "long": _trap(27, 30, 120, 120),
+            },
+            "hhd": {
+                "close": _trap(0, 0, 0.5, 0.7),
+                "medium": _trap(0.5, 0.7, 1.0, 1.2),
+                "far": _trap(1.0, 1.2, 4.0, 4.0),
+            },
+            "hrd": {
+                "close": _trap(0, 0, 0.6, 0.8),
+                "medium": _trap(0.6, 0.8, 1.8, 2.0),
+                "far": _trap(1.8, 2.0, 5.0, 5.0),
+            },
+            "density": {
+                "low": _trap(0, 0, 3, 3),
+                "medium": _trap(4, 4, 8, 8),
+                "crowded": _trap(9, 9, 12, 12),
+            },
+            "angle": {
+                "ahead": _trap(-35, -20, 20, 35),
+            },
+        }
+
+    if profile == HumanProfile.NEURODIVERGENT and context == "following":
+        return {
+            "following_time": {
+                "short": _trap(0, 0, 20, 25),
+                "medium": _trap(20, 25, 35, 40),
+                "long": _trap(35, 40, 120, 120),
+            },
+            "hhd": {
+                "close": _trap(0, 0, 0.7, 0.9),
+                "medium": _trap(0.7, 0.9, 1.2, 1.4),
+                "far": _trap(1.2, 1.4, 4.0, 4.0),
+            },
+            "hrd": {
+                "close": _trap(0, 0, 1.0, 1.2),
+                "medium": _trap(1.0, 1.2, 1.6, 1.8),
+                "far": _trap(1.6, 1.8, 5.0, 5.0),
+            },
+            "density": {
+                "low": _trap(0, 0, 2, 2),
+                "medium": _trap(3, 3, 6, 6),
+                "crowded": _trap(7, 7, 12, 12),
+            },
+            "angle": {
                 "ahead": _trap(-45, -30, 30, 45),
             },
         }
 
-    return {
-        "following_time": {
-            "short": _trap(0, 0, 5, 10),
-            "medium": _trap(10, 15, 20, 25),
-            "long": _trap(20, 25, 60, 60),
-        },
-        "hhd": {
-            "close": _trap(0, 0, 0.5, 0.6),
-            "medium": _trap(0.5, 0.6, 0.9, 1.0),
-            "far": _trap(0.9, 1.0, 4.0, 4.0),
-        },
-        "hrd": {
-            "close": _trap(0, 0, 0.6, 0.8),
-            "medium": _trap(0.6, 0.8, 2.0, 2.2),
-            "far": _trap(2.0, 2.2, 5.0, 5.0),
-        },
-        "density": {
-            "low": _trap(0, 0, 3, 3),
-            "medium": _trap(4, 4, 8, 8),
-            "crowded": _trap(9, 9, 12, 12),
-        },
-        "angle": {
-            "ahead": _trap(-45, -30, 30, 45),
-        },
-    }
+    if profile == HumanProfile.NEURODIVERGENT and context == "listening":
+        return {
+            "following_time": {
+                "short": _trap(0, 0, 13, 16),
+                "medium": _trap(13, 16, 20, 23),
+                "long": _trap(20, 23, 120, 120),
+            },
+            "hhd": {
+                "close": _trap(0, 0, 0.6, 0.8),
+                "medium": _trap(0.6, 0.8, 0.9, 1.1),
+                "far": _trap(0.9, 1.1, 4.0, 4.0),
+            },
+            "hrd": {
+                "close": _trap(0, 0, 0.8, 1.0),
+                "medium": _trap(0.8, 1.0, 1.4, 1.6),
+                "far": _trap(1.4, 1.6, 5.0, 5.0),
+            },
+            "density": {
+                "low": _trap(0, 0, 2, 2),
+                "medium": _trap(3, 3, 6, 6),
+                "crowded": _trap(7, 7, 12, 12),
+            },
+            "angle": {
+                "ahead": _trap(-45, -30, 30, 45),
+            },
+        }
+
+    raise ValueError(f"Unsupported fuzzy input spec combination: {profile=}, {context=}.")
 
 
 def _build_output_curves() -> dict[str, np.ndarray]:
@@ -291,10 +295,11 @@ def _build_rules() -> tuple[RuleSpec, ...]:
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
 
+        # Time-enhanced impatience: long explanation/following increases impatience.
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "medium"),
 
         RuleSpec((("hrd", "close"), ("angle", "ahead")), "curiosity", "high"),
 
@@ -329,10 +334,13 @@ _SYSTEMS = {
 
 def in_ahead_region(angle_value: float, *, context: str, profile: str = HumanProfile.NORMAL) -> bool:
     """Return whether the angle falls inside the fuzzy `ahead` support."""
-    normalized_context = _normalize_context(context)
-    _normalize_profile(profile)
+    _normalize_context(context)
+    normalized_profile = _normalize_profile(profile)
 
-    lower_deg, upper_deg = (-35.0, 35.0) if normalized_context == "following" else (-45.0, 45.0)
+    if normalized_profile == HumanProfile.NEURODIVERGENT:
+        lower_deg, upper_deg = -45.0, 45.0
+    else:
+        lower_deg, upper_deg = -35.0, 35.0
     angle_deg = float(angle_value)
     return bool(lower_deg < angle_deg < upper_deg)
 
@@ -524,10 +532,10 @@ def _get_reference_system(context: str, profile: str):
     normalized_profile = _normalize_profile(profile)
     input_specs = _build_input_specs(normalized_context, normalized_profile)
 
-    ft = ctrl.Antecedent(np.linspace(0, 60, _RES), "following_time")
+    ft = ctrl.Antecedent(np.linspace(0, 120, _RES), "following_time")
     hhd = ctrl.Antecedent(np.linspace(0, 4, _RES), "hhd")
-    hrd = ctrl.Antecedent(np.linspace(0, 4, _RES), "hrd")
-    density = ctrl.Antecedent(np.linspace(0, 10, _RES), "density")
+    hrd = ctrl.Antecedent(np.linspace(0, 5, _RES), "hrd")
+    density = ctrl.Antecedent(np.linspace(0, 12, _RES), "density")
     angle = ctrl.Antecedent(np.linspace(-180, 180, _RES), "angle")
 
     for term_name, spec in input_specs["following_time"].items():
