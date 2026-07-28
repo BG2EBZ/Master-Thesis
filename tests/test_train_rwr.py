@@ -30,6 +30,7 @@ from train.rwr.defaults import (
 from train.rwr.plotting import _build_sparse_epoch_ticks
 from train.rwr.training import (
     SingleSeedTrainingResult,
+    _evaluate_baseline_learning_curve_rows,
     _train_single_learning_seed,
     train,
     train_across_learning_seeds,
@@ -237,6 +238,41 @@ class TrainRWREntrypointTests(unittest.TestCase):
         )
         np.testing.assert_allclose(eval_tasks[2][0], expected_mu)
         np.testing.assert_allclose(eval_tasks[3][0], expected_mu)
+
+    def test_baseline_learning_curve_prints_after_each_learning_seed(self):
+        seen_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
+
+        def fake_evaluate(task):
+            seen_tasks.append(task)
+            return self._episode_result(-10.0)
+
+        with patch("train.rwr.training.os.cpu_count", return_value=1):
+            with patch("train.rwr.training._evaluate_episode_task", side_effect=fake_evaluate):
+                with patch("builtins.print") as print_mock:
+                    rows = _evaluate_baseline_learning_curve_rows(
+                        eval_seed_schedule_by_learning_seed={
+                            11: [[1011, 1012], [1111, 1112]],
+                            22: [[2021, 2022], [2121, 2122]],
+                        },
+                        epochs=[0, 1],
+                        n_humans=2,
+                        reward_config=None,
+                    )
+
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(
+            [(int(row["learning_seed"]), int(row["epoch"])) for row in rows],
+            [(11, 0), (11, 1), (22, 0), (22, 1)],
+        )
+        self.assertEqual(len(seen_tasks), 8)
+        print_mock.assert_any_call(
+            "Baseline evaluation completed learning_seed=11 (1/2, epochs=2, episodes=4)",
+            flush=True,
+        )
+        print_mock.assert_any_call(
+            "Baseline evaluation completed learning_seed=22 (2/2, epochs=2, episodes=4)",
+            flush=True,
+        )
 
     def test_train_across_learning_seeds_writes_learning_curve_outputs(self):
         first_result = SingleSeedTrainingResult(

@@ -24,7 +24,7 @@ EXPLORATION_PARAMETER_LABELS = (
     "explanation_time_scale",
 )
 
-
+# Control x-axis tick density for learning curve plots.
 def _build_sparse_epoch_ticks(epochs: Sequence[int], max_x_ticks: int) -> list[int]:
     if int(max_x_ticks) <= 0:
         raise ValueError("max_x_ticks must be positive")
@@ -63,7 +63,7 @@ def _build_sparse_epoch_ticks(epochs: Sequence[int], max_x_ticks: int) -> list[i
         return [start, end]
     return ticks
 
-
+# Metrics for single training run
 def plot_training_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
@@ -113,7 +113,7 @@ def plot_training_metrics(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
-
+# Plot Std per Dimension and Distribution Entropy for single training run
 def plot_exploration_metrics(
     metrics: Sequence[dict[str, float | int]],
     output_path: Path,
@@ -153,7 +153,7 @@ def plot_exploration_metrics(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
-
+# Plot learning curve metrics for multiple training runs
 def plot_learning_curve_metrics(
     *,
     epochs: Sequence[int],
@@ -216,7 +216,7 @@ def plot_learning_curve_metrics(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
-
+# Plot learning curve metrics for multiple training runs, with multiple panels
 def plot_learning_curve_metric_panels(
     *,
     epochs: Sequence[int],

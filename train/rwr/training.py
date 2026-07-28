@@ -228,51 +228,79 @@ def _evaluate_baseline_learning_curve_rows(
     reward_config: EpisodeRewardWeights | None,
 ) -> list[dict[str, float | int | str]]:
     baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
-    curve_points: list[tuple[int, int, list[int]]] = []
-    eval_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
-
-    for learning_seed in sorted(eval_seed_schedule_by_learning_seed):
+    ordered_epochs = [int(epoch) for epoch in epochs]
+    ordered_learning_seeds = sorted(eval_seed_schedule_by_learning_seed)
+    for learning_seed in ordered_learning_seeds:
         seed_schedule = eval_seed_schedule_by_learning_seed[int(learning_seed)]
-        if len(seed_schedule) != len(epochs):
+        if len(seed_schedule) != len(ordered_epochs):
             raise ValueError("Baseline eval seed schedule does not match learning curve epochs.")
-        for epoch, eval_seeds in zip(epochs, seed_schedule):
-            resolved_eval_seeds = [int(seed) for seed in eval_seeds]
-            curve_points.append((int(learning_seed), int(epoch), resolved_eval_seeds))
-            eval_tasks.extend(
-                (
-                    np.asarray(baseline_theta, dtype=np.float64),
-                    int(eval_seed),
-                    int(n_humans),
-                    False,
-                    reward_config,
-                )
-                for eval_seed in resolved_eval_seeds
-            )
 
-    max_workers = min(len(eval_tasks), os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
+    total_episode_count = sum(
+        len(eval_seed_schedule_by_learning_seed[int(learning_seed)][epoch_idx])
+        for learning_seed in ordered_learning_seeds
+        for epoch_idx in range(len(ordered_epochs))
+    )
+    max_workers = min(total_episode_count, os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
+
+    def _evaluate_baseline_learning_seeds(
+        executor: ProcessPoolExecutor | None,
+    ) -> list[dict[str, float | int | str]]:
+        rows: list[dict[str, float | int | str]] = []
+        for learning_seed_idx, learning_seed in enumerate(ordered_learning_seeds):
+            seed_curve_points: list[tuple[int, list[int]]] = []
+            seed_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
+            for epoch_idx, epoch in enumerate(ordered_epochs):
+                eval_seeds = [
+                    int(seed)
+                    for seed in eval_seed_schedule_by_learning_seed[int(learning_seed)][
+                        epoch_idx
+                    ]
+                ]
+                seed_curve_points.append((int(epoch), eval_seeds))
+                seed_tasks.extend(
+                    (
+                        np.asarray(baseline_theta, dtype=np.float64),
+                        int(eval_seed),
+                        int(n_humans),
+                        False,
+                        reward_config,
+                    )
+                    for eval_seed in eval_seeds
+                )
+
+            episode_results = run_episode_batch(seed_tasks, executor, _evaluate_episode_task)
+            result_offset = 0
+            for curve_epoch, eval_seeds in seed_curve_points:
+                seed_count = len(eval_seeds)
+                rows.append(
+                    _build_baseline_learning_curve_row(
+                        learning_seed=int(learning_seed),
+                        epoch=int(curve_epoch),
+                        episode_results=episode_results[
+                            result_offset : result_offset + seed_count
+                        ],
+                    )
+                )
+                result_offset += seed_count
+            print(
+                "Baseline evaluation completed "
+                f"learning_seed={learning_seed} "
+                f"({learning_seed_idx + 1}/{len(ordered_learning_seeds)}, "
+                f"epochs={len(ordered_epochs)}, episodes={len(seed_tasks)})",
+                flush=True,
+            )
+        return rows
+
     if max_workers == 1:
         try:
-            episode_results = run_episode_batch(eval_tasks, None, _evaluate_episode_task)
+            rows = _evaluate_baseline_learning_seeds(executor=None)
         finally:
             from train.common.rollout import close_cached_env
 
             close_cached_env()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            episode_results = run_episode_batch(eval_tasks, executor, _evaluate_episode_task)
-
-    rows: list[dict[str, float | int | str]] = []
-    result_offset = 0
-    for learning_seed, epoch, eval_seeds in curve_points:
-        seed_count = len(eval_seeds)
-        rows.append(
-            _build_baseline_learning_curve_row(
-                learning_seed=int(learning_seed),
-                epoch=int(epoch),
-                episode_results=episode_results[result_offset : result_offset + seed_count],
-            )
-        )
-        result_offset += seed_count
+            rows = _evaluate_baseline_learning_seeds(executor=executor)
 
     return rows
 
