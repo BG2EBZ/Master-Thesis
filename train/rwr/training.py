@@ -320,6 +320,7 @@ def _train_single_learning_seed(
         DEFAULT_EPISODE_REWARD_WEIGHTS if reward_config is None else reward_config
     )
     master_seed = int(seed)
+    # Generate three independent SeedSequences for theta sampling, training, and learning curve evaluation
     theta_seed_sequence, train_seed_sequence, curve_seed_sequence = np.random.SeedSequence(
         master_seed
     ).spawn(3)
@@ -582,6 +583,7 @@ def train_across_learning_seeds(
     if resolved_n_eval_seeds <= 0:
         raise ValueError("n_eval_seeds must be positive")
 
+    # Generate a list of learning seeds from the provided seed using a SeedSequence.
     learning_seed_sequences = np.random.SeedSequence(int(seed)).spawn(resolved_n_learning_seeds)
     learning_seeds = [
         int(seed_sequence.generate_state(1, dtype=np.uint32)[0])

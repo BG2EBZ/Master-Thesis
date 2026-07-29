@@ -156,8 +156,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "hhd": {
                 "close": _trap(0, 0, 0.6, 0.8),
-                "medium": _trap(0.6, 0.8, 1.3, 1.5),
-                "far": _trap(1.3, 1.5, 4.0, 4.0),
+                "medium": _trap(0.6, 0.8, 1.2, 1.4),
+                "far": _trap(1.2, 1.4, 4.0, 4.0),
             },
             "hrd": {
                 "close": _trap(0, 0, 0.8, 1.0),
@@ -166,11 +166,11 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "density": {
                 "low": _trap(0, 0, 3, 3),
-                "medium": _trap(4, 4, 8, 8),
-                "crowded": _trap(9, 9, 12, 12),
+                "medium": _trap(4, 4, 6, 6),
+                "crowded": _trap(7, 7, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-35, -20, 20, 35),
+                "ahead": _trap(-35, -25, 25, 35),
             },
         }
 
@@ -193,24 +193,24 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "density": {
                 "low": _trap(0, 0, 3, 3),
-                "medium": _trap(4, 4, 8, 8),
-                "crowded": _trap(9, 9, 12, 12),
+                "medium": _trap(4, 4, 6, 6),
+                "crowded": _trap(7, 7, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-35, -20, 20, 35),
+                "ahead": _trap(-35, -25, 25, 35),
             },
         }
 
     if profile == HumanProfile.NEURODIVERGENT and context == "following":
         return {
             "following_time": {
-                "short": _trap(0, 0, 20, 25),
-                "medium": _trap(20, 25, 35, 40),
-                "long": _trap(35, 40, 120, 120),
+                "short": _trap(0, 0, 20, 24),
+                "medium": _trap(20, 24, 34, 38),
+                "long": _trap(34, 38, 120, 120),
             },
             "hhd": {
-                "close": _trap(0, 0, 0.7, 0.9),
-                "medium": _trap(0.7, 0.9, 1.2, 1.4),
+                "close": _trap(0, 0, 0.8, 1.0),
+                "medium": _trap(0.8, 1.0, 1.2, 1.4),
                 "far": _trap(1.2, 1.4, 4.0, 4.0),
             },
             "hrd": {
@@ -220,8 +220,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "density": {
                 "low": _trap(0, 0, 2, 2),
-                "medium": _trap(3, 3, 6, 6),
-                "crowded": _trap(7, 7, 12, 12),
+                "medium": _trap(3, 3, 4, 4),
+                "crowded": _trap(5, 5, 12, 12),
             },
             "angle": {
                 "ahead": _trap(-45, -30, 30, 45),
@@ -236,19 +236,19 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "long": _trap(20, 23, 120, 120),
             },
             "hhd": {
-                "close": _trap(0, 0, 0.6, 0.8),
-                "medium": _trap(0.6, 0.8, 0.9, 1.1),
-                "far": _trap(0.9, 1.1, 4.0, 4.0),
+                "close": _trap(0, 0, 0.7, 0.9),
+                "medium": _trap(0.7, 0.9, 1.0, 1.2),
+                "far": _trap(1.0, 1.2, 4.0, 4.0),
             },
             "hrd": {
-                "close": _trap(0, 0, 0.8, 1.0),
-                "medium": _trap(0.8, 1.0, 1.4, 1.6),
+                "close": _trap(0, 0, 0.9, 1.1),
+                "medium": _trap(0.9, 1.1, 1.4, 1.6),
                 "far": _trap(1.4, 1.6, 5.0, 5.0),
             },
             "density": {
                 "low": _trap(0, 0, 2, 2),
-                "medium": _trap(3, 3, 6, 6),
-                "crowded": _trap(7, 7, 12, 12),
+                "medium": _trap(3, 3, 4, 4),
+                "crowded": _trap(5, 5, 12, 12),
             },
             "angle": {
                 "ahead": _trap(-45, -30, 30, 45),
@@ -284,16 +284,22 @@ def _build_rules() -> tuple[RuleSpec, ...]:
     return (
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
         RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "high"),
 
         # Spatial disengagement: visitor is physically/socially detached.
         RuleSpec((("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
-        RuleSpec((("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
+        RuleSpec((("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
 
         # Time-enhanced distraction: long explanation/following increases attention decay.
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+
+        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        # RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
 
         # Time-enhanced impatience: long explanation/following increases impatience.
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
