@@ -41,7 +41,7 @@ def reset_following_wait_episode(env) -> None:
 
 
 def update_human_listening_session_progress(env) -> None:
-    """Advance listening-session timers only while the listening controller is active."""
+    """Advance listening-session timers only while the robot explanation is active."""
     if not env.listening_state.fuzzy_active:
         return
     for human in env.humans:

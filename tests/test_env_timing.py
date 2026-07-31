@@ -12,9 +12,10 @@ for path in (PACKAGE_ROOT, REPO_ROOT):
         sys.path.insert(0, str(path))
 
 from museum_env import MuseumEnv
-from museum_env import env_flow
+from museum_env import env_control, env_flow
 from museum_env.guide_config import GuideBehaviorConfig
 from museum_env.env_state import StepEvents
+from museum_env.human import HumanMode
 
 
 class MuseumEnvTimingTests(unittest.TestCase):
@@ -92,6 +93,39 @@ class MuseumEnvTimingTests(unittest.TestCase):
             int(self.env.listening_state.question_trigger_step),
             int(self.env.listen_wait_steps) - 1,
         )
+
+    def test_listening_fuzzy_gate_starts_with_explanation_wait(self):
+        self.env.listening_state.enter_intro(is_final=False)
+
+        self.assertTrue(self.env.listening_state.controller_active)
+        self.assertFalse(self.env.listening_state.fuzzy_active)
+
+        self.env.listening_state.enter_wait(is_final=False)
+
+        self.assertTrue(self.env.listening_state.controller_active)
+        self.assertTrue(self.env.listening_state.fuzzy_active)
+
+    def test_human_listening_steps_start_with_explanation_wait(self):
+        self.env.reset(seed=123)
+        human = self.env.humans[0]
+        human.set_mode(HumanMode.LISTENING)
+        human.listening_steps = 0
+
+        self.env.listening_state.enter_intro(is_final=False)
+        env_control.update_human_listening_session_progress(self.env)
+
+        self.assertEqual(human.listening_steps, 0)
+
+        self.env.listening_state.enter_wait(is_final=False)
+        env_control.update_human_listening_session_progress(self.env)
+        env_control.update_human_listening_session_progress(self.env)
+
+        self.assertEqual(human.listening_steps, 2)
+
+        self.env.listening_state.pause()
+        env_control.update_human_listening_session_progress(self.env)
+
+        self.assertEqual(human.listening_steps, 2)
 
     def test_progress_listening_phase_does_not_shorten_wait_for_far_human(self):
         self.env.reset(seed=123)

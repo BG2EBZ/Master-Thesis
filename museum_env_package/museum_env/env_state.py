@@ -160,7 +160,7 @@ class ListeningState:
 
     @property
     def fuzzy_active(self) -> bool:
-        return self.phase in (LISTEN_PHASE_INTRO, LISTEN_PHASE_WAIT)
+        return self.phase == LISTEN_PHASE_WAIT
 
     @property
     def question_active(self) -> bool:

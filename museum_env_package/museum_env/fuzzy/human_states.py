@@ -170,7 +170,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "crowded": _trap(7, 7, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-35, -25, 25, 35),
+                "ahead": _trap(-35, -30, 30, 35),
             },
         }
 
@@ -178,7 +178,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
         return {
             "following_time": {
                 "short": _trap(0, 0, 17, 20),
-                "medium": _trap(17, 20, 27, 30),
+                "medium": _trap(17, 20, 32, 30),
                 "long": _trap(27, 30, 120, 120),
             },
             "hhd": {
@@ -197,7 +197,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "crowded": _trap(7, 7, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-35, -25, 25, 35),
+                "ahead": _trap(-35, -30, 30, 35),
             },
         }
 
@@ -224,7 +224,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "crowded": _trap(5, 5, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-45, -30, 30, 45),
+                "ahead": _trap(-45, -35, 35, 45),
             },
         }
 
@@ -251,7 +251,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "crowded": _trap(5, 5, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-45, -30, 30, 45),
+                "ahead": _trap(-45, -35, 35, 45),
             },
         }
 
@@ -282,45 +282,49 @@ def _build_input_curves(input_specs: dict[str, dict[str, MFSpec]]) -> dict[str, 
 
 def _build_rules() -> tuple[RuleSpec, ...]:
     return (
+        # Time-enhanced overwhelm: long explanation/following increases overwhelm.
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
 
-        # Spatial disengagement: visitor is physically/socially detached.
-        RuleSpec((("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "medium"),
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "medium"),
 
         # Time-enhanced distraction: long explanation/following increases attention decay.
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
-        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        # RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
-        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),        
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),   
 
         # Time-enhanced impatience: long explanation/following increases impatience.
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "medium"),
 
+        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "medium"),
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
+        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
+
+        # Curiosity: high
         RuleSpec((("hrd", "close"), ("angle", "ahead")), "curiosity", "high"),
 
-        RuleSpec((("density", "low"),), "engaged", "high"),
-        RuleSpec((("density", "medium"),), "engaged", "high"),
-        RuleSpec((("hhd", "medium"), ("density", "crowded")), "engaged", "medium"),
-        RuleSpec((("hhd", "far"), ("density", "crowded")), "engaged", "medium"),
-        RuleSpec((("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "engaged", "medium"),
-        RuleSpec((("hhd", "close"), ("hrd", "far"), ("density", "crowded")), "engaged", "medium"),
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close")), "engaged", "low"),
-        RuleSpec((("following_time", "short"),), "engaged", "high"),
-        RuleSpec((("following_time", "long"), ("hrd", "far"), ("density", "low")), "engaged", "low"),
-        RuleSpec((("hhd", "medium"),), "engaged", "high"),
-        RuleSpec((("hrd", "medium"),), "engaged", "high"),
-        RuleSpec((("hrd", "close"), ("angle", "ahead")), "engaged", "medium"),
+        # Engaged: high
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "high"),
+
+        # Engaged: medium
+        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
+        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "engaged", "medium"),
+
+        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+
+        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "crowded")), "engaged", "medium"),
+
     )
 
 
