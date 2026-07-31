@@ -32,6 +32,9 @@ from .env_constants import (
     HUMAN_WALL_FOOTPRINT_RADIUS,
     HUMAN_FOLLOW_DISTANCE_DEFAULT,
     HUMAN_GOAL_THRESHOLD,
+    HUMAN_HUMAN_REFERENCE_DISTANCE_DEFAULT,
+    HUMAN_HUMAN_REPULSION_CUTOFF_DEFAULT,
+    HUMAN_HUMAN_REPULSION_DECAY_DEFAULT,
     HUMAN_HUMAN_DISTANCE_WINDOW_SECONDS,
     HUMAN_MAX_SPEED_DEFAULT,
     HUMAN_SPAWN_MAX_ATTEMPTS_PER_HUMAN,
@@ -186,6 +189,9 @@ class MuseumEnv(gym.Env):
         self.human_follow_distance = HUMAN_FOLLOW_DISTANCE_DEFAULT
 
         self.social_distance = SOCIAL_DISTANCE_DEFAULT
+        self.human_human_reference_distance = HUMAN_HUMAN_REFERENCE_DISTANCE_DEFAULT
+        self.repulsion_decay = HUMAN_HUMAN_REPULSION_DECAY_DEFAULT
+        self.repulsion_cutoff_distance = HUMAN_HUMAN_REPULSION_CUTOFF_DEFAULT
         self.repulsion_gain = REPULSION_GAIN_DEFAULT
         self.follow_fan_half_angle = np.deg2rad(FOLLOW_FAN_HALF_ANGLE_DEG)
         self.impatient_fan_half_angle = np.deg2rad(IMPATIENT_FAN_HALF_ANGLE_DEG)
@@ -371,7 +377,9 @@ class MuseumEnv(gym.Env):
             hh_distance_metric=self.hh_distance_metric,
             hr_distance_metric=self.hr_distance_metric,
             observation_update_period_steps=self.observation_update_period_steps,
-            social_distance=self.social_distance,
+            reference_distance=self.human_human_reference_distance,
+            repulsion_decay=self.repulsion_decay,
+            repulsion_cutoff_distance=self.repulsion_cutoff_distance,
             repulsion_gain=self.repulsion_gain,
             force_observations=force,
             tick_age_before_refresh=tick,

@@ -297,8 +297,8 @@ def _build_rules() -> tuple[RuleSpec, ...]:
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
-        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),        
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),   
+        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),        
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),   
 
         # Time-enhanced impatience: long explanation/following increases impatience.
         RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),

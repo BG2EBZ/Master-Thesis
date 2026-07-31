@@ -58,16 +58,26 @@ def compute_human_pairwise_geometry(human_xy) -> tuple[np.ndarray, np.ndarray]:
 def _compute_social_repulsion_from_pairwise(
     pairwise_diff,
     pairwise_dist,
-    social_distance: float,
+    reference_distance: float,
+    repulsion_decay: float,
+    repulsion_cutoff_distance: float,
     repulsion_gain: float,
 ) -> np.ndarray:
     pairwise_diff = np.asarray(pairwise_diff, dtype=np.float32)
     pairwise_dist = np.asarray(pairwise_dist, dtype=np.float32)
     n_humans = int(pairwise_dist.shape[0])
-    if n_humans == 0 or social_distance <= 1e-6:
+    if (
+        n_humans == 0
+        or repulsion_decay <= 1e-6
+        or repulsion_cutoff_distance <= 1e-6
+        or not np.isfinite(repulsion_decay)
+        or not np.isfinite(repulsion_cutoff_distance)
+        or not np.isfinite(reference_distance)
+        or not np.isfinite(repulsion_gain)
+    ):
         return np.zeros((n_humans, 2), dtype=np.float32)
 
-    mask = (pairwise_dist > 1e-6) & (pairwise_dist < social_distance)
+    mask = (pairwise_dist > 1e-6) & (pairwise_dist < repulsion_cutoff_distance)
     repulsion_vectors = np.zeros((n_humans, 2), dtype=np.float32)
     for idx in range(n_humans):
         neighbors = mask[idx]
@@ -77,8 +87,7 @@ def _compute_social_repulsion_from_pairwise(
         diff = pairwise_diff[idx, neighbors]
         dist = pairwise_dist[idx, neighbors]
         directions = diff / dist[:, None]
-        # Distance-based repulsion strength
-        strengths = (social_distance - dist) / social_distance
+        strengths = np.exp((reference_distance - dist) / repulsion_decay)
         repulsion_vectors[idx] = repulsion_gain * np.sum(
             directions * strengths[:, None],
             axis=0,
@@ -87,12 +96,20 @@ def _compute_social_repulsion_from_pairwise(
     return repulsion_vectors
 
 
-def compute_social_repulsion(human_xy, social_distance: float, repulsion_gain: float) -> np.ndarray:
+def compute_social_repulsion(
+    human_xy,
+    reference_distance: float,
+    repulsion_decay: float,
+    repulsion_cutoff_distance: float,
+    repulsion_gain: float,
+) -> np.ndarray:
     pairwise_diff, pairwise_dist = compute_human_pairwise_geometry(human_xy)
     return _compute_social_repulsion_from_pairwise(
         pairwise_diff=pairwise_diff,
         pairwise_dist=pairwise_dist,
-        social_distance=social_distance,
+        reference_distance=reference_distance,
+        repulsion_decay=repulsion_decay,
+        repulsion_cutoff_distance=repulsion_cutoff_distance,
         repulsion_gain=repulsion_gain,
     )
 
@@ -196,7 +213,9 @@ def build_world_frame(
     hh_distance_metric,
     hr_distance_metric,
     observation_update_period_steps: int,
-    social_distance: float,
+    reference_distance: float,
+    repulsion_decay: float,
+    repulsion_cutoff_distance: float,
     repulsion_gain: float,
     force_observations: bool = False,
     tick_age_before_refresh: bool = False,
@@ -240,7 +259,9 @@ def build_world_frame(
         repulsion_vectors = _compute_social_repulsion_from_pairwise(
             pairwise_diff=pairwise_diff,
             pairwise_dist=pairwise_distances,
-            social_distance=social_distance,
+            reference_distance=reference_distance,
+            repulsion_decay=repulsion_decay,
+            repulsion_cutoff_distance=repulsion_cutoff_distance,
             repulsion_gain=repulsion_gain,
         )
     else:
