@@ -23,14 +23,14 @@ class PolicyCodecTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(params.explanation_time_scale, 0.7, places=7)
-        self.assertAlmostEqual(params.explanation_wait_seconds, 21.0, places=7)
+        self.assertAlmostEqual(params.explanation_wait_seconds, 42.0, places=7)
         self.assertAlmostEqual(params.callback_same_person_cooldown_seconds, 30.0, places=7)
 
     def test_from_theta_accepts_legacy_four_dimension_theta(self):
         params = theta_to_guide_config(np.array([2.5, 3.5, 2.0, 0.7], dtype=np.float64))
 
         self.assertAlmostEqual(params.explanation_time_scale, 1.0, places=7)
-        self.assertAlmostEqual(params.explanation_wait_seconds, 30.0, places=7)
+        self.assertAlmostEqual(params.explanation_wait_seconds, 60.0, places=7)
         self.assertAlmostEqual(params.callback_same_person_cooldown_seconds, 20.0, places=7)
 
     def test_from_theta_accepts_legacy_five_dimension_theta_with_default_cooldown(self):
@@ -58,10 +58,10 @@ class PolicyCodecTests(unittest.TestCase):
         eval_summary = eval_policy_params_dict(learned_theta)
 
         self.assertEqual(train_summary["explanation_time_scale"], 1.0)
-        self.assertEqual(train_summary["explanation_wait_seconds"], 30.0)
+        self.assertEqual(train_summary["explanation_wait_seconds"], 60.0)
         self.assertEqual(train_summary["callback_same_person_cooldown_seconds"], 20.0)
         self.assertEqual(eval_summary["explanation_time_scale"], 0.8)
-        self.assertEqual(eval_summary["explanation_wait_seconds"], 24.0)
+        self.assertEqual(eval_summary["explanation_wait_seconds"], 48.0)
         self.assertEqual(eval_summary["callback_same_person_cooldown_seconds"], 12.0)
 
 

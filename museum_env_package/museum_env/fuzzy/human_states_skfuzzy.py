@@ -2,11 +2,14 @@
 Scikit-fuzzy human-state inference for following and listening contexts.
 
 Inputs:
-    following_time : float, [0, 120]  seconds in the active phase
-    hhd            : float, [0, 4]    head-to-head distance (front)
-    hrd            : float, [0, 5]    head-to-rear distance (back)
-    density        : float, [0, 12]   crowd density
-    angle          : float, [-180, 180] robot-relative bearing in degrees
+    following_time      : float, [0, 120]  seconds in the current following streak
+    listening_time      : float, [0, 120]  seconds in the active listening session
+    total_duration_time : float, [0, 120]  cumulative following + listening time
+    pre_duration_time   : float, [0, 120]  first listening + current following streak
+    hhd                 : float, [0, 4]    head-to-head distance (front)
+    hrd                 : float, [0, 5]    head-to-rear distance (back)
+    density             : float, [0, 12]   crowd density
+    angle               : float, [-180, 180] robot-relative bearing in degrees
 
 Outputs:
     overwhelmed : float, [0, 1]
@@ -18,6 +21,9 @@ Outputs:
 Usage:
     result = compute(
         following_time=30,
+        listening_time=0,
+        total_duration_time=30,
+        pre_duration_time=30,
         hhd=0.25,
         hrd=0.5,
         density=7,
@@ -218,7 +224,8 @@ def _build_system(context: str, profile: str) -> ctrl.ControlSystem:
     normalized_context = _normalize_context(context)
     normalized_profile = str(profile).strip().lower()
 
-    ft = ctrl.Antecedent(np.linspace(0, 120, _RES), "following_time")
+    time_name = "listening_time" if normalized_context == "listening" else "following_time"
+    ft = ctrl.Antecedent(np.linspace(0, 120, _RES), time_name)
     hhd = ctrl.Antecedent(np.linspace(0, 4, _RES), "hhd")
     hrd = ctrl.Antecedent(np.linspace(0, 5, _RES), "hrd")
     density = ctrl.Antecedent(np.linspace(0, 12, _RES), "density")
@@ -271,6 +278,9 @@ def _select_dominant_state(results: dict[str, float], tie_tolerance: float = _TI
 
 def compute(
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -291,7 +301,10 @@ def compute(
         valid = ", ".join(_PROFILES)
         raise ValueError(f"Unknown fuzzy profile: {profile!r}. Expected one of: {valid}.")
     simulation = ctrl.ControlSystemSimulation(_SYSTEMS[(normalized_context, normalized_profile)])
-    simulation.input["following_time"] = float(following_time)
+    if normalized_context == "following":
+        simulation.input["following_time"] = float(following_time)
+    else:
+        simulation.input["listening_time"] = float(listening_time)
     simulation.input["hhd"] = float(hhd)
     simulation.input["hrd"] = float(hrd)
     simulation.input["density"] = float(density)
@@ -324,7 +337,7 @@ def compute_batch(
 
 
 if __name__ == "__main__":
-    sample_input = (3.1, 0.56, 1.05, 5.0, 0.0)
+    sample_input = (3.1, 0.0, 3.1, 3.1, 0.56, 1.05, 5.0, 0.0)
 
     for sample_context in _CONTEXTS:
         result = compute(*sample_input, context=sample_context)

@@ -2,11 +2,14 @@
 Fast human-state fuzzy inference for following and listening contexts.
 
 Inputs:
-    following_time : float, [0, 120]  seconds in the active phase
-    hhd            : float, [0, 4]    head-to-head distance (front)
-    hrd            : float, [0, 5]    head-to-rear distance (back)
-    density        : float, [0, 12]   crowd density
-    angle          : float, [-180, 180] robot-relative bearing in degrees
+    following_time      : float, [0, 120]  seconds in the current following streak
+    listening_time      : float, [0, 120]  seconds in the active listening session
+    total_duration_time : float, [0, 120]  cumulative following + listening time
+    pre_duration_time   : float, [0, 120]  first listening + current following streak
+    hhd                 : float, [0, 4]    head-to-head distance (front)
+    hrd                 : float, [0, 5]    head-to-rear distance (back)
+    density             : float, [0, 12]   crowd density
+    angle               : float, [-180, 180] robot-relative bearing in degrees
 
 Outputs:
     overwhelmed : float, [0, 1]
@@ -32,6 +35,12 @@ _CURIOSITY_DEFAULT = 0.0
 _TIE_TOLERANCE = 0.01
 _CONTEXTS = ("following", "listening")
 _PROFILES = (HumanProfile.NORMAL, HumanProfile.NEURODIVERGENT)
+_TIME_INPUT_NAMES = (
+    "following_time",
+    "listening_time",
+    "total_duration_time",
+    "pre_duration_time",
+)
 _OUTPUT_NAMES = ("overwhelmed", "distracted", "impatient", "engaged", "curiosity")
 _OUTPUT_TERMS = ("low", "medium", "high")
 _OUTPUT_DEFAULTS = {
@@ -44,6 +53,9 @@ _OUTPUT_DEFAULTS = {
 _OUTPUT_UNIVERSE = np.linspace(0.0, 1.0, _RES, dtype=np.float64)
 _INPUT_UNIVERSES = {
     "following_time": np.linspace(0.0, 120.0, _RES, dtype=np.float64),
+    "listening_time": np.linspace(0.0, 120.0, _RES, dtype=np.float64),
+    "total_duration_time": np.linspace(0.0, 120.0, _RES, dtype=np.float64),
+    "pre_duration_time": np.linspace(0.0, 120.0, _RES, dtype=np.float64),
     "hhd": np.linspace(0.0, 4.0, _RES, dtype=np.float64),
     "hrd": np.linspace(0.0, 5.0, _RES, dtype=np.float64),
     "density": np.linspace(0.0, 12.0, _RES, dtype=np.float64),
@@ -147,9 +159,27 @@ def _mf(values, spec: MFSpec) -> np.ndarray:
 
 
 def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec]]:
-    if profile == HumanProfile.NORMAL and context == "following":
+    _normalize_context(context)
+    normalized_profile = _normalize_profile(profile)
+
+    if normalized_profile == HumanProfile.NORMAL:
         return {
             "following_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
+            },
+            "listening_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
+            },
+            "total_duration_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
+            },
+            "pre_duration_time": {
                 "short": _trap(0, 0, 20, 30),
                 "medium": _trap(20, 30, 40, 50),
                 "long": _trap(40, 50, 120, 120),
@@ -174,39 +204,27 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
         }
 
-    if profile == HumanProfile.NORMAL and context == "listening":
+    if normalized_profile == HumanProfile.NEURODIVERGENT:
         return {
             "following_time": {
-                "short": _trap(0, 0, 17, 20),
-                "medium": _trap(17, 20, 32, 30),
-                "long": _trap(27, 30, 120, 120),
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
             },
-            "hhd": {
-                "close": _trap(0, 0, 0.5, 0.7),
-                "medium": _trap(0.5, 0.7, 1.0, 1.2),
-                "far": _trap(1.0, 1.2, 4.0, 4.0),
+            "listening_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
             },
-            "hrd": {
-                "close": _trap(0, 0, 0.6, 0.8),
-                "medium": _trap(0.6, 0.8, 1.8, 2.0),
-                "far": _trap(1.8, 2.0, 5.0, 5.0),
+            "total_duration_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
             },
-            "density": {
-                "low": _trap(0, 0, 3, 3),
-                "medium": _trap(4, 4, 6, 6),
-                "crowded": _trap(7, 7, 12, 12),
-            },
-            "angle": {
-                "ahead": _trap(-35, -30, 30, 35),
-            },
-        }
-
-    if profile == HumanProfile.NEURODIVERGENT and context == "following":
-        return {
-            "following_time": {
-                "short": _trap(0, 0, 20, 24),
-                "medium": _trap(20, 24, 34, 38),
-                "long": _trap(34, 38, 120, 120),
+            "pre_duration_time": {
+                "short": _trap(0, 0, 20, 30),
+                "medium": _trap(20, 30, 40, 50),
+                "long": _trap(40, 50, 120, 120),
             },
             "hhd": {
                 "close": _trap(0, 0, 0.8, 1.0),
@@ -228,34 +246,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
         }
 
-    if profile == HumanProfile.NEURODIVERGENT and context == "listening":
-        return {
-            "following_time": {
-                "short": _trap(0, 0, 13, 16),
-                "medium": _trap(13, 16, 20, 23),
-                "long": _trap(20, 23, 120, 120),
-            },
-            "hhd": {
-                "close": _trap(0, 0, 0.7, 0.9),
-                "medium": _trap(0.7, 0.9, 1.0, 1.2),
-                "far": _trap(1.0, 1.2, 4.0, 4.0),
-            },
-            "hrd": {
-                "close": _trap(0, 0, 0.9, 1.1),
-                "medium": _trap(0.9, 1.1, 1.4, 1.6),
-                "far": _trap(1.4, 1.6, 5.0, 5.0),
-            },
-            "density": {
-                "low": _trap(0, 0, 2, 2),
-                "medium": _trap(3, 3, 4, 4),
-                "crowded": _trap(5, 5, 12, 12),
-            },
-            "angle": {
-                "ahead": _trap(-45, -35, 35, 45),
-            },
-        }
-
-    raise ValueError(f"Unsupported fuzzy input spec combination: {profile=}, {context=}.")
+    raise ValueError(f"Unsupported fuzzy profile: {profile!r}.")
 
 
 def _build_output_curves() -> dict[str, np.ndarray]:
@@ -280,61 +271,74 @@ def _build_input_curves(input_specs: dict[str, dict[str, MFSpec]]) -> dict[str, 
     }
 
 
-def _build_rules() -> tuple[RuleSpec, ...]:
+def _build_rules(context: str) -> tuple[RuleSpec, ...]:
+    time_name = "listening_time" if context == "listening" else "following_time"
     return (
-        # Time-enhanced overwhelm: long explanation/following increases overwhelm.
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
-        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        # Time-enhanced overwhelm: long explanation increases overwhelm.
+        RuleSpec((("listening_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("listening_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("listening_time", "long"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "high"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "high"),
 
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "medium"),
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "medium"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "crowded")), "overwhelmed", "medium"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "crowded")), "overwhelmed", "medium"),
 
-        # Time-enhanced distraction: long explanation/following increases attention decay.
+
+        # Time-enhanced distraction: long explanation increases attention decay.
+        RuleSpec((("listening_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("listening_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("listening_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        # RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+
+        # RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
+        # RuleSpec((("listening_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
+
+        # Time-enhanced distraction: long following increases attention decay.
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
-        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),        
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),   
+        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
+        # RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
 
-        # Time-enhanced impatience: long explanation/following increases impatience.
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "high"),
 
-        RuleSpec((("following_time", "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "medium"),
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
-        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
+        # Time-enhanced impatience: first listening + current following increases impatience.
+        RuleSpec((("pre_duration_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "impatient", "high"),
+        RuleSpec((("pre_duration_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "impatient", "high"),
+
+
+
+
+        # RuleSpec(((time_name, "long"), ("hhd", "close"), ("hrd", "close"), ("density", "medium")), "impatient", "medium"),
+        # RuleSpec(((time_name, "medium"), ("hhd", "close"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
+        # RuleSpec(((time_name, "long"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "impatient", "medium"),
 
         # Curiosity: high
         RuleSpec((("hrd", "close"), ("angle", "ahead")), "curiosity", "high"),
 
-        # Engaged: high
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "high"),
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "high"),
+        # # Engaged: high
+        # RuleSpec(((time_name, "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "high"),
+        # RuleSpec(((time_name, "medium"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "high"),
 
-        # Engaged: medium
-        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
-        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
-        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
-        RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
-        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "engaged", "medium"),
-
-        RuleSpec((("following_time", "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
-
-        RuleSpec((("following_time", "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "crowded")), "engaged", "medium"),
+        # # Engaged: medium
+        # RuleSpec(((time_name, "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+        # RuleSpec(((time_name, "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
+        # RuleSpec(((time_name, "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+        # RuleSpec(((time_name, "long"), ("hhd", "medium"), ("hrd", "medium"), ("density", "medium")), "engaged", "medium"),
+        # RuleSpec(((time_name, "medium"), ("hhd", "medium"), ("hrd", "close"), ("density", "low")), "engaged", "medium"),
+        # RuleSpec(((time_name, "medium"), ("hhd", "close"), ("hrd", "medium"), ("density", "low")), "engaged", "medium"),
+        # RuleSpec(((time_name, "short"), ("hhd", "medium"), ("hrd", "medium"), ("density", "crowded")), "engaged", "medium"),
 
     )
 
 
 _SHARED_OUTPUT_CURVES = _build_output_curves()
-_SHARED_RULES = _build_rules()
 _SYSTEMS = {
     (context, profile): FuzzySystemDefinition(
         input_specs=_build_input_specs(context, profile),
         input_curves=_build_input_curves(_build_input_specs(context, profile)),
-        rules=_SHARED_RULES,
+        rules=_build_rules(context),
         output_curves=_SHARED_OUTPUT_CURVES,
     )
     for context in _CONTEXTS
@@ -373,6 +377,9 @@ def _fuzzify_inputs(
     system: FuzzySystemDefinition,
     *,
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -380,6 +387,9 @@ def _fuzzify_inputs(
 ) -> dict[str, dict[str, float]]:
     crisp_inputs = {
         "following_time": float(following_time),
+        "listening_time": float(listening_time),
+        "total_duration_time": float(total_duration_time),
+        "pre_duration_time": float(pre_duration_time),
         "hhd": float(hhd),
         "hrd": float(hrd),
         "density": float(density),
@@ -440,6 +450,9 @@ def _evaluate_system(
     system: FuzzySystemDefinition,
     *,
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -448,6 +461,9 @@ def _evaluate_system(
     input_memberships = _fuzzify_inputs(
         system,
         following_time=following_time,
+        listening_time=listening_time,
+        total_duration_time=total_duration_time,
+        pre_duration_time=pre_duration_time,
         hhd=hhd,
         hrd=hrd,
         density=density,
@@ -482,6 +498,9 @@ def _evaluate_system(
 
 def compute(
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -502,6 +521,9 @@ def compute(
     return _evaluate_system(
         system,
         following_time=following_time,
+        listening_time=listening_time,
+        total_duration_time=total_duration_time,
+        pre_duration_time=pre_duration_time,
         hhd=hhd,
         hrd=hrd,
         density=density,
@@ -524,10 +546,13 @@ def compute_batch(
         _evaluate_system(
             system,
             following_time=float(row[0]),
-            hhd=float(row[1]),
-            hrd=float(row[2]),
-            density=float(row[3]),
-            angle=float(row[4]),
+            listening_time=float(row[1]),
+            total_duration_time=float(row[2]),
+            pre_duration_time=float(row[3]),
+            hhd=float(row[4]),
+            hrd=float(row[5]),
+            density=float(row[6]),
+            angle=float(row[7]),
         )
         for row in rows
     ]
@@ -542,14 +567,20 @@ def _get_reference_system(context: str, profile: str):
     normalized_profile = _normalize_profile(profile)
     input_specs = _build_input_specs(normalized_context, normalized_profile)
 
-    ft = ctrl.Antecedent(np.linspace(0, 120, _RES), "following_time")
+    input_vars = {
+        "following_time": ctrl.Antecedent(np.linspace(0, 120, _RES), "following_time"),
+        "listening_time": ctrl.Antecedent(np.linspace(0, 120, _RES), "listening_time"),
+        "total_duration_time": ctrl.Antecedent(np.linspace(0, 120, _RES), "total_duration_time"),
+        "pre_duration_time": ctrl.Antecedent(np.linspace(0, 120, _RES), "pre_duration_time"),
+    }
     hhd = ctrl.Antecedent(np.linspace(0, 4, _RES), "hhd")
     hrd = ctrl.Antecedent(np.linspace(0, 5, _RES), "hrd")
     density = ctrl.Antecedent(np.linspace(0, 12, _RES), "density")
     angle = ctrl.Antecedent(np.linspace(-180, 180, _RES), "angle")
 
-    for term_name, spec in input_specs["following_time"].items():
-        ft[term_name] = _mf(ft.universe, spec)
+    for input_name in _TIME_INPUT_NAMES:
+        for term_name, spec in input_specs[input_name].items():
+            input_vars[input_name][term_name] = _mf(input_vars[input_name].universe, spec)
     for term_name, spec in input_specs["hhd"].items():
         hhd[term_name] = _mf(hhd.universe, spec)
     for term_name, spec in input_specs["hrd"].items():
@@ -578,7 +609,7 @@ def _get_reference_system(context: str, profile: str):
         consequent["high"] = _SHARED_OUTPUT_CURVES["high"]
 
     antecedent_map = {
-        "following_time": ft,
+        **input_vars,
         "hhd": hhd,
         "hrd": hrd,
         "density": density,
@@ -586,7 +617,7 @@ def _get_reference_system(context: str, profile: str):
     }
 
     rules = []
-    for rule in _SHARED_RULES:
+    for rule in _SYSTEMS[(normalized_context, normalized_profile)].rules:
         antecedent_expr = None
         for var_name, term_name in rule.antecedents:
             current = antecedent_map[var_name][term_name]
@@ -602,6 +633,9 @@ def _get_reference_system(context: str, profile: str):
 
 def compute_reference(
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -618,11 +652,23 @@ def compute_reference(
     simulation = ctrl.ControlSystemSimulation(
         _get_reference_system(normalized_context, normalized_profile)
     )
-    simulation.input["following_time"] = float(following_time)
-    simulation.input["hhd"] = float(hhd)
-    simulation.input["hrd"] = float(hrd)
-    simulation.input["density"] = float(density)
-    simulation.input["angle"] = float(angle)
+    input_values = {
+        "following_time": float(following_time),
+        "listening_time": float(listening_time),
+        "total_duration_time": float(total_duration_time),
+        "pre_duration_time": float(pre_duration_time),
+        "hhd": float(hhd),
+        "hrd": float(hrd),
+        "density": float(density),
+        "angle": float(angle),
+    }
+    required_inputs = {
+        var_name
+        for rule in _SYSTEMS[(normalized_context, normalized_profile)].rules
+        for var_name, _term_name in rule.antecedents
+    }
+    for input_name in required_inputs:
+        simulation.input[input_name] = input_values[input_name]
     simulation.compute()
 
     results = {
@@ -648,10 +694,13 @@ def compute_reference_batch(
     return [
         compute_reference(
             following_time=float(row[0]),
-            hhd=float(row[1]),
-            hrd=float(row[2]),
-            density=float(row[3]),
-            angle=float(row[4]),
+            listening_time=float(row[1]),
+            total_duration_time=float(row[2]),
+            pre_duration_time=float(row[3]),
+            hhd=float(row[4]),
+            hrd=float(row[5]),
+            density=float(row[6]),
+            angle=float(row[7]),
             context=context,
             profile=profile,
         )
@@ -660,7 +709,7 @@ def compute_reference_batch(
 
 
 if __name__ == "__main__":
-    sample_input = (3.1, 0.56, 1.05, 5.0, 0.0)
+    sample_input = (3.1, 0.0, 3.1, 3.1, 0.56, 1.05, 5.0, 0.0)
 
     for sample_context in _CONTEXTS:
         result = compute(*sample_input, context=sample_context)

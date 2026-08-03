@@ -44,9 +44,13 @@ def update_human_listening_session_progress(env) -> None:
     """Advance listening-session timers only while the robot explanation is active."""
     if not env.listening_state.fuzzy_active:
         return
+    is_final_listening = bool(getattr(env.listening_state, "is_final", False))
     for human in env.humans:
         if human.mode == HumanMode.LISTENING:
             human.listening_steps += 1
+            human.cumulative_listening_steps += 1
+            if not is_final_listening:
+                human.first_listening_steps += 1
 
 
 def _current_human_modes(env) -> list[str]:
@@ -95,12 +99,23 @@ def should_evaluate_fuzzy(env, idx: int, context: str) -> bool:
     return env.runtime_cache.refresh_counter > debug_state.refresh_counter
 
 
-def compute_human_fuzzy_debug(env, idx: int, context: str, session_steps: int, world_frame):
+def compute_human_fuzzy_debug(env, idx: int, context: str, world_frame):
     """Build fuzzy inputs and evaluate the human state classifier."""
     human = env.humans[idx]
     observations = world_frame.observations
+    following_time = float(human.following_steps) * float(env.dt)
+    listening_time = float(human.listening_steps) * float(env.dt)
+    total_duration_time = (float(human.cumulative_following_steps) + float(human.cumulative_listening_steps)) * float(env.dt)
+    if bool(getattr(env.listening_state, "is_final", False)):
+        pre_duration_steps = int(getattr(human, "pre_duration_steps", 0))
+    else:
+        pre_duration_steps = int(getattr(human, "first_listening_steps", 0)) + int(human.following_steps)
+    pre_duration_time = float(pre_duration_steps) * float(env.dt)
     inputs = env.following_fuzzy_engine.clip_inputs(
-        following_time=float(session_steps) * float(env.dt),
+        following_time=following_time,
+        listening_time=listening_time,
+        total_duration_time=total_duration_time,
+        pre_duration_time=pre_duration_time,
         hhd=resolve_fuzzy_metric_input(
             rolling_mean_value=float(observations.nearest_human_distance_mean_1s[idx]),
             current_value=float(observations.nearest_human_distance[idx]),
@@ -173,6 +188,9 @@ def apply_fuzzy_transition(
     fuzzy_inputs_log = (
         f"\n    >>> fuzzy_inputs: "
         f"following_time={float(fuzzy_inputs['following_time']):.1f}, "
+        f"listening_time={float(fuzzy_inputs['listening_time']):.1f}, "
+        f"total_duration_time={float(fuzzy_inputs['total_duration_time']):.1f}, "
+        f"pre_duration_time={float(fuzzy_inputs['pre_duration_time']):.1f}, "
         f"hhd={float(fuzzy_inputs['hhd']):.2f}, "
         f"hrd={float(fuzzy_inputs['hrd']):.2f}, "
         f"density={float(fuzzy_inputs['density']):.1f}, "
@@ -222,7 +240,7 @@ def apply_fuzzy_transition(
         env._log_event(f"{msg}{fuzzy_inputs_log}")
 
 
-def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, world_frame) -> None:
+def _maybe_apply_fuzzy(env, human, idx: int, context: str, world_frame) -> None:
     """Run fuzzy evaluation only when the human is in the expected base mode."""
     if human.mode != (HumanMode.FOLLOWING if context == "following" else HumanMode.LISTENING):
         return
@@ -232,7 +250,6 @@ def _maybe_apply_fuzzy(env, human, idx: int, context: str, session_steps: int, w
         env,
         idx=idx,
         context=context,
-        session_steps=int(session_steps),
         world_frame=world_frame,
     )
     fuzzy_debug["ahead_active"] = bool(
@@ -293,7 +310,6 @@ def apply_general_phase_strategy(env, human, idx: int, world_frame) -> np.ndarra
         human,
         idx=idx,
         context="following",
-        session_steps=human.following_steps,
         world_frame=world_frame,
     )
     # The movement context is rebuilt from the live frame so each phase can pass
@@ -327,7 +343,6 @@ def apply_listening_phase_strategy(env, human, idx: int, world_frame) -> np.ndar
         human,
         idx=idx,
         context="listening",
-        session_steps=human.listening_steps,
         world_frame=world_frame,
     )
     effective_robot_yaw = float(world_frame.robot_pose[2])

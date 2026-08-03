@@ -8,6 +8,9 @@ class FollowingFuzzyEngine:
     @staticmethod
     def clip_inputs(
         following_time: float,
+        listening_time: float,
+        total_duration_time: float,
+        pre_duration_time: float,
         hhd: float,
         hrd: float,
         density: float,
@@ -15,6 +18,9 @@ class FollowingFuzzyEngine:
     ):
         return {
             "following_time": float(np.clip(following_time, 0.0, 120.0)),
+            "listening_time": float(np.clip(listening_time, 0.0, 120.0)),
+            "total_duration_time": float(np.clip(total_duration_time, 0.0, 120.0)),
+            "pre_duration_time": float(np.clip(pre_duration_time, 0.0, 120.0)),
             "hhd": float(np.clip(hhd, 0.0, 4.0)),
             "hrd": float(np.clip(hrd, 0.0, 5.0)),
             "density": float(np.clip(density, 0.0, 12.0)),
@@ -24,6 +30,9 @@ class FollowingFuzzyEngine:
     def compute(
         self,
         following_time: float,
+        listening_time: float,
+        total_duration_time: float,
+        pre_duration_time: float,
         hhd: float,
         hrd: float,
         density: float,
@@ -33,6 +42,9 @@ class FollowingFuzzyEngine:
     ) -> dict:
         clipped = self.clip_inputs(
             following_time=following_time,
+            listening_time=listening_time,
+            total_duration_time=total_duration_time,
+            pre_duration_time=pre_duration_time,
             hhd=hhd,
             hrd=hrd,
             density=density,
@@ -52,6 +64,9 @@ class FollowingFuzzyEngine:
 
 def compute(
     following_time: float,
+    listening_time: float,
+    total_duration_time: float,
+    pre_duration_time: float,
     hhd: float,
     hrd: float,
     density: float,
@@ -61,6 +76,9 @@ def compute(
 ) -> dict:
     return _compute(
         following_time=following_time,
+        listening_time=listening_time,
+        total_duration_time=total_duration_time,
+        pre_duration_time=pre_duration_time,
         hhd=hhd,
         hrd=hrd,
         density=density,

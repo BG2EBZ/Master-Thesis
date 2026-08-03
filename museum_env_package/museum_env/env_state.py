@@ -37,6 +37,9 @@ def _zero_radii() -> np.ndarray:
 def _default_fuzzy_inputs() -> dict[str, float]:
     return {
         "following_time": 0.0,
+        "listening_time": 0.0,
+        "total_duration_time": 0.0,
+        "pre_duration_time": 0.0,
         "hhd": 0.0,
         "hrd": 0.0,
         "density": 0.0,

@@ -176,6 +176,10 @@ class Human:
         self.profile = None
         self.following_steps = 0
         self.listening_steps = 0
+        self.cumulative_following_steps = 0
+        self.cumulative_listening_steps = 0
+        self.first_listening_steps = 0
+        self.pre_duration_steps = 0
         self.curiosity_duration_seconds = float(CURIOUS_STOP_DURATION_SECONDS_DEFAULT)
         self.curiosity_duration = round(self.curiosity_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
         self.curiosity_timer = 0
@@ -267,6 +271,10 @@ class Human:
         self.max_speed = float(self.base_max_speed)
         self.reset_following_duration()
         self.listening_steps = 0
+        self.cumulative_following_steps = 0
+        self.cumulative_listening_steps = 0
+        self.first_listening_steps = 0
+        self.pre_duration_steps = 0
         self.reset_curiosity_state()
         self.callback_retrigger_cooldown_steps_remaining = 0
         self.reset_overwhelmed_state()
@@ -328,8 +336,12 @@ class Human:
     def update_following_duration(self, eligible_following: bool):
         if eligible_following:
             self.following_steps += 1
+            self.cumulative_following_steps += 1
         else:
             self.reset_following_duration()
+
+    def freeze_pre_duration(self):
+        self.pre_duration_steps = int(self.first_listening_steps) + int(self.following_steps)
 
     def start_overwhelmed(self, robot_xy, current_xy, recovery_mode: str = HumanMode.FOLLOWING):
         current_xy = np.array(current_xy, dtype=np.float32)

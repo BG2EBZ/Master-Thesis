@@ -30,12 +30,28 @@ class _FakeHuman:
         profile: str,
         following_steps: int = 0,
         listening_steps: int = 0,
+        cumulative_following_steps: int | None = None,
+        cumulative_listening_steps: int | None = None,
+        first_listening_steps: int = 0,
+        pre_duration_steps: int = 0,
     ):
         self.name = name
         self.mode = mode
         self.profile = profile
         self.following_steps = int(following_steps)
         self.listening_steps = int(listening_steps)
+        self.cumulative_following_steps = (
+            int(following_steps)
+            if cumulative_following_steps is None
+            else int(cumulative_following_steps)
+        )
+        self.cumulative_listening_steps = (
+            int(listening_steps)
+            if cumulative_listening_steps is None
+            else int(cumulative_listening_steps)
+        )
+        self.first_listening_steps = int(first_listening_steps)
+        self.pre_duration_steps = int(pre_duration_steps)
         self.curiosity_retrigger_cooldown_steps_remaining = 0
         self.callback_retrigger_cooldown_steps = 400
         self.callback_retrigger_cooldown_steps_remaining = 0
@@ -50,6 +66,7 @@ class _FakeHuman:
     def update_following_duration(self, eligible_following: bool) -> None:
         if eligible_following:
             self.following_steps += 1
+            self.cumulative_following_steps += 1
         else:
             self.following_steps = 0
 
@@ -119,7 +136,15 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             ),
         )
 
-    def _build_env(self, humans, *, follow_phase="transit", listening_controller_active=False, listening_fuzzy_active=False):
+    def _build_env(
+        self,
+        humans,
+        *,
+        follow_phase="transit",
+        listening_controller_active=False,
+        listening_fuzzy_active=False,
+        listening_is_final=False,
+    ):
         n_humans = len(humans)
         return SimpleNamespace(
             humans=humans,
@@ -136,6 +161,7 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
                 phase="idle",
                 controller_active=bool(listening_controller_active),
                 fuzzy_active=bool(listening_fuzzy_active),
+                is_final=bool(listening_is_final),
                 question_active=False,
                 question_return_yaw=None,
             ),
@@ -201,12 +227,23 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
 
     def test_compute_human_fuzzy_debug_uses_clipped_inputs_and_profile(self):
         humans = [
-            _FakeHuman("person1", mode=HumanMode.FOLLOWING, profile=HumanProfile.NEURODIVERGENT, following_steps=4),
+            _FakeHuman(
+                "person1",
+                mode=HumanMode.FOLLOWING,
+                profile=HumanProfile.NEURODIVERGENT,
+                following_steps=4,
+                cumulative_following_steps=20,
+                cumulative_listening_steps=8,
+                first_listening_steps=10,
+            ),
         ]
         env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
         world_frame = self._build_world_frame(len(humans))
         clipped_inputs = {
             "following_time": 0.2,
+            "listening_time": 0.0,
+            "total_duration_time": 1.4,
+            "pre_duration_time": 0.7,
             "hhd": 0.6,
             "hrd": 1.2,
             "density": 2.0,
@@ -227,7 +264,6 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
             env,
             idx=0,
             context="following",
-            session_steps=humans[0].following_steps,
             world_frame=world_frame,
         )
 
@@ -237,6 +273,99 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
         self.assertEqual(compute_kwargs["context"], "following")
         self.assertEqual(compute_kwargs["profile"], HumanProfile.NEURODIVERGENT)
         self.assertAlmostEqual(float(compute_kwargs["following_time"]), 0.2, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["listening_time"]), 0.0, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["total_duration_time"]), 1.4, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["pre_duration_time"]), 0.7, places=7)
+
+    def test_compute_human_fuzzy_debug_uses_listening_time_in_listening_context(self):
+        humans = [
+            _FakeHuman(
+                "person1",
+                mode=HumanMode.LISTENING,
+                profile=HumanProfile.NORMAL,
+                following_steps=0,
+                listening_steps=12,
+                cumulative_following_steps=40,
+                cumulative_listening_steps=30,
+                first_listening_steps=18,
+            ),
+        ]
+        env = self._build_env(humans, listening_fuzzy_active=True)
+        world_frame = self._build_world_frame(len(humans))
+        clipped_inputs = {
+            "following_time": 0.0,
+            "listening_time": 0.6,
+            "total_duration_time": 3.5,
+            "pre_duration_time": 0.9,
+            "hhd": 0.6,
+            "hrd": 1.2,
+            "density": 2.0,
+            "angle": 0.0,
+        }
+        fuzzy_result = {
+            "dominant_state": "engaged",
+            "overwhelmed": 0.0,
+            "distracted": 0.0,
+            "impatient": 0.0,
+            "engaged": 1.0,
+            "curiosity": 0.0,
+        }
+        env.following_fuzzy_engine.clip_inputs = Mock(return_value=clipped_inputs)
+        env.following_fuzzy_engine.compute = Mock(return_value=fuzzy_result)
+
+        fuzzy_debug = env_control.compute_human_fuzzy_debug(
+            env,
+            idx=0,
+            context="listening",
+            world_frame=world_frame,
+        )
+
+        self.assertEqual(fuzzy_debug["inputs"], clipped_inputs)
+        compute_kwargs = env.following_fuzzy_engine.compute.call_args.kwargs
+        self.assertEqual(compute_kwargs["context"], "listening")
+        self.assertAlmostEqual(float(compute_kwargs["following_time"]), 0.0, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["listening_time"]), 0.6, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["total_duration_time"]), 3.5, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["pre_duration_time"]), 0.9, places=7)
+
+    def test_compute_human_fuzzy_debug_freezes_pre_duration_in_final_listening(self):
+        humans = [
+            _FakeHuman(
+                "person1",
+                mode=HumanMode.LISTENING,
+                profile=HumanProfile.NORMAL,
+                following_steps=0,
+                listening_steps=12,
+                cumulative_following_steps=40,
+                cumulative_listening_steps=80,
+                first_listening_steps=18,
+                pre_duration_steps=77,
+            ),
+        ]
+        env = self._build_env(humans, listening_fuzzy_active=True, listening_is_final=True)
+        world_frame = self._build_world_frame(len(humans))
+        env.following_fuzzy_engine.compute = Mock(
+            return_value={
+                "dominant_state": "engaged",
+                "overwhelmed": 0.0,
+                "distracted": 0.0,
+                "impatient": 0.0,
+                "engaged": 1.0,
+                "curiosity": 0.0,
+            }
+        )
+
+        env_control.compute_human_fuzzy_debug(
+            env,
+            idx=0,
+            context="listening",
+            world_frame=world_frame,
+        )
+
+        compute_kwargs = env.following_fuzzy_engine.compute.call_args.kwargs
+        self.assertAlmostEqual(float(compute_kwargs["listening_time"]), 0.6, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["total_duration_time"]), 6.0, places=7)
+        self.assertAlmostEqual(float(compute_kwargs["pre_duration_time"]), 3.85, places=7)
 
     def test_maybe_apply_fuzzy_only_sets_ahead_active_for_following(self):
         humans = [
@@ -245,7 +374,16 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
         env = self._build_env(humans, listening_fuzzy_active=True)
         world_frame = self._build_world_frame(len(humans))
         fuzzy_debug = {
-            "inputs": {"following_time": 1.0, "hhd": 2.0, "hrd": 3.0, "density": 4.0, "angle": 5.0},
+            "inputs": {
+                "following_time": 0.0,
+                "listening_time": 1.0,
+                "total_duration_time": 1.0,
+                "pre_duration_time": 1.0,
+                "hhd": 2.0,
+                "hrd": 3.0,
+                "density": 4.0,
+                "angle": 5.0,
+            },
             "result": {
                 "dominant_state": "engaged",
                 "overwhelmed": 0.0,
@@ -265,7 +403,6 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
                             humans[0],
                             idx=0,
                             context="listening",
-                            session_steps=1,
                             world_frame=world_frame,
                         )
 
@@ -278,7 +415,16 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
         env = self._build_env(humans, follow_phase=env_control.FOLLOW_PHASE_TRANSIT)
         world_frame = self._build_world_frame(len(humans))
         fuzzy_debug = {
-            "inputs": {"following_time": 0.2, "hhd": 0.6, "hrd": 1.2, "density": 2.0, "angle": 0.0},
+            "inputs": {
+                "following_time": 0.2,
+                "listening_time": 0.0,
+                "total_duration_time": 0.2,
+                "pre_duration_time": 0.2,
+                "hhd": 0.6,
+                "hrd": 1.2,
+                "density": 2.0,
+                "angle": 0.0,
+            },
             "result": {
                 "dominant_state": "distracted",
                 "overwhelmed": 0.0,
@@ -298,7 +444,6 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
                             humans[0],
                             idx=0,
                             context="following",
-                            session_steps=4,
                             world_frame=world_frame,
                         )
 
@@ -324,11 +469,29 @@ class FuzzyBatchEnvControlTests(unittest.TestCase):
         }
         fuzzy_debug_sequence = [
             {
-                "inputs": {"following_time": 0.2, "hhd": 0.6, "hrd": 1.2, "density": 2.0, "angle": 0.0},
+                "inputs": {
+                    "following_time": 0.2,
+                    "listening_time": 0.0,
+                    "total_duration_time": 0.2,
+                    "pre_duration_time": 0.2,
+                    "hhd": 0.6,
+                    "hrd": 1.2,
+                    "density": 2.0,
+                    "angle": 0.0,
+                },
                 "result": dict(distracted_result),
             },
             {
-                "inputs": {"following_time": 0.25, "hhd": 1.1, "hrd": 1.4, "density": 3.0, "angle": 5.0},
+                "inputs": {
+                    "following_time": 0.25,
+                    "listening_time": 0.0,
+                    "total_duration_time": 0.25,
+                    "pre_duration_time": 0.25,
+                    "hhd": 1.1,
+                    "hrd": 1.4,
+                    "density": 3.0,
+                    "angle": 5.0,
+                },
                 "result": dict(distracted_result),
             },
         ]

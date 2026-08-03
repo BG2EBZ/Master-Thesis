@@ -46,9 +46,9 @@ class MuseumEnvTimingTests(unittest.TestCase):
         self.assertAlmostEqual(float(info["episode"]["duration_seconds"]), 0.05, places=7)
 
     def test_policy_parameters_scale_listen_wait_runtime(self):
-        self.assertAlmostEqual(self.env.listen_wait_base_seconds, 30.0, places=7)
-        self.assertAlmostEqual(self.env.listen_wait_seconds, 30.0, places=7)
-        self.assertEqual(self.env.listen_wait_steps, 600)
+        self.assertAlmostEqual(self.env.listen_wait_base_seconds, 60.0, places=7)
+        self.assertAlmostEqual(self.env.listen_wait_seconds, 60.0, places=7)
+        self.assertEqual(self.env.listen_wait_steps, 1200)
 
         self.env.set_guide_behavior_config(
             GuideBehaviorConfig(
@@ -61,8 +61,8 @@ class MuseumEnvTimingTests(unittest.TestCase):
             )
         )
 
-        self.assertAlmostEqual(self.env.listen_wait_seconds, 21.0, places=7)
-        self.assertEqual(self.env.listen_wait_steps, 420)
+        self.assertAlmostEqual(self.env.listen_wait_seconds, 42.0, places=7)
+        self.assertEqual(self.env.listen_wait_steps, 840)
 
     def test_listening_question_plan_uses_scaled_wait_steps(self):
         self.env.reset(seed=123)
@@ -110,22 +110,80 @@ class MuseumEnvTimingTests(unittest.TestCase):
         human = self.env.humans[0]
         human.set_mode(HumanMode.LISTENING)
         human.listening_steps = 0
+        human.cumulative_listening_steps = 0
+        human.first_listening_steps = 0
 
         self.env.listening_state.enter_intro(is_final=False)
         env_control.update_human_listening_session_progress(self.env)
 
         self.assertEqual(human.listening_steps, 0)
+        self.assertEqual(human.cumulative_listening_steps, 0)
+        self.assertEqual(human.first_listening_steps, 0)
 
         self.env.listening_state.enter_wait(is_final=False)
         env_control.update_human_listening_session_progress(self.env)
         env_control.update_human_listening_session_progress(self.env)
 
         self.assertEqual(human.listening_steps, 2)
+        self.assertEqual(human.cumulative_listening_steps, 2)
+        self.assertEqual(human.first_listening_steps, 2)
 
         self.env.listening_state.pause()
         env_control.update_human_listening_session_progress(self.env)
 
         self.assertEqual(human.listening_steps, 2)
+        self.assertEqual(human.cumulative_listening_steps, 2)
+        self.assertEqual(human.first_listening_steps, 2)
+
+        self.env.listening_state.enter_wait(is_final=True)
+        env_control.update_human_listening_session_progress(self.env)
+
+        self.assertEqual(human.listening_steps, 3)
+        self.assertEqual(human.cumulative_listening_steps, 3)
+        self.assertEqual(human.first_listening_steps, 2)
+
+    def test_following_current_steps_reset_but_cumulative_steps_survive(self):
+        self.env.reset(seed=123)
+        human = self.env.humans[0]
+
+        human.update_following_duration(True)
+        human.update_following_duration(True)
+        human.update_following_duration(False)
+
+        self.assertEqual(human.following_steps, 0)
+        self.assertEqual(human.cumulative_following_steps, 2)
+
+    def test_listening_session_reset_preserves_cumulative_steps(self):
+        self.env.reset(seed=123)
+        human = self.env.humans[0]
+        human.set_mode(HumanMode.LISTENING)
+        self.env.listening_state.enter_wait(is_final=False)
+
+        env_control.update_human_listening_session_progress(self.env)
+        env_control.update_human_listening_session_progress(self.env)
+        env_flow._reset_human_listening_sessions(self.env)
+
+        self.assertEqual(human.listening_steps, 0)
+        self.assertEqual(human.cumulative_listening_steps, 2)
+
+    def test_pre_duration_steps_freeze_at_final_listening_intro(self):
+        self.env.reset(seed=123)
+        human = self.env.humans[0]
+        human.first_listening_steps = 20
+        human.following_steps = 7
+        human.pre_duration_steps = 0
+        self.env.robot.is_final_reached = lambda _robot_pose: True
+        events = StepEvents()
+        pre_frame = SimpleNamespace(
+            robot_pose=(0.0, 0.0, 0.0),
+            human_xyz=np.zeros((1, 3), dtype=np.float32),
+        )
+
+        env_flow._begin_listening_intro(self.env, events, pre_frame)
+
+        self.assertEqual(human.pre_duration_steps, 27)
+        self.assertEqual(human.listening_steps, 0)
+        self.assertTrue(self.env.listening_state.is_final)
 
     def test_progress_listening_phase_does_not_shorten_wait_for_far_human(self):
         self.env.reset(seed=123)

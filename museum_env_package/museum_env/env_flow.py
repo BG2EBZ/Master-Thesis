@@ -505,7 +505,11 @@ def _begin_listening_intro(env, events, pre_frame) -> None:
     events.entered_listen = True
     env.follow_phase = None
     clear_listening_question_humans(env)
-    env.listening_state.enter_intro(is_final=env.robot.is_final_reached(pre_frame.robot_pose))
+    is_final = env.robot.is_final_reached(pre_frame.robot_pose)
+    if is_final:
+        for human in env.humans:
+            human.freeze_pre_duration()
+    env.listening_state.enter_intro(is_final=is_final)
     _reset_human_listening_sessions(env)
     env.post_explanation_state.reset()
     rx, ry, ryaw = pre_frame.robot_pose
