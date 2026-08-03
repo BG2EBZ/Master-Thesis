@@ -17,10 +17,10 @@ class FollowingFuzzyEngine:
         angle: float,
     ):
         return {
-            "following_time": float(np.clip(following_time, 0.0, 120.0)),
-            "listening_time": float(np.clip(listening_time, 0.0, 120.0)),
-            "total_duration_time": float(np.clip(total_duration_time, 0.0, 120.0)),
-            "pre_duration_time": float(np.clip(pre_duration_time, 0.0, 120.0)),
+            "following_time": float(np.clip(following_time, 0.0, 240)),
+            "listening_time": float(np.clip(listening_time, 0.0, 240)),
+            "total_duration_time": float(np.clip(total_duration_time, 0.0, 240)),
+            "pre_duration_time": float(np.clip(pre_duration_time, 0.0, 240)),
             "hhd": float(np.clip(hhd, 0.0, 4.0)),
             "hrd": float(np.clip(hrd, 0.0, 5.0)),
             "density": float(np.clip(density, 0.0, 12.0)),
