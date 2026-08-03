@@ -118,11 +118,11 @@ DEFAULT_MUSEUM_LAYOUT = MapLayout(
         "rooms": ("room_a", "corridor", "room_b"),
         "room_regions": {
             "room_a": AxisAlignedRect(0.0, 10.0, 0.0, 10.0),
-            "room_b": AxisAlignedRect(6.5, 12.0, -15.0, -10.0),
+            "room_b": AxisAlignedRect(7.0, 12.0, -15.0, -10.0),
         },
         "impatient_corridor_midpoints": {
-            "room_a": (8.25, 0.0),
-            "room_b": (8.25, -10.0),
+            "room_a": (8.5, 0.0),
+            "room_b": (8.5, -10.0),
         },
         "distractor_exhibit_points": (
             (2.25, 9.785),
@@ -131,13 +131,13 @@ DEFAULT_MUSEUM_LAYOUT = MapLayout(
             (9.786, 3.35),
             (9.786, 6.65),
             (3.15, 0.214),
-            (6.714, -3.25),
-            (6.714, -7.35),
+            (7.214, -3.25),
+            (7.214, -7.35),
             (9.786, -4.65),
             (9.786, -8.35),
-            (6.714, -12.95),
+            (7.214, -12.95),
             (11.786, -12.50),
-            (9.25, -14.786),
+            (9.50, -14.786),
         ),
     },
 )

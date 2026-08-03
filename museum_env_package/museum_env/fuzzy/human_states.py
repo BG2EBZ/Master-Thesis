@@ -175,13 +175,13 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "long": _trap(50, 60, 120, 120),
             },
             "pre_duration_time": {
-                "short": _trap(0, 0, 45, 55),
-                "medium": _trap(45, 55, 85, 95),
-                "long": _trap(85, 95, 200, 200),
+                "short": _trap(0, 0, 40, 50),
+                "medium": _trap(40, 50, 90, 100),
+                "long": _trap(90, 100, 200, 200),
             },
             "total_duration_time": {
-                "short": _trap(0, 0, 70, 80),
-                "medium": _trap(70, 80, 150, 160),
+                "short": _trap(0, 0, 80, 90),
+                "medium": _trap(80, 90, 150, 160),
                 "long": _trap(150, 160, 300, 300),
             },
             "hhd": {
