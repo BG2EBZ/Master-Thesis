@@ -194,22 +194,10 @@ class PostExplanationState:
 class RobotFrontBlockingState:
     blocker_idx: Optional[int] = None
     speech_steps_remaining: int = 0
-    bypass_active: bool = False
-    bypass_center_xy: Optional[np.ndarray] = None
-    bypass_radius: float = 0.0
-    bypass_start_angle: float = 0.0
-    bypass_direction_sign: float = 0.0
-    bypass_turn_target_yaw: Optional[float] = None
 
     def reset(self) -> None:
         self.blocker_idx = None
         self.speech_steps_remaining = 0
-        self.bypass_active = False
-        self.bypass_center_xy = None
-        self.bypass_radius = 0.0
-        self.bypass_start_angle = 0.0
-        self.bypass_direction_sign = 0.0
-        self.bypass_turn_target_yaw = None
 
 
 @dataclass

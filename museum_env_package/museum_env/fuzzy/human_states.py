@@ -177,7 +177,7 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             "pre_duration_time": {
                 "short": _trap(0, 0, 45, 55),
                 "medium": _trap(45, 55, 85, 95),
-                "long": _trap(85, 95, 120, 120),
+                "long": _trap(85, 95, 200, 200),
             },
             "total_duration_time": {
                 "short": _trap(0, 0, 70, 80),
@@ -222,8 +222,8 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "long": _trap(90, 100, 120, 120),
             },
             "total_duration_time": {
-                "short": _trap(0, 0, 70, 80),
-                "medium": _trap(70, 80, 150, 160),
+                "short": _trap(0, 0, 80, 90),
+                "medium": _trap(80, 90, 150, 160),
                 "long": _trap(150, 160, 300, 300),
             },
             "hhd": {
@@ -288,18 +288,18 @@ def _build_rules(context: str) -> tuple[RuleSpec, ...]:
         RuleSpec((("listening_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("listening_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("listening_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
-        # RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
-        # RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
-        # RuleSpec((("listening_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("listening_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
         RuleSpec((("following_time", "long"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
-        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
-        # RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "medium"),
-        # RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "medium"),
+        RuleSpec((("following_time", "medium"), ("hhd", "far"), ("hrd", "medium"), ("density", "low")), "distracted", "high"),
+        RuleSpec((("following_time", "medium"), ("hhd", "medium"), ("hrd", "far"), ("density", "low")), "distracted", "high"),
 
 
         # Time-enhanced impatience: first listening + current following increases impatience.
