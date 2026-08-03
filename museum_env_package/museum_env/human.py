@@ -44,9 +44,9 @@ CURIOSITY_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 10.0
 CALLBACK_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 20.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
-HR_DISTANCE_MAX = 2.0
-HR_DISTANCE_MAX_NORMAL_DEFAULT = 1.5
+HR_DISTANCE_MAX = 2.2
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
+HR_DISTANCE_MAX_ND_DEFAULT = 2.0
 HR_REPULSION_GAIN = 4.0
 HR_ATTRACTION_GAIN = 2.0
 HR_REPULSION_GAIN_MID_DISTANCE = 1.2
@@ -284,10 +284,10 @@ class Human:
         self.profile = profile
         if profile == HumanProfile.NEURODIVERGENT:
             self.hr_distance_min = float(HR_DISTANCE_MIN_ND_DEFAULT)
-            self.hr_distance_max = float(HR_DISTANCE_MAX)
+            self.hr_distance_max = float(HR_DISTANCE_MAX_ND_DEFAULT)
         else:
             self.hr_distance_min = float(HR_DISTANCE_MIN)
-            self.hr_distance_max = float(HR_DISTANCE_MAX_NORMAL_DEFAULT)
+            self.hr_distance_max = float(HR_DISTANCE_MAX)
 
     def apply_runtime_config(
         self,
