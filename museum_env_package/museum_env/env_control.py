@@ -9,6 +9,7 @@ import numpy as np
 from .env_constants import (
     FOLLOW_RADIUS_DEFAULT,
     LISTENING_REPULSION_SCALE,
+    POST_EXPLANATION_YIELD_DISTANCE,
     ROBOT_FRONT_BLOCKING_TRIGGER_METERS,
 )
 from .env_runtime import resolve_fuzzy_metric_input
@@ -390,6 +391,8 @@ def apply_post_explanation_phase_strategy(env, human, idx: int, world_frame) -> 
     # humans stay anchored to the explanation pose until the settle phase ends.
     if role == POST_EXPLANATION_ROLE_YIELD:
         human.set_mode(HumanMode.FOLLOWING)
+        yield_start_xy = np.array(env.post_explanation_state.yield_start_xy[idx], dtype=np.float32)
+        yield_dir = np.array(env.post_explanation_state.yield_dirs[idx], dtype=np.float32)
         return human.step(
             env.model,
             env.data,
@@ -397,6 +400,9 @@ def apply_post_explanation_phase_strategy(env, human, idx: int, world_frame) -> 
                 **move_ctx,
                 "behavior_kind": "post_explanation_yield",
                 "target_xy": target_xy.copy(),
+                "yield_start_xy": yield_start_xy,
+                "yield_dir": yield_dir,
+                "yield_distance": float(POST_EXPLANATION_YIELD_DISTANCE),
             },
         )
 

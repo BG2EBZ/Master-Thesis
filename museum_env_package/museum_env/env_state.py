@@ -178,6 +178,8 @@ class PostExplanationState:
     anchor_robot_yaw: float = 0.0
     roles: list[str] = field(default_factory=list)
     targets: np.ndarray = field(default_factory=_zero_targets)
+    yield_start_xy: np.ndarray = field(default_factory=_zero_targets)
+    yield_dirs: np.ndarray = field(default_factory=_zero_targets)
     listen_radii: np.ndarray = field(default_factory=_zero_radii)
 
     def reset(self) -> None:
@@ -187,6 +189,8 @@ class PostExplanationState:
         self.anchor_robot_yaw = 0.0
         self.roles.clear()
         self.targets = _zero_targets()
+        self.yield_start_xy = _zero_targets()
+        self.yield_dirs = _zero_targets()
         self.listen_radii = _zero_radii()
 
 

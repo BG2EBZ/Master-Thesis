@@ -18,9 +18,14 @@ DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
 HUMAN_YAW_RATE_GAIN = 3.0
 HUMAN_ROTATION_STOP_DEG = 3.0
 HUMAN_ARRIVAL_STOP_RADIUS = 0.12
-HUMAN_ARRIVAL_SLOW_RADIUS = 0.60
+HUMAN_ARRIVAL_SLOW_RADIUS = 3.0
 LISTENING_RING_GAIN = 3.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
+VELOCITY_FIELD_DEADBAND = 0.05
+ROBOT_SECTOR_RADIUS_GAIN = 3.0
+ROBOT_SECTOR_GAIN = 1.5
+ANCHOR_FIELD_RADIUS_GAIN = 3.0
+DIRECTION_FIELD_GAIN = 3.0
 DISTRACTED_SPEED_SCALE = 0.5
 DISTRACTED_YAW_DEVIATION_MIN_DEG = 45.0
 DISTRACTED_YAW_DEVIATION_MAX_DEG = 90.0
@@ -44,9 +49,9 @@ CURIOSITY_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 10.0
 CALLBACK_RETRIGGER_COOLDOWN_SECONDS_DEFAULT = 20.0
 OVERWHELMED_STAGE_SWITCH_DIST = 0.02
 HR_DISTANCE_MIN = 0.8
-HR_DISTANCE_MAX = 2.2
+HR_DISTANCE_MAX = 2.0
 HR_DISTANCE_MIN_ND_DEFAULT = 1.0
-HR_DISTANCE_MAX_ND_DEFAULT = 2.0
+HR_DISTANCE_MAX_ND_DEFAULT = 1.8
 HR_REPULSION_GAIN = 4.0
 HR_ATTRACTION_GAIN = 2.0
 HR_REPULSION_GAIN_MID_DISTANCE = 1.2
@@ -74,6 +79,121 @@ DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING = "stop_and_go_following"
 DISTRACTED_SOURCE_FOLLOWING = "following"
 DISTRACTED_SOURCE_LISTENING = "listening"
 DEFAULT_FOLLOW_RADIUS = FOLLOW_RADIUS_DEFAULT
+
+
+def _apply_signed_deadband(value: float, deadband: float) -> float:
+    value = float(value)
+    if not math.isfinite(value):
+        return 0.0
+    deadband = max(0.0, float(deadband))
+    magnitude = abs(value)
+    if magnitude <= deadband:
+        return 0.0
+    return math.copysign(magnitude - deadband, value)
+
+
+def anchor_velocity_field(
+    *,
+    current_xy,
+    anchor_xy,
+    desired_radius: float,
+    radius_gain: float,
+    speed_limit: float,
+    deadband: float,
+) -> np.ndarray:
+    current_xy = np.asarray(current_xy, dtype=np.float32)
+    anchor_xy = np.asarray(anchor_xy, dtype=np.float32)
+    if (not np.all(np.isfinite(current_xy))) or (not np.all(np.isfinite(anchor_xy))):
+        return np.zeros(2, dtype=np.float32)
+    diff = current_xy - anchor_xy
+    dist = float(np.linalg.norm(diff))
+    if not math.isfinite(dist):
+        return np.zeros(2, dtype=np.float32)
+    if dist <= NORM_EPS:
+        radial_dir = np.array([1.0, 0.0], dtype=np.float32)
+    else:
+        radial_dir = diff / dist
+
+    radius_error = _apply_signed_deadband(float(desired_radius) - dist, deadband)
+    velocity = float(radius_gain) * radius_error * radial_dir
+    return Human._limit_speed(velocity, speed_limit)
+
+
+def direction_velocity_field(
+    *,
+    direction_xy,
+    remaining_distance: float,
+    speed_limit: float,
+    gain: float,
+    deadband: float,
+) -> np.ndarray:
+    direction_xy = np.asarray(direction_xy, dtype=np.float32)
+    if not np.all(np.isfinite(direction_xy)):
+        return np.zeros(2, dtype=np.float32)
+    direction_norm = float(np.linalg.norm(direction_xy))
+    if (not math.isfinite(direction_norm)) or direction_norm <= NORM_EPS:
+        return np.zeros(2, dtype=np.float32)
+    remaining = _apply_signed_deadband(float(remaining_distance), deadband)
+    if remaining <= 0.0:
+        return np.zeros(2, dtype=np.float32)
+    velocity = float(gain) * remaining * (direction_xy / direction_norm)
+    return Human._limit_speed(velocity, speed_limit)
+
+
+def robot_sector_velocity_field(
+    *,
+    current_xy,
+    robot_xy,
+    center_yaw: float,
+    desired_radius: float,
+    sector_half_angle: float,
+    radius_gain: float,
+    sector_gain: float,
+    speed_limit: float,
+    deadband: float,
+) -> np.ndarray:
+    current_xy = np.asarray(current_xy, dtype=np.float32)
+    robot_xy = np.asarray(robot_xy, dtype=np.float32)
+    if (not np.all(np.isfinite(current_xy))) or (not np.all(np.isfinite(robot_xy))):
+        return np.zeros(2, dtype=np.float32)
+    rel_xy = current_xy - robot_xy
+    rel_dist = float(np.linalg.norm(rel_xy))
+    if not math.isfinite(rel_dist):
+        return np.zeros(2, dtype=np.float32)
+    if rel_dist <= NORM_EPS:
+        absolute_angle = float(center_yaw)
+        radial_dir = np.array(
+            [np.cos(absolute_angle), np.sin(absolute_angle)],
+            dtype=np.float32,
+        )
+    else:
+        absolute_angle = float(np.arctan2(rel_xy[1], rel_xy[0]))
+        radial_dir = rel_xy / rel_dist
+
+    radius_error = _apply_signed_deadband(float(desired_radius) - rel_dist, deadband)
+    radius_velocity = float(radius_gain) * radius_error * radial_dir
+
+    relative_angle = wrap_to_pi(absolute_angle - float(center_yaw))
+    half_angle = max(0.0, float(sector_half_angle) - LISTENING_SECTOR_PROJECTION_EPS)
+    clamped_angle = float(np.clip(relative_angle, -half_angle, half_angle))
+    sector_excess = _apply_signed_deadband(relative_angle - clamped_angle, deadband)
+    tangent_dir = np.array([-radial_dir[1], radial_dir[0]], dtype=np.float32)
+    sector_velocity = -float(sector_gain) * sector_excess * tangent_dir
+
+    return Human._limit_speed(radius_velocity + sector_velocity, speed_limit)
+
+
+def robot_sector_center_point(robot_xy, center_yaw: float, radius: float) -> np.ndarray:
+    robot_xy = np.asarray(robot_xy, dtype=np.float32)
+    if (not np.all(np.isfinite(robot_xy))) or (not math.isfinite(float(center_yaw))):
+        return np.zeros(2, dtype=np.float32)
+    return np.array(
+        [
+            robot_xy[0] + float(radius) * np.cos(float(center_yaw)),
+            robot_xy[1] + float(radius) * np.sin(float(center_yaw)),
+        ],
+        dtype=np.float32,
+    )
 
 
 def _compute_arrival_velocity(to_target_xy, max_speed) -> np.ndarray:
@@ -147,6 +267,8 @@ class Human:
         self.distracted_stop_duration = round(self.distracted_stop_duration_seconds / DEFAULT_SIM_TIMESTEP_SECONDS)
 
         self.distracted_target_xy = None
+        self.distracted_focus_xy = None
+        self.distracted_focus_radius = 0.0
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
         self.distracted_behavior_kind = None
@@ -396,6 +518,8 @@ class Human:
 
     def _clear_distracted_navigation_state(self):
         self.distracted_target_xy = None
+        self.distracted_focus_xy = None
+        self.distracted_focus_radius = 0.0
         self.distracted_stop_reached = False
         self.distracted_target_yaw = None
         self.distracted_behavior_kind = None
@@ -416,8 +540,10 @@ class Human:
     def _direction_cache_key(self, direction_xy) -> Optional[tuple[int, int]]:
         dx = float(direction_xy[0])
         dy = float(direction_xy[1])
+        if (not math.isfinite(dx)) or (not math.isfinite(dy)):
+            return None
         direction_norm = math.hypot(dx, dy)
-        if direction_norm <= 1e-6:
+        if (not math.isfinite(direction_norm)) or direction_norm <= 1e-6:
             return None
         inv_norm = 1.0 / direction_norm
         return (
@@ -432,10 +558,18 @@ class Human:
         *,
         behavior_kind: str = DISTRACTED_BEHAVIOR_FOCUS,
         partner_index=None,
+        focus_xy=None,
+        focus_radius: float = 0.0,
     ):
         target_xy = np.asarray(target_xy, dtype=np.float32)
         self.distracted_target_yaw = float(target_yaw)
         self.distracted_target_xy = target_xy
+        self.distracted_focus_xy = (
+            np.asarray(focus_xy, dtype=np.float32)
+            if focus_xy is not None
+            else target_xy.copy()
+        )
+        self.distracted_focus_radius = max(0.0, float(focus_radius))
         self.distracted_stop_reached = False
         self.distracted_behavior_kind = str(behavior_kind)
         self.distracted_partner_index = None if partner_index is None else int(partner_index)
@@ -444,17 +578,29 @@ class Human:
     @staticmethod
     def _compose_action(v_xy, yaw_rate):
         action = np.zeros(3, dtype=np.float32)
-        action[:2] = v_xy
-        action[2] = np.float32(yaw_rate)
+        v_xy = np.asarray(v_xy, dtype=np.float32)
+        action[:2] = np.nan_to_num(v_xy, nan=0.0, posinf=0.0, neginf=0.0)
+        try:
+            yaw_rate_value = float(yaw_rate)
+        except (TypeError, ValueError):
+            yaw_rate_value = 0.0
+        action[2] = np.float32(yaw_rate_value if math.isfinite(yaw_rate_value) else 0.0)
         return action
 
     @staticmethod
     def _limit_speed(v_xy, speed_limit: float):
         v_xy = np.asarray(v_xy, dtype=np.float32)
+        if not np.all(np.isfinite(v_xy)):
+            return np.zeros_like(v_xy, dtype=np.float32)
         speed = float(np.linalg.norm(v_xy))
-        if speed <= MIN_SPEED_EPS or speed <= float(speed_limit):
+        if (not math.isfinite(speed)) or speed <= MIN_SPEED_EPS:
+            return np.zeros_like(v_xy, dtype=np.float32)
+        speed_limit = float(speed_limit)
+        if (not math.isfinite(speed_limit)) or speed_limit <= MIN_SPEED_EPS:
+            return np.zeros_like(v_xy, dtype=np.float32)
+        if speed <= speed_limit:
             return v_xy
-        return np.asarray(v_xy / speed * float(speed_limit), dtype=np.float32)
+        return np.asarray(v_xy / speed * speed_limit, dtype=np.float32)
 
     def assign_target_from_context(self, ctx: dict, mode: Optional[str] = None):
         index = ctx["index"]
@@ -528,9 +674,17 @@ class Human:
         current_xy = np.asarray(current_xy, dtype=np.float32)
         guide_xy = np.asarray(guide_xy, dtype=np.float32)
         v_total = np.asarray(goal_v_xy, dtype=np.float32).copy()
+        if not np.all(np.isfinite(current_xy)):
+            return np.zeros(2, dtype=np.float32)
+        if not np.all(np.isfinite(guide_xy)):
+            guide_xy = np.zeros(2, dtype=np.float32)
+        if not np.all(np.isfinite(v_total)):
+            v_total = np.zeros(2, dtype=np.float32)
 
         if repulsion_xy is not None:
-            v_total += np.asarray(repulsion_xy, dtype=np.float32)
+            repulsion_xy = np.asarray(repulsion_xy, dtype=np.float32)
+            if np.all(np.isfinite(repulsion_xy)):
+                v_total += repulsion_xy
 
         if robot_xy is not None and (hr_distance_min is not None or hr_distance_max is not None):
             v_total += self._compute_hr_spacing_force(
@@ -549,13 +703,17 @@ class Human:
 
     def _adjust_target_velocity_for_walls(self, *, guide_xy, desired_v_xy):
         desired_v_xy = np.asarray(desired_v_xy, dtype=np.float32)
+        if not np.all(np.isfinite(desired_v_xy)):
+            return np.zeros(2, dtype=np.float32)
         desired_speed = float(np.linalg.norm(desired_v_xy))
-        if desired_speed <= MIN_SPEED_EPS:
+        if (not math.isfinite(desired_speed)) or desired_speed <= MIN_SPEED_EPS:
             return np.zeros(2, dtype=np.float32)
         if desired_speed <= WALL_RAYCAST_SPEED_SKIP_MPS:
             return desired_v_xy
 
         guide_xy = np.asarray(guide_xy, dtype=np.float32)
+        if not np.all(np.isfinite(guide_xy)):
+            guide_xy = np.zeros(2, dtype=np.float32)
         guide_norm = float(np.linalg.norm(guide_xy))
         if guide_norm <= NORM_EPS:
             return self._constrain_velocity_with_walkable(desired_v_xy)
@@ -639,8 +797,12 @@ class Human:
     ):
         current_xy = np.asarray(current_xy, dtype=np.float32)
         robot_xy = np.asarray(robot_xy, dtype=np.float32)
+        if (not np.all(np.isfinite(current_xy))) or (not np.all(np.isfinite(robot_xy))):
+            return np.zeros(2, dtype=np.float32)
         diff = current_xy - robot_xy
         dist_hr = np.linalg.norm(diff)
+        if not np.isfinite(dist_hr):
+            return np.zeros(2, dtype=np.float32)
         direction = np.array([1.0, 0.0], dtype=np.float32) if dist_hr <= NORM_EPS else diff / dist_hr
 
         # Inside the preferred band, no force is applied. Too close pushes away;
@@ -661,8 +823,10 @@ class Human:
 
     def _constrain_velocity_with_walkable(self, v_xy):
         v_xy = np.asarray(v_xy, dtype=np.float32)
+        if not np.all(np.isfinite(v_xy)):
+            return np.zeros(2, dtype=np.float32)
         speed = np.linalg.norm(v_xy)
-        if speed <= MIN_SPEED_EPS:
+        if (not np.isfinite(speed)) or speed <= MIN_SPEED_EPS:
             return v_xy
 
         hit_distance = self._raycast_hit_distance(v_xy)
@@ -679,6 +843,8 @@ class Human:
 
     def _compute_wall_spacing_force(self, guide_xy):
         guide_xy = np.asarray(guide_xy, dtype=np.float32)
+        if not np.all(np.isfinite(guide_xy)):
+            return np.zeros(2, dtype=np.float32)
         guide_norm = float(np.linalg.norm(guide_xy))
         if guide_norm <= NORM_EPS:
             return np.zeros(2, dtype=np.float32)

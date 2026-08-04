@@ -8,6 +8,8 @@ utilities.
 import numpy as np
 
 from .human import (
+    ANCHOR_FIELD_RADIUS_GAIN,
+    DIRECTION_FIELD_GAIN,
     DISTRACTED_BEHAVIOR_CONVERSATION,
     DISTRACTED_BEHAVIOR_STOP_AND_GO_FOLLOWING,
     DISTRACTED_CONVERSATION_STOP_DISTANCE,
@@ -22,14 +24,19 @@ from .human import (
     HUMAN_ROTATION_STOP_DEG,
     HUMAN_YAW_RATE_GAIN,
     LISTENING_IMPATIENT_TARGET_REACHED_DEG,
-    LISTENING_RING_GAIN,
     LISTENING_SECTOR_PROJECTION_EPS,
-    MIN_SPEED_EPS,
     NORM_EPS,
     OVERWHELMED_STAGE_SWITCH_DIST,
+    ROBOT_SECTOR_GAIN,
+    ROBOT_SECTOR_RADIUS_GAIN,
+    VELOCITY_FIELD_DEADBAND,
     HumanMode,
     HumanProfile,
+    anchor_velocity_field,
+    direction_velocity_field,
     logger,
+    robot_sector_center_point,
+    robot_sector_velocity_field,
 )
 from .spatial_utils import wrap_to_pi
 
@@ -58,7 +65,6 @@ def step_behavior(human, ctx, pose):
     if human.mode == HumanMode.WANDERING:
         return _step_wandering(human, ctx, pose)
     if human.mode == HumanMode.FOLLOWING:
-        human.assign_target_from_context(ctx)
         return _step_following(human, ctx, pose)
     if human.mode == HumanMode.LISTENING:
         return _step_listening_like(
@@ -80,6 +86,77 @@ def step_behavior(human, ctx, pose):
     raise ValueError(f"Unknown human mode {human.mode}")
 
 
+def _compose_field_action(
+    human,
+    ctx,
+    *,
+    current_xy,
+    yaw: float,
+    goal_v_xy,
+    speed_limit: float,
+    robot_xy=None,
+    hr_distance_min=None,
+    hr_distance_max=None,
+    face_yaw=None,
+):
+    goal_v_xy = np.asarray(goal_v_xy, dtype=np.float32)
+    guide_xy = goal_v_xy if float(np.linalg.norm(goal_v_xy)) > NORM_EPS else np.zeros(2, dtype=np.float32)
+    v_total = human._compose_move_velocity(
+        current_xy=current_xy,
+        guide_xy=guide_xy,
+        goal_v_xy=goal_v_xy,
+        speed_limit=speed_limit,
+        repulsion_xy=ctx.get("repulsion"),
+        robot_xy=robot_xy,
+        hr_distance_min=hr_distance_min,
+        hr_distance_max=hr_distance_max,
+    )
+    speed = float(np.linalg.norm(v_total))
+    if face_yaw is None:
+        desired_yaw = float(np.arctan2(v_total[1], v_total[0])) if speed > NORM_EPS else float(yaw)
+    else:
+        desired_yaw = float(face_yaw)
+    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw))
+
+
+def _following_velocity_field(human, ctx, current_xy):
+    robot_pose = ctx["robot_pose"]
+    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+    center_yaw = wrap_to_pi(float(robot_pose[2]) + np.pi)
+    follow_radius = float(ctx.get("follow_radius", 0.8))
+    human.current_waypoint = robot_sector_center_point(robot_xy, center_yaw, follow_radius)
+    return robot_sector_velocity_field(
+        current_xy=current_xy,
+        robot_xy=robot_xy,
+        center_yaw=center_yaw,
+        desired_radius=follow_radius,
+        sector_half_angle=ctx["fan_half_angle"],
+        radius_gain=ROBOT_SECTOR_RADIUS_GAIN,
+        sector_gain=ROBOT_SECTOR_GAIN,
+        speed_limit=human.max_speed,
+        deadband=VELOCITY_FIELD_DEADBAND,
+    )
+
+
+def _impatient_front_velocity_field(human, ctx, current_xy):
+    robot_pose = ctx["robot_pose"]
+    robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
+    center_yaw = float(robot_pose[2])
+    front_radius = float(ctx["impatient_front_offset"])
+    human.current_waypoint = robot_sector_center_point(robot_xy, center_yaw, front_radius)
+    return robot_sector_velocity_field(
+        current_xy=current_xy,
+        robot_xy=robot_xy,
+        center_yaw=center_yaw,
+        desired_radius=front_radius,
+        sector_half_angle=ctx["impatient_fan_half_angle"],
+        radius_gain=ROBOT_SECTOR_RADIUS_GAIN,
+        sector_gain=ROBOT_SECTOR_GAIN,
+        speed_limit=human.max_speed,
+        deadband=VELOCITY_FIELD_DEADBAND,
+    )
+
+
 def _step_wandering(human, ctx, pose):
     current_xy = np.asarray(pose[:2], dtype=np.float32)
     yaw = pose[2]
@@ -92,7 +169,18 @@ def _step_wandering(human, ctx, pose):
 
 def _step_following(human, ctx, pose):
     current_xy = np.asarray(pose[:2], dtype=np.float32)
-    return human._move(human.current_waypoint - current_xy, pose[2], ctx, current_xy)
+    v_goal = _following_velocity_field(human, ctx, current_xy)
+    return _compose_field_action(
+        human,
+        ctx,
+        current_xy=current_xy,
+        yaw=pose[2],
+        goal_v_xy=v_goal,
+        speed_limit=human.max_speed,
+        robot_xy=ctx["robot_xy"],
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=human.hr_distance_max,
+    )
 
 
 def _step_listening_like(human, ctx, pose, *, anchor_robot_xy, anchor_robot_yaw: float, live_robot_xy):
@@ -108,30 +196,36 @@ def _step_listening_like(human, ctx, pose, *, anchor_robot_xy, anchor_robot_yaw:
         if dist_to_anchor_robot > NORM_EPS
         else anchor_robot_yaw
     )
-    yaw_err = wrap_to_pi(desired_yaw - yaw)
-
-    target_xy = _compute_listening_sector_target_point(
-        human,
+    listen_radius = float(ctx["listen_radius"])
+    human.current_waypoint = robot_sector_center_point(
+        anchor_robot_xy,
+        anchor_robot_yaw,
+        listen_radius,
+    )
+    v_goal = robot_sector_velocity_field(
         current_xy=current_xy,
         robot_xy=anchor_robot_xy,
-        robot_yaw=anchor_robot_yaw,
-        listen_radius=ctx["listen_radius"],
+        center_yaw=anchor_robot_yaw,
+        desired_radius=listen_radius,
         sector_half_angle=ctx["listening_sector_half_angle"],
+        radius_gain=ROBOT_SECTOR_RADIUS_GAIN,
+        sector_gain=ROBOT_SECTOR_GAIN,
+        speed_limit=human.max_speed,
+        deadband=VELOCITY_FIELD_DEADBAND,
     )
-    guide_xy = target_xy - current_xy
-    v_goal = LISTENING_RING_GAIN * guide_xy
-    v_total = human._compose_move_velocity(
+
+    return _compose_field_action(
+        human,
+        ctx,
         current_xy=current_xy,
-        guide_xy=guide_xy,
+        yaw=yaw,
         goal_v_xy=v_goal,
         speed_limit=human.max_speed,
-        repulsion_xy=ctx["repulsion"],
         robot_xy=live_robot_xy,
         hr_distance_min=human.hr_distance_min,
         hr_distance_max=None,
+        face_yaw=desired_yaw,
     )
-
-    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
 def _step_curiosity(human, ctx, pose):
@@ -210,10 +304,18 @@ def _step_distracted(human, ctx, pose):
 
 
 def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
-    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
-    to_target_xy = target_xy - current_xy
-    dist_to_target = np.linalg.norm(to_target_xy)
-    if (not human.distracted_stop_reached) and dist_to_target <= human.waypoint_threshold:
+    focus_xy = (
+        np.asarray(human.distracted_focus_xy, dtype=np.float32)
+        if human.distracted_focus_xy is not None
+        else np.asarray(human.distracted_target_xy, dtype=np.float32)
+    )
+    focus_radius = float(getattr(human, "distracted_focus_radius", 0.0))
+    to_focus_xy = focus_xy - current_xy
+    dist_to_focus = float(np.linalg.norm(to_focus_xy))
+    if (
+        (not human.distracted_stop_reached)
+        and abs(dist_to_focus - focus_radius) <= human.waypoint_threshold
+    ):
         human.distracted_stop_reached = True
         human.distracted_timer = 0
 
@@ -226,25 +328,28 @@ def _step_following_distracted_focus(human, ctx, *, current_xy, yaw: float):
         )
 
     move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
-    if dist_to_target > NORM_EPS:
-        v_goal = move_speed_limit * (to_target_xy / dist_to_target)
-    else:
-        v_goal = np.zeros(2, dtype=np.float32)
+    v_goal = anchor_velocity_field(
+        current_xy=current_xy,
+        anchor_xy=focus_xy,
+        desired_radius=focus_radius,
+        radius_gain=ANCHOR_FIELD_RADIUS_GAIN,
+        speed_limit=move_speed_limit,
+        deadband=VELOCITY_FIELD_DEADBAND,
+    )
 
     robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-    v_total = human._compose_move_velocity(
+    return _compose_field_action(
+        human,
+        ctx,
         current_xy=current_xy,
-        guide_xy=to_target_xy,
+        yaw=yaw,
         goal_v_xy=v_goal,
         speed_limit=move_speed_limit,
-        repulsion_xy=ctx["repulsion"],
         robot_xy=robot_xy,
         hr_distance_min=human.hr_distance_min,
         hr_distance_max=None,
+        face_yaw=desired_yaw,
     )
-
-    yaw_err = wrap_to_pi(desired_yaw - yaw)
-    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
 def _step_nd_stop_and_go_following(human, ctx, pose):
@@ -255,11 +360,10 @@ def _step_nd_stop_and_go_following(human, ctx, pose):
     cycle_steps = pause_steps + move_steps
     cycle_step = (human.distracted_timer - 1) % cycle_steps
 
-    human.assign_target_from_context(ctx, mode=HumanMode.FOLLOWING)
     current_xy = np.asarray(pose[:2], dtype=np.float32)
-    to_follow_xy = human.current_waypoint - current_xy
-    follow_dist = float(np.linalg.norm(to_follow_xy))
-    desired_yaw = float(np.arctan2(to_follow_xy[1], to_follow_xy[0])) if follow_dist > NORM_EPS else float(pose[2])
+    v_goal = _following_velocity_field(human, ctx, current_xy)
+    goal_speed = float(np.linalg.norm(v_goal))
+    desired_yaw = float(np.arctan2(v_goal[1], v_goal[0])) if goal_speed > NORM_EPS else float(pose[2])
     yaw_err = wrap_to_pi(desired_yaw - pose[2])
 
     if cycle_step < pause_steps:
@@ -321,21 +425,24 @@ def _step_overwhelmed(human, ctx, pose):
     desired_yaw = np.arctan2(leave_dir[1], leave_dir[0])
 
     if human.overwhelmed_stage == "backoff":
-        backoff_target = human.overwhelmed_backoff_start_xy + human.overwhelmed_backoff_dist * leave_dir
-        to_target = backoff_target - pos_xy
-        dist_to_target = np.linalg.norm(to_target)
-        if dist_to_target < OVERWHELMED_STAGE_SWITCH_DIST:
+        start_xy = np.asarray(human.overwhelmed_backoff_start_xy, dtype=np.float32)
+        progress = float(np.dot(pos_xy - start_xy, leave_dir))
+        remaining_distance = float(human.overwhelmed_backoff_dist) - progress
+        if remaining_distance <= OVERWHELMED_STAGE_SWITCH_DIST:
             human.overwhelmed_stage = "leave"
-            dist_to_target = 0.0
+            remaining_distance = 0.0
 
         move_speed_limit = min(human.overwhelmed_leave_speed, human.max_speed)
-        if dist_to_target > NORM_EPS:
-            goal_v_xy = move_speed_limit * (to_target / dist_to_target)
-        else:
-            goal_v_xy = np.zeros(2, dtype=np.float32)
+        goal_v_xy = direction_velocity_field(
+            direction_xy=leave_dir,
+            remaining_distance=remaining_distance,
+            speed_limit=move_speed_limit,
+            gain=DIRECTION_FIELD_GAIN,
+            deadband=OVERWHELMED_STAGE_SWITCH_DIST,
+        )
         v_xy = human._compose_move_velocity(
             current_xy=pos_xy,
-            guide_xy=to_target,
+            guide_xy=goal_v_xy if float(np.linalg.norm(goal_v_xy)) > NORM_EPS else leave_dir,
             goal_v_xy=goal_v_xy,
             speed_limit=move_speed_limit,
         )
@@ -416,41 +523,42 @@ def _step_impatient(human, ctx, pose):
                 action = _step_listening_impatient_glance(human, base_yaw=base_yaw, yaw=yaw)
             else:
                 target_xy = np.asarray(midpoint_xy, dtype=np.float32)
-                to_target_xy = target_xy - current_xy
-                dist_to_target = float(np.linalg.norm(to_target_xy))
-
-                if dist_to_target <= human.waypoint_threshold:
+                human.current_waypoint = target_xy.copy()
+                if float(np.linalg.norm(target_xy - current_xy)) <= human.waypoint_threshold:
                     action = np.zeros(3, dtype=np.float32)
                 else:
-                    v_goal = human.max_speed * (to_target_xy / dist_to_target)
-                    v_total = human._compose_move_velocity(
+                    v_goal = anchor_velocity_field(
                         current_xy=current_xy,
-                        guide_xy=to_target_xy,
+                        anchor_xy=target_xy,
+                        desired_radius=0.0,
+                        radius_gain=ANCHOR_FIELD_RADIUS_GAIN,
+                        speed_limit=human.max_speed,
+                        deadband=VELOCITY_FIELD_DEADBAND,
+                    )
+                    action = _compose_field_action(
+                        human,
+                        ctx,
+                        current_xy=current_xy,
+                        yaw=yaw,
                         goal_v_xy=v_goal,
                         speed_limit=human.max_speed,
-                        repulsion_xy=ctx["repulsion"],
                         robot_xy=robot_xy,
                         hr_distance_min=human.hr_distance_min,
                         hr_distance_max=None,
                     )
-                    guide_norm = float(np.linalg.norm(to_target_xy))
-                    if guide_norm > NORM_EPS:
-                        guide_dir = to_target_xy / guide_norm
-                        if float(np.dot(v_total, guide_dir)) <= MIN_SPEED_EPS:
-                            fallback_v_xy = human._constrain_velocity_with_walkable(v_goal)
-                            if float(np.dot(fallback_v_xy, guide_dir)) > MIN_SPEED_EPS:
-                                v_total = np.asarray(fallback_v_xy, dtype=np.float32)
-                            else:
-                                v_total = np.zeros(2, dtype=np.float32)
-                    speed = float(np.linalg.norm(v_total))
-                    desired_yaw = float(np.arctan2(v_total[1], v_total[0])) if speed > NORM_EPS else float(yaw)
-                    action = human._compose_action(
-                        v_total,
-                        HUMAN_YAW_RATE_GAIN * wrap_to_pi(desired_yaw - yaw),
-                    )
     else:
-        human.assign_target_from_context(ctx)
-        action = _step_following(human, ctx, pose)
+        v_goal = _impatient_front_velocity_field(human, ctx, current_xy)
+        action = _compose_field_action(
+            human,
+            ctx,
+            current_xy=current_xy,
+            yaw=yaw,
+            goal_v_xy=v_goal,
+            speed_limit=human.max_speed,
+            robot_xy=ctx["robot_xy"],
+            hr_distance_min=human.hr_distance_min,
+            hr_distance_max=human.hr_distance_max,
+        )
 
     if human.impatient_timer >= human.impatient_duration:
         recovery_mode = ctx.get("impatient_recovery_mode", human.impatient_recovery_mode)
@@ -461,16 +569,41 @@ def _step_impatient(human, ctx, pose):
 
 
 def _step_post_explanation_yield(human, ctx, pose):
-    """Move toward a temporary yield target without exposing a custom public step."""
+    """Move along the saved yield direction without chasing a fixed point."""
     target_xy = np.asarray(ctx["target_xy"], dtype=np.float32)
     human.current_waypoint = target_xy.copy()
     current_xy = np.asarray(pose[:2], dtype=np.float32)
-    return human._move(target_xy - current_xy, pose[2], ctx, current_xy)
+    yield_start_xy = np.asarray(ctx.get("yield_start_xy", current_xy), dtype=np.float32)
+    yield_dir = np.asarray(ctx.get("yield_dir", target_xy - yield_start_xy), dtype=np.float32)
+    yield_norm = float(np.linalg.norm(yield_dir))
+    if yield_norm <= NORM_EPS:
+        return human._compose_action(np.zeros(2, dtype=np.float32), 0.0)
+
+    yield_dir = yield_dir / yield_norm
+    progress = float(np.dot(current_xy - yield_start_xy, yield_dir))
+    remaining_distance = float(ctx.get("yield_distance", 0.0)) - progress
+    v_goal = direction_velocity_field(
+        direction_xy=yield_dir,
+        remaining_distance=remaining_distance,
+        speed_limit=human.max_speed,
+        gain=DIRECTION_FIELD_GAIN,
+        deadband=VELOCITY_FIELD_DEADBAND,
+    )
+    return _compose_field_action(
+        human,
+        ctx,
+        current_xy=current_xy,
+        yaw=pose[2],
+        goal_v_xy=v_goal,
+        speed_limit=human.max_speed,
+        robot_xy=ctx["robot_xy"],
+        hr_distance_min=human.hr_distance_min,
+        hr_distance_max=human.hr_distance_max,
+    )
 
 
 def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float, partner_xy):
     partner_xy = np.asarray(partner_xy, dtype=np.float32)
-    target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
     to_partner_xy = partner_xy - current_xy
     dist_to_partner = float(np.linalg.norm(to_partner_xy))
     desired_yaw = float(
@@ -479,7 +612,7 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
         else human.distracted_target_yaw
     )
 
-    if dist_to_partner <= DISTRACTED_CONVERSATION_STOP_DISTANCE + NORM_EPS:
+    if abs(dist_to_partner - DISTRACTED_CONVERSATION_STOP_DISTANCE) <= human.waypoint_threshold:
         yaw_err = wrap_to_pi(desired_yaw - current_yaw)
         if abs(yaw_err) >= np.deg2rad(HUMAN_ROTATION_STOP_DEG):
             return human._compose_action(
@@ -488,27 +621,29 @@ def _step_distracted_conversation(human, ctx, *, current_xy, current_yaw: float,
             )
         return np.zeros(3, dtype=np.float32)
 
-    to_target_xy = target_xy - current_xy
     move_speed_limit = DISTRACTED_SPEED_SCALE * human.max_speed
-    if np.linalg.norm(to_target_xy) > NORM_EPS:
-        v_goal = move_speed_limit * (to_target_xy / np.linalg.norm(to_target_xy))
-    else:
-        v_goal = np.zeros(2, dtype=np.float32)
+    v_goal = anchor_velocity_field(
+        current_xy=current_xy,
+        anchor_xy=partner_xy,
+        desired_radius=DISTRACTED_CONVERSATION_STOP_DISTANCE,
+        radius_gain=ANCHOR_FIELD_RADIUS_GAIN,
+        speed_limit=move_speed_limit,
+        deadband=VELOCITY_FIELD_DEADBAND,
+    )
 
     robot_xy = np.asarray(ctx["robot_xy"], dtype=np.float32)
-    v_total = human._compose_move_velocity(
+    return _compose_field_action(
+        human,
+        ctx,
         current_xy=current_xy,
-        guide_xy=to_target_xy,
+        yaw=current_yaw,
         goal_v_xy=v_goal,
         speed_limit=move_speed_limit,
-        repulsion_xy=ctx["repulsion"],
         robot_xy=robot_xy,
         hr_distance_min=human.hr_distance_min,
         hr_distance_max=None,
+        face_yaw=desired_yaw,
     )
-
-    yaw_err = wrap_to_pi(desired_yaw - current_yaw)
-    return human._compose_action(v_total, HUMAN_YAW_RATE_GAIN * yaw_err)
 
 
 def _sync_distracted_conversation_state(human, ctx, current_xy):
@@ -540,6 +675,8 @@ def _sync_distracted_conversation_state(human, ctx, current_xy):
         target_xy=target_xy,
         behavior_kind=DISTRACTED_BEHAVIOR_CONVERSATION,
         partner_index=partner_index,
+        focus_xy=partner_xy,
+        focus_radius=DISTRACTED_CONVERSATION_STOP_DISTANCE,
     )
     return partner_xy
 
@@ -586,7 +723,9 @@ def _resolve_distracted_conversation_partner(human, ctx, current_xy):
 
 def _resolve_focus_yaw(human, current_xy, *, fallback_yaw: float) -> float:
     focus_target_xy = None
-    if human.distracted_target_xy is not None:
+    if getattr(human, "distracted_focus_xy", None) is not None:
+        focus_target_xy = np.asarray(human.distracted_focus_xy, dtype=np.float32)
+    elif human.distracted_target_xy is not None:
         focus_target_xy = np.asarray(human.distracted_target_xy, dtype=np.float32)
 
     if focus_target_xy is not None:
@@ -676,7 +815,12 @@ def _initialize_distracted_target(
             )
         else:
             target_xy = current_xy.copy()
-        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=target_xy)
+        human._set_distracted_target_state(
+            target_yaw=target_yaw,
+            target_xy=target_xy,
+            focus_xy=exhibit_target_xy,
+            focus_radius=DISTRACTED_TARGET_DISTANCE_MIN,
+        )
         return True
 
     focus_target_xy = _select_nearest_candidate(
@@ -690,7 +834,12 @@ def _initialize_distracted_target(
             focus_target_xy[1] - current_xy[1],
             focus_target_xy[0] - current_xy[0],
         )
-        human._set_distracted_target_state(target_yaw=target_yaw, target_xy=focus_target_xy)
+        human._set_distracted_target_state(
+            target_yaw=target_yaw,
+            target_xy=focus_target_xy,
+            focus_xy=focus_target_xy,
+            focus_radius=DISTRACTED_TARGET_DISTANCE_MIN,
+        )
         return True
 
     if not allow_random_fallback:
@@ -711,6 +860,8 @@ def _initialize_distracted_target(
     human._set_distracted_target_state(
         target_yaw=float(fallback_yaw),
         target_xy=np.asarray(fallback_target_xy, dtype=np.float32),
+        focus_xy=np.asarray(fallback_target_xy, dtype=np.float32),
+        focus_radius=0.0,
     )
     return True
 

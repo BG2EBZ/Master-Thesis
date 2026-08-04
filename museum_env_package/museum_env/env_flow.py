@@ -176,6 +176,8 @@ def start_post_explanation_hold(env, robot_xy, robot_yaw: float, human_xy) -> No
     human_xy = np.asarray(human_xy, dtype=np.float32)
     n_humans = len(env.humans)
     targets = np.zeros((n_humans, 2), dtype=np.float32)
+    yield_start_xy = np.zeros((n_humans, 2), dtype=np.float32)
+    yield_dirs = np.zeros((n_humans, 2), dtype=np.float32)
     listen_radii = np.zeros((n_humans,), dtype=np.float32)
     roles = [POST_EXPLANATION_ROLE_WAIT] * n_humans
     half_width = 0.5 * float(POST_EXPLANATION_YIELD_CORRIDOR_WIDTH)
@@ -191,6 +193,7 @@ def start_post_explanation_hold(env, robot_xy, robot_yaw: float, human_xy) -> No
         )
 
         listen_radii[idx] = max(float(np.linalg.norm(diff)), env.listen_stand_threshold)
+        yield_start_xy[idx] = current_xy
         if should_yield:
             roles[idx] = POST_EXPLANATION_ROLE_YIELD
             targets[idx] = build_post_explanation_yield_target(
@@ -199,11 +202,17 @@ def start_post_explanation_hold(env, robot_xy, robot_yaw: float, human_xy) -> No
                 robot_xy=robot_xy,
                 outbound_dir=outbound_dir,
             )
+            yield_vec = targets[idx] - current_xy
+            yield_norm = float(np.linalg.norm(yield_vec))
+            if yield_norm > 1e-6:
+                yield_dirs[idx] = yield_vec / yield_norm
         else:
             targets[idx] = current_xy
 
     env.post_explanation_state.roles = roles
     env.post_explanation_state.targets = targets
+    env.post_explanation_state.yield_start_xy = yield_start_xy
+    env.post_explanation_state.yield_dirs = yield_dirs
     env.post_explanation_state.listen_radii = listen_radii
 
 
