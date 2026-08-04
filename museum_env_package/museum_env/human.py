@@ -18,7 +18,7 @@ DEFAULT_IMPATIENT_FRONT_OFFSET = 1.2
 HUMAN_YAW_RATE_GAIN = 3.0
 HUMAN_ROTATION_STOP_DEG = 3.0
 HUMAN_ARRIVAL_STOP_RADIUS = 0.12
-HUMAN_ARRIVAL_SLOW_RADIUS = 0.60
+HUMAN_ARRIVAL_SLOW_RADIUS = 3.0
 LISTENING_RING_GAIN = 3.0
 LISTENING_SECTOR_PROJECTION_EPS = 1e-2
 DISTRACTED_SPEED_SCALE = 0.5
@@ -30,9 +30,9 @@ DEFAULT_SIM_TIMESTEP_SECONDS = 0.05
 DISTRACTED_DURATION_SECONDS_DEFAULT = 10.0
 DISTRACTED_STOP_DURATION_SECONDS = 5.0
 DISTRACTED_EXHIBIT_LOOK_RADIUS = 4.0
-DISTRACTED_HUMAN_LOOK_RADIUS = 2.0
+DISTRACTED_HUMAN_LOOK_RADIUS = 1.5
 DISTRACTED_FALLBACK_DISTANCE = 1.0
-DISTRACTED_CONVERSATION_STOP_DISTANCE = 0.8
+DISTRACTED_CONVERSATION_STOP_DISTANCE = 0.7
 ND_DISTRACTED_STOP_AND_GO_STOP_SECONDS = 1.0
 ND_DISTRACTED_STOP_AND_GO_MOVE_SECONDS = 0.5
 LISTENING_IMPATIENT_GLANCE_SECONDS_DEFAULT = 2.0
@@ -332,6 +332,23 @@ class Human:
 
     def reset_following_duration(self):
         self.following_steps = 0
+
+    def reset_active_context_time(self, context: str) -> None:
+        if context == "following":
+            self.cumulative_following_steps = max(
+                0,
+                int(self.cumulative_following_steps) - int(self.following_steps),
+            )
+            self.following_steps = 0
+            return
+        if context == "listening":
+            self.cumulative_listening_steps = max(
+                0,
+                int(self.cumulative_listening_steps) - int(self.listening_steps),
+            )
+            self.listening_steps = 0
+            return
+        raise ValueError(f"Unsupported active context: {context!r}")
 
     def update_following_duration(self, eligible_following: bool):
         if eligible_following:

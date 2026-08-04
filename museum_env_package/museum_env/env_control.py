@@ -201,6 +201,7 @@ def apply_fuzzy_transition(
         return
 
     if dominant_state == "distracted":
+        human.reset_active_context_time(context)
         human.distracted_source = distracted_source
         human.distracted_recovery_mode = recovery_mode
         human.set_mode(HumanMode.DISTRACTED)
@@ -212,6 +213,7 @@ def apply_fuzzy_transition(
         return
 
     if dominant_state == "impatient":
+        human.reset_active_context_time(context)
         human.start_impatient(recovery_mode=recovery_mode)
         env._record_episode_trigger("impatient")
         msg = f">>> {human.name} became IMPATIENT!"
@@ -221,6 +223,7 @@ def apply_fuzzy_transition(
         return
 
     if dominant_state == "overwhelmed":
+        human.reset_active_context_time(context)
         current_xy = np.array(human.get_pose(env.data)[:2], dtype=np.float32)
         human.start_overwhelmed(
             robot_xy=np.array(world_frame.robot_xy, dtype=np.float32),
