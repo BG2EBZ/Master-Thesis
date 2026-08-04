@@ -13,6 +13,7 @@ setup(
         "matplotlib",
         "mujoco",
         "numpy",
+        "scipy",
         "scikit-fuzzy",
     ],
 )
