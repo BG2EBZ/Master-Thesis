@@ -152,11 +152,13 @@ Example:
 
 - GPU: 0
 - CPU: 0-23
+- max RWR workers: 24
 
 Start Docker:
 
 ```bash
 CPU_RANGE="0-23"
+MAX_WORKERS="24"
 
 docker run --rm -it \
     --cpuset-cpus="${CPU_RANGE}" \
@@ -164,6 +166,7 @@ docker run --rm -it \
     -e HOME=/workspace/.docker-home \
     -e PYTHONNOUSERSITE=1 \
     -e MUJOCO_GL=osmesa \
+    -e MAX_WORKERS="${MAX_WORKERS}" \
     -v "$PWD":/workspace \
     -w /workspace \
     wang/master-thesis:py311 \
@@ -189,6 +192,11 @@ Expected output:
 pid 1's current affinity list: 0-23
 ```
 
+Use the same CPU booking to choose `--max-workers` for `scripts/train_rwr.py`.
+For example, CPU range `0-23` means 24 assigned CPU cores, so use
+`--max-workers 24` or a smaller number if you want to leave spare capacity.
+The trainer also caps the actual worker count by the number of rollout tasks
+and the CPU count visible inside Docker.
 
 ---
 
@@ -221,6 +229,7 @@ Before large experiments:
 python scripts/train_rwr.py \
     --epochs 1 \
     --samples-per-epoch 2 \
+    --max-workers "${MAX_WORKERS}" \
     --train-seeds-per-epoch 1 \
     --n-learning-seeds 1 \
     --n-eval-seeds 1 \
@@ -246,8 +255,9 @@ Example:
 python -u scripts/train_rwr.py \
     --epochs 100 \
     --samples-per-epoch 30 \
+    --max-workers "${MAX_WORKERS}" \
     --seed 42 \
-    --beta 5 \
+    --beta 0.1 \
     --train-seeds-per-epoch 10 \
     --n-learning-seeds 10 \
     --n-eval-seeds 20 \
@@ -256,6 +266,19 @@ python -u scripts/train_rwr.py \
 ```
 
 Adjust parameters as needed.
+
+Important training parameters:
+
+- `--epochs`: number of RWR update epochs. Default: `100`.
+- `--samples-per-epoch`: sampled policy count per epoch. Default: `30`.
+- `--max-workers`: maximum parallel worker processes for rollout evaluation. Default: `24`.
+- `--seed`: master seed for policy sampling and rollout seed generation. Default: `42`.
+- `--beta`: RWR reward-weight temperature. Default: `0.1`.
+- `--train-seeds-per-epoch`: rollout seeds used to evaluate each sampled theta during training. Default: `1`.
+- `--n-learning-seeds`: independent learning runs. Use `1` for a normal single run, or more than `1` to generate learning-curve data. Default: `1`.
+- `--n-eval-seeds`: fresh evaluation episodes per epoch in multi-learning-seed mode. Default: `20`.
+- `--n-humans`: number of humans in the simulated museum crowd. Default: `15`.
+- `--output-dir`: result directory. If omitted, the default is `artifacts/runs/rwr_YYYYMMDD_HHMMSS`.
 
 ---
 

@@ -13,11 +13,11 @@ def theta_to_guide_config(theta) -> GuideBehaviorConfig:
     slow_down_distance_m = float(np.clip(theta[0], 1.5, 3.5))
     callback_distance_m = float(np.clip(theta[1], slow_down_distance_m + 0.4, 5.5))
     callback_wait_seconds = float(np.clip(theta[2], 0.5, 8.0))
-    slowdown_speed_scale = float(np.clip(theta[3], 0.3, 0.95))
+    slowdown_speed_scale = float(np.clip(theta[3], 0.5, 0.95))
 
     explanation_time_scale = 1.0
     if theta.shape in ((5,), (6,)):
-        explanation_time_scale = float(np.clip(theta[4], 0.7, 1.0))
+        explanation_time_scale = float(np.clip(theta[4], 0.75, 1.0))
 
     callback_same_person_cooldown_seconds = 20.0
     if theta.shape == (6,):

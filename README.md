@@ -119,7 +119,7 @@ Reproducibility example:
 
 The minimal RWR trainer writes:
 
-- default output directory: `artifacts/runs/rwr_minimal`
+- default output directory: `artifacts/runs/rwr_YYYYMMDD_HHMMSS`
 - `training_metrics.csv`
 - `training_metrics.png`
 - `best_params.json`: best sampled theta plus final distribution-center policy params
@@ -130,10 +130,15 @@ For a learning-seed by epoch dataset, run the RWR trainer with multiple learning
 /home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py \
   --epochs 30 \
   --samples-per-epoch 30 \
+  --max-workers 8 \
   --n-learning-seeds 10 \
   --n-eval-seeds 20 \
   --output-dir artifacts/runs/rwr_dataset_10x31
 ```
+
+Use `--max-workers` to cap the number of parallel worker processes used for rollout
+evaluation. The actual worker count is also limited by the number of rollout tasks and
+the available CPU count.
 
 The multi-seed path writes:
 

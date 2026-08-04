@@ -24,6 +24,7 @@ from train.rwr.defaults import (
     DEFAULT_BETA,
     DEFAULT_EPOCHS,
     DEFAULT_EPOCH_TRAIN_SEED_COUNT,
+    DEFAULT_MAX_WORKERS,
     DEFAULT_N_EVAL_SEEDS,
     DEFAULT_N_HUMANS,
     DEFAULT_N_LEARNING_SEEDS,
@@ -100,6 +101,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Number of fresh learning-curve evaluation episodes generated per epoch.",
     )
     parser.add_argument(
+        "--max-workers",
+        type=_positive_int,
+        default=DEFAULT_MAX_WORKERS,
+        help="Maximum number of worker processes used for parallel training rollouts.",
+    )
+    parser.add_argument(
         "--time-penalty-per-second",
         type=_positive_float,
         default=DEFAULT_EPISODE_REWARD_WEIGHTS.time_penalty_per_second,
@@ -146,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             train_seeds_per_epoch=int(args.train_seeds_per_epoch),
             n_humans=int(args.n_humans),
             reward_config=reward_config,
+            max_workers=int(args.max_workers),
         )
     else:
         train_across_learning_seeds(
@@ -159,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reward_config=reward_config,
             n_learning_seeds=int(args.n_learning_seeds),
             n_eval_seeds=int(args.n_eval_seeds),
+            max_workers=int(args.max_workers),
         )
     return 0
 

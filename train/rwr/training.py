@@ -145,6 +145,14 @@ def _build_seed_schedule(
     return seed_schedule
 
 
+def _resolve_worker_count(*, task_count: int, max_workers: int) -> int:
+    resolved_task_count = int(task_count)
+    resolved_max_workers = int(max_workers)
+    if resolved_max_workers <= 0:
+        raise ValueError("max_workers must be positive")
+    return min(resolved_task_count, os.cpu_count() or 1, resolved_max_workers)
+
+
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
     return summarize_theta(theta)
 
@@ -226,6 +234,7 @@ def _evaluate_baseline_learning_curve_rows(
     epochs: Sequence[int],
     n_humans: int,
     reward_config: EpisodeRewardWeights | None,
+    max_workers: int,
 ) -> list[dict[str, float | int | str]]:
     baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
     ordered_epochs = [int(epoch) for epoch in epochs]
@@ -240,7 +249,10 @@ def _evaluate_baseline_learning_curve_rows(
         for learning_seed in ordered_learning_seeds
         for epoch_idx in range(len(ordered_epochs))
     )
-    max_workers = min(total_episode_count, os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
+    worker_count = _resolve_worker_count(
+        task_count=total_episode_count,
+        max_workers=int(max_workers),
+    )
 
     def _evaluate_baseline_learning_seeds(
         executor: ProcessPoolExecutor | None,
@@ -291,7 +303,7 @@ def _evaluate_baseline_learning_curve_rows(
             )
         return rows
 
-    if max_workers == 1:
+    if worker_count == 1:
         try:
             rows = _evaluate_baseline_learning_seeds(executor=None)
         finally:
@@ -299,7 +311,7 @@ def _evaluate_baseline_learning_curve_rows(
 
             close_cached_env()
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
             rows = _evaluate_baseline_learning_seeds(executor=executor)
 
     return rows
@@ -314,6 +326,7 @@ def _train_single_learning_seed(
     train_seeds_per_epoch: int,
     n_humans: int,
     reward_config: EpisodeRewardWeights | None,
+    max_workers: int,
     learning_curve_eval_seeds_per_epoch: int | None = None,
 ) -> SingleSeedTrainingResult:
     resolved_reward_config = (
@@ -351,8 +364,12 @@ def _train_single_learning_seed(
     best_return_seen = float("-inf")
     best_epoch = 0
     best_sample_index = 0
-    max_workers = min(samples_per_epoch, os.cpu_count() or 1, DEFAULT_MAX_WORKERS)
-    print_explanations = max_workers == 1
+    max_training_tasks_per_epoch = int(samples_per_epoch) * int(train_seeds_per_epoch)
+    worker_count = _resolve_worker_count(
+        task_count=max_training_tasks_per_epoch,
+        max_workers=int(max_workers),
+    )
+    print_explanations = worker_count == 1
     initial_theta = INITIAL_MU.copy()
 
     def _record_learning_curve_epoch(
@@ -465,7 +482,7 @@ def _train_single_learning_seed(
                 f"mean_duration={float(epoch_metrics['mean_duration_seconds']):.3f}"
             )
 
-    if max_workers == 1:
+    if worker_count == 1:
         try:
             _run_training_loop(executor=None)
         finally:
@@ -473,7 +490,7 @@ def _train_single_learning_seed(
 
             close_cached_env()
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
             _run_training_loop(executor=executor)
 
     if best_theta_seen is None or best_evaluation is None:
@@ -502,6 +519,7 @@ def train(
     train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     n_humans: int = DEFAULT_N_HUMANS,
     reward_config: EpisodeRewardWeights | None = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> list[dict[str, float | int]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     result = _train_single_learning_seed(
@@ -512,6 +530,7 @@ def train(
         train_seeds_per_epoch=int(train_seeds_per_epoch),
         n_humans=int(n_humans),
         reward_config=reward_config,
+        max_workers=int(max_workers),
         learning_curve_eval_seeds_per_epoch=None,
     )
 
@@ -574,6 +593,7 @@ def train_across_learning_seeds(
     reward_config: EpisodeRewardWeights | None = None,
     n_learning_seeds: int = DEFAULT_N_LEARNING_SEEDS,
     n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> list[dict[str, float | int | str]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_n_learning_seeds = int(n_learning_seeds)
@@ -607,6 +627,7 @@ def train_across_learning_seeds(
             train_seeds_per_epoch=int(train_seeds_per_epoch),
             n_humans=int(n_humans),
             reward_config=reward_config,
+            max_workers=int(max_workers),
             learning_curve_eval_seeds_per_epoch=resolved_n_eval_seeds,
         )
         result_learning_seed = (
@@ -636,6 +657,7 @@ def train_across_learning_seeds(
         epochs=ordered_epochs,
         n_humans=int(n_humans),
         reward_config=reward_config,
+        max_workers=int(max_workers),
     )
     all_learning_curve_rows = learning_curve_rows + baseline_learning_curve_rows
 
