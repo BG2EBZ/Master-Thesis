@@ -255,14 +255,13 @@ Example:
 python -u scripts/train_rwr.py \
     --epochs 100 \
     --samples-per-epoch 30 \
-    --max-workers "${MAX_WORKERS}" \
+    --max-workers 24 \
     --seed 42 \
     --beta 0.1 \
-    --train-seeds-per-epoch 10 \
+    --train-seeds-per-epoch 1 \
     --n-learning-seeds 10 \
     --n-eval-seeds 20 \
-    --n-humans 15 \
-    --output-dir runs/rwr_exp1
+
 ```
 
 Adjust parameters as needed.

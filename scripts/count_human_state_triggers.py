@@ -18,7 +18,7 @@ from museum_env import MuseumEnv
 from museum_env.human import HumanMode
 
 DEFAULT_EPISODES = 20
-DEFAULT_MASTER_SEED = 42
+DEFAULT_MASTER_SEED = 45
 DEFAULT_N_HUMANS = 15
 DEFAULT_STATES = (
     HumanMode.OVERWHELMED,

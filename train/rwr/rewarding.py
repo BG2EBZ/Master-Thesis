@@ -8,8 +8,8 @@ import gymnasium as gym
 @dataclass(frozen=True)
 class EpisodeRewardWeights:
     time_penalty_per_second: float = 0.1
-    overwhelmed_trigger_penalty: float = 4.0
-    impatient_trigger_penalty: float = 2.0
+    overwhelmed_trigger_penalty: float = 2.0
+    impatient_trigger_penalty: float = 4.0
     distracted_trigger_penalty: float = 2.0
 
 
