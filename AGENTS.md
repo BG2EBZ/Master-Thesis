@@ -17,6 +17,13 @@
 - `museum_env_package/museum_env/env_state.py`: orchestration constants and dataclasses for listening, callback, post-explanation, cached observations, and debug state.
 - `museum_env_package/museum_env/env_reporting.py`: compact `info` payload builder plus rendering helpers for labels, speaking halos, and robot visual state.
 - `museum_env_package/museum_env/register_env.py`: Gymnasium registration for `MuseumEnv-v0`.
+- `scripts/train_rwr.py`: RWR training entrypoint.
+- `scripts/train_reps.py`: REPS training entrypoint.
+- `scripts/compare_policy_search_runs.py`: combines RWR, REPS, and baseline learning curves into one MushroomRL-style mean/CI plot.
+- `train/rwr/algorithm.py`: RWR and REPS distribution update logic for sampled guide-policy parameters.
+- `train/rwr/evaluation.py`: rollout task construction, theta evaluation, and baseline learning-curve evaluation helpers.
+- `train/rwr/seed_plan.py`: reproducible learning-seed, rollout-seed, and evaluation-seed plan generation and hashing.
+- `train/rwr/schedules.py`: seed schedule and worker-count helpers used by policy-search training.
 
 ## Behavior Model
 
@@ -60,7 +67,8 @@ cd /home/tianci/Polimi/workspace/Master-Thesis
 /home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train --print-every 1000
 /home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train --max-steps 5 --print-every 1
 /home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder
-/home/tianci/Polimi/workspace/venv/bin/python -m unittest /home/tianci/Polimi/workspace/Master-Thesis/tests/test_policy_search_params.py
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py --eps 0.1 --epochs 1 --samples-per-epoch 2 --train-seeds-per-epoch 1 --n-learning-seeds 1 --n-humans 3 --max-workers 1
+/home/tianci/Polimi/workspace/venv/bin/python -m unittest discover -s tests
 ```
 
 ## Working Rules
@@ -69,6 +77,10 @@ cd /home/tianci/Polimi/workspace/Master-Thesis
 - Preserve the compact `info` schema by default. If you add or remove fields, update repo docs and affected tests in the same change.
 - Start behavior validation with the short train smoke command before running longer demo or record flows.
 - Treat the unittest command as a regression probe. Report observed outcomes instead of assuming the full suite is green on the current branch.
+- Keep RWR and REPS CLI entrypoints separate: `scripts/train_rwr.py` is RWR-only and `scripts/train_reps.py` is REPS-only.
+- For fair RWR/REPS comparisons, reuse the same `seed_plan.json` and let `scripts/compare_policy_search_runs.py` verify the shared `seed_plan_hash`.
+- Keep the existing `train/rwr` package name for now, even though it also contains REPS support. Consider a later `train/policy_search` migration only after the policy-search experiments stabilize.
+- When changing policy-search training interfaces, update `README.md`, `AGENTS.md`, and the CLI/algorithm tests in the same task.
 - The worktree may already contain unrelated user changes. Do not reset, rewrite, or “clean up” files outside the task.
 - When a bug appears in orchestration, inspect runtime state labels in `env_state.py` before changing transition logic blindly.
 

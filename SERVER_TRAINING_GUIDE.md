@@ -255,7 +255,7 @@ Example:
 python -u scripts/train_rwr.py \
     --epochs 100 \
     --samples-per-epoch 30 \
-    --max-workers 24 \
+    --max-workers 32 \
     --seed 42 \
     --beta 0.1 \
     --train-seeds-per-epoch 1 \
@@ -332,8 +332,8 @@ On the local laptop:
 
 ```bash
 rsync -avh --progress \
-    wang@10.79.7.244:/megaverse/datasets/wang/Master-Thesis/runs/ \
-    ~/Polimi/workspace/Master-Thesis/runs/
+    wang@10.79.7.244:/megaverse/datasets/wang/Master-Thesis/artifacts/runs/ \
+    ~/Polimi/workspace/Master-Thesis/artifacts/runs/
 ```
 
 ---

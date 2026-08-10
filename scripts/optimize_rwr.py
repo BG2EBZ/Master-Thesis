@@ -1,3 +1,9 @@
+"""RWR-only hyperparameter search for the guide policy-search trainer.
+
+This script intentionally keeps the historical RWR search surface: it sweeps
+RWR training and reward settings, but does not sweep REPS `eps`.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -242,6 +248,7 @@ def _run_training_trial(
         samples_per_epoch=int(config.samples_per_epoch),
         seed=int(config.seed),
         output_dir=train_output_dir,
+        algorithm="rwr",
         beta=float(config.beta),
         train_seeds_per_epoch=int(config.train_seeds_per_epoch),
         n_humans=int(config.n_humans),

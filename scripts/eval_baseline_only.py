@@ -30,7 +30,7 @@ from train.common.plot_utils import compute_mean_confidence_band
 from train.rwr.defaults import DEFAULT_MAX_WORKERS, DEFAULT_N_HUMANS, DEFAULT_SEED
 from train.rwr.policy_codec import guide_config_to_theta, summarize_theta
 from train.rwr.rewarding import DEFAULT_EPISODE_REWARD_WEIGHTS, EpisodeRewardWeights
-from train.rwr.training import _evaluate_episode_task
+from train.rwr.evaluation import _evaluate_episode_task
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_N_SEEDS = 10

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -12,22 +11,18 @@ from museum_env.guide_config import GuideBehaviorConfig
 from train.common.artifacts import build_dense_metric_matrix, write_csv_rows, write_json
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from train.common.plot_utils import compute_mean_confidence_band
-from train.common.rollout import (
-    EpisodeResult,
-    get_cached_env,
-    run_episode,
-    run_episode_batch,
-)
+from train.common.rollout import run_episode_batch
 from train.rwr.algorithm import (
     ThetaEvaluation,
     aggregate_episode_results,
     diagonal_gaussian_entropy,
-    update_distribution,
+    update_distribution_by_algorithm,
 )
 from train.rwr.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_BETA,
     DEFAULT_CSV_NAME,
+    DEFAULT_EPS,
     DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     DEFAULT_EXPLORATION_PLOT_NAME,
     DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME,
@@ -39,10 +34,17 @@ from train.rwr.defaults import (
     DEFAULT_N_HUMANS,
     DEFAULT_N_LEARNING_SEEDS,
     DEFAULT_PLOT_NAME,
+    DEFAULT_SEED_PLAN_NAME,
     INITIAL_MU,
     INITIAL_STD,
     LEARNING_CURVE_RAW_FIELDNAMES,
     METRIC_FIELDNAMES,
+)
+from train.rwr.evaluation import (
+    _evaluate_episode_task,
+    build_learning_curve_row as _build_learning_curve_row,
+    evaluate_baseline_learning_curve_rows as _evaluate_baseline_learning_curve_rows,
+    evaluate_theta_on_seeds as _evaluate_theta_on_seeds,
 )
 from train.rwr.plotting import (
     plot_exploration_metrics,
@@ -52,13 +54,26 @@ from train.rwr.plotting import (
 from train.rwr.policy_codec import (
     guide_config_to_theta,
     summarize_theta,
-    theta_to_guide_config,
 )
 from train.rwr.rewarding import (
     DEFAULT_EPISODE_REWARD_WEIGHTS,
     EpisodeRewardWeights,
-    RWRRewardWrapper,
 )
+from train.rwr.seed_plan import (
+    SeedPlan,
+    build_seed_plan,
+    copy_seed_schedule,
+    seed_plan_hash,
+    validate_seed_plan,
+    write_seed_plan,
+)
+from train.rwr.schedules import (
+    build_epoch_training_seed_schedule as _build_epoch_training_seed_schedule,
+    build_seed_schedule as _build_seed_schedule,
+    resolve_worker_count as _resolve_worker_count,
+)
+
+SUPPORTED_POLICY_SEARCH_ALGORITHMS = ("rwr", "reps")
 
 
 @dataclass(frozen=True)
@@ -71,110 +86,27 @@ class SingleSeedTrainingResult:
     best_sample_index: int
     final_mu: np.ndarray
     final_std: np.ndarray
+    epoch_training_seeds: list[list[int]]
     learning_curve_rows: list[dict[str, float | int | str]]
     learning_curve_eval_seed_schedule: list[list[int]]
-
-
-def _wrap_env(env, reward_config: EpisodeRewardWeights) -> RWRRewardWrapper:
-    return RWRRewardWrapper(env, reward_weights=reward_config)
-
-
-def _evaluate_episode_task(
-    task: tuple[np.ndarray, int, int, bool]
-    | tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]
-) -> EpisodeResult:
-    if len(task) == 4:
-        theta, seed, n_humans, print_explanations = task
-        reward_config = None
-    else:
-        theta, seed, n_humans, print_explanations, reward_config = task
-    env = get_cached_env(
-        n_humans,
-        reward_config=reward_config,
-        default_reward_config=DEFAULT_EPISODE_REWARD_WEIGHTS,
-        wrapper_factory=_wrap_env,
-    )
-    return run_episode(
-        env,
-        theta=theta,
-        seed=seed,
-        theta_to_guide_config=theta_to_guide_config,
-        print_explanations=print_explanations,
-    )
-
-
-def _build_epoch_training_seed_schedule(
-    rng: np.random.Generator,
-    epochs: int,
-    seeds_per_epoch: int,
-) -> list[list[int]]:
-    excluded_seed_set = {int(seed) for seed in FIXED_EVALUATION_SEEDS}
-    epoch_training_seeds: list[list[int]] = []
-
-    for _ in range(epochs):
-        epoch_seeds: list[int] = []
-        while len(epoch_seeds) < seeds_per_epoch:
-            sampled_seed = int(rng.integers(0, np.iinfo(np.int32).max, dtype=np.int64))
-            if sampled_seed in excluded_seed_set:
-                continue
-            epoch_seeds.append(sampled_seed)
-        epoch_training_seeds.append(epoch_seeds)
-
-    return epoch_training_seeds
-
-
-def _build_seed_schedule(
-    rng: np.random.Generator,
-    *,
-    count: int,
-    seeds_per_item: int,
-    excluded_seeds: Sequence[int] = (),
-) -> list[list[int]]:
-    excluded_seed_set = {int(seed) for seed in excluded_seeds}
-    seed_schedule: list[list[int]] = []
-
-    for _ in range(int(count)):
-        item_seeds: list[int] = []
-        while len(item_seeds) < int(seeds_per_item):
-            sampled_seed = int(rng.integers(0, np.iinfo(np.int32).max, dtype=np.int64))
-            if sampled_seed in excluded_seed_set:
-                continue
-            item_seeds.append(sampled_seed)
-        seed_schedule.append(item_seeds)
-
-    return seed_schedule
-
-
-def _resolve_worker_count(*, task_count: int, max_workers: int) -> int:
-    resolved_task_count = int(task_count)
-    resolved_max_workers = int(max_workers)
-    if resolved_max_workers <= 0:
-        raise ValueError("max_workers must be positive")
-    return min(resolved_task_count, os.cpu_count() or 1, resolved_max_workers)
 
 
 def _policy_params_dict(theta: np.ndarray) -> dict[str, float]:
     return summarize_theta(theta)
 
 
-def _build_learning_curve_row(
-    *,
-    policy: str = "rwr",
-    learning_seed: int,
-    epoch: int,
-    evaluation: ThetaEvaluation,
-) -> dict[str, float | int | str]:
-    return {
-        "policy": str(policy),
-        "learning_seed": int(learning_seed),
-        "evaluation_seed": -1,
-        "epoch": int(epoch),
-        "mean_return": float(evaluation.mean_return),
-        "mean_duration_seconds": float(evaluation.mean_duration_seconds),
-        "mean_overwhelmed_triggers": float(evaluation.mean_overwhelmed_triggers),
-        "mean_impatient_triggers": float(evaluation.mean_impatient_triggers),
-        "mean_distracted_triggers": float(evaluation.mean_distracted_triggers),
-    }
+def _normalize_algorithm(algorithm: str) -> str:
+    resolved_algorithm = str(algorithm).lower()
+    if resolved_algorithm not in SUPPORTED_POLICY_SEARCH_ALGORITHMS:
+        raise ValueError(
+            "algorithm must be one of "
+            + ", ".join(repr(item) for item in SUPPORTED_POLICY_SEARCH_ALGORITHMS)
+        )
+    return resolved_algorithm
+
+
+def _algorithm_plot_label(algorithm: str) -> str:
+    return _normalize_algorithm(algorithm).upper()
 
 
 def _build_learning_curve_matrix_rows(
@@ -193,128 +125,36 @@ def _build_learning_curve_matrix_rows(
     return rows, ("learning_seed", *epoch_fieldnames)
 
 
-def _evaluate_theta_on_seeds(
-    theta: np.ndarray,
+def _validate_training_seed_schedule(
+    schedule: Sequence[Sequence[int]],
     *,
-    seeds: Sequence[int],
-    n_humans: int,
-    reward_config: EpisodeRewardWeights | None,
-    executor: ProcessPoolExecutor | None,
-) -> list[EpisodeResult]:
-    eval_tasks = [
-        (
-            np.asarray(theta, dtype=np.float64),
-            int(eval_seed),
-            int(n_humans),
-            False,
-            reward_config,
-        )
-        for eval_seed in seeds
-    ]
-    return run_episode_batch(eval_tasks, executor, _evaluate_episode_task)
-
-
-def _build_baseline_learning_curve_row(
-    *,
-    learning_seed: int,
-    epoch: int,
-    episode_results: Sequence[EpisodeResult],
-) -> dict[str, float | int | str]:
-    return _build_learning_curve_row(
-        policy="baseline",
-        learning_seed=int(learning_seed),
-        epoch=int(epoch),
-        evaluation=aggregate_episode_results(episode_results),
-    )
-
-
-def _evaluate_baseline_learning_curve_rows(
-    *,
-    eval_seed_schedule_by_learning_seed: dict[int, list[list[int]]],
-    epochs: Sequence[int],
-    n_humans: int,
-    reward_config: EpisodeRewardWeights | None,
-    max_workers: int,
-) -> list[dict[str, float | int | str]]:
-    baseline_theta = guide_config_to_theta(GuideBehaviorConfig())
-    ordered_epochs = [int(epoch) for epoch in epochs]
-    ordered_learning_seeds = sorted(eval_seed_schedule_by_learning_seed)
-    for learning_seed in ordered_learning_seeds:
-        seed_schedule = eval_seed_schedule_by_learning_seed[int(learning_seed)]
-        if len(seed_schedule) != len(ordered_epochs):
-            raise ValueError("Baseline eval seed schedule does not match learning curve epochs.")
-
-    total_episode_count = sum(
-        len(eval_seed_schedule_by_learning_seed[int(learning_seed)][epoch_idx])
-        for learning_seed in ordered_learning_seeds
-        for epoch_idx in range(len(ordered_epochs))
-    )
-    worker_count = _resolve_worker_count(
-        task_count=total_episode_count,
-        max_workers=int(max_workers),
-    )
-
-    def _evaluate_baseline_learning_seeds(
-        executor: ProcessPoolExecutor | None,
-    ) -> list[dict[str, float | int | str]]:
-        rows: list[dict[str, float | int | str]] = []
-        for learning_seed_idx, learning_seed in enumerate(ordered_learning_seeds):
-            seed_curve_points: list[tuple[int, list[int]]] = []
-            seed_tasks: list[tuple[np.ndarray, int, int, bool, EpisodeRewardWeights | None]] = []
-            for epoch_idx, epoch in enumerate(ordered_epochs):
-                eval_seeds = [
-                    int(seed)
-                    for seed in eval_seed_schedule_by_learning_seed[int(learning_seed)][
-                        epoch_idx
-                    ]
-                ]
-                seed_curve_points.append((int(epoch), eval_seeds))
-                seed_tasks.extend(
-                    (
-                        np.asarray(baseline_theta, dtype=np.float64),
-                        int(eval_seed),
-                        int(n_humans),
-                        False,
-                        reward_config,
-                    )
-                    for eval_seed in eval_seeds
-                )
-
-            episode_results = run_episode_batch(seed_tasks, executor, _evaluate_episode_task)
-            result_offset = 0
-            for curve_epoch, eval_seeds in seed_curve_points:
-                seed_count = len(eval_seeds)
-                rows.append(
-                    _build_baseline_learning_curve_row(
-                        learning_seed=int(learning_seed),
-                        epoch=int(curve_epoch),
-                        episode_results=episode_results[
-                            result_offset : result_offset + seed_count
-                        ],
-                    )
-                )
-                result_offset += seed_count
-            print(
-                "Baseline evaluation completed "
-                f"learning_seed={learning_seed} "
-                f"({learning_seed_idx + 1}/{len(ordered_learning_seeds)}, "
-                f"epochs={len(ordered_epochs)}, episodes={len(seed_tasks)})",
-                flush=True,
+    epochs: int,
+    train_seeds_per_epoch: int,
+) -> None:
+    if len(schedule) != int(epochs):
+        raise ValueError("epoch_training_seeds must contain one row per epoch.")
+    for epoch_seeds in schedule:
+        if len(epoch_seeds) != int(train_seeds_per_epoch):
+            raise ValueError(
+                "epoch_training_seeds rows must match train_seeds_per_epoch."
             )
-        return rows
 
-    if worker_count == 1:
-        try:
-            rows = _evaluate_baseline_learning_seeds(executor=None)
-        finally:
-            from train.common.rollout import close_cached_env
 
-            close_cached_env()
-    else:
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
-            rows = _evaluate_baseline_learning_seeds(executor=executor)
-
-    return rows
+def _validate_learning_curve_seed_schedule(
+    schedule: Sequence[Sequence[int]],
+    *,
+    epochs: int,
+    n_eval_seeds: int,
+) -> None:
+    if len(schedule) != int(epochs) + 1:
+        raise ValueError(
+            "learning_curve_eval_seed_schedule must contain epochs + 1 rows."
+        )
+    for epoch_seeds in schedule:
+        if len(epoch_seeds) != int(n_eval_seeds):
+            raise ValueError(
+                "learning_curve_eval_seed_schedule rows must match n_eval_seeds."
+            )
 
 
 def _train_single_learning_seed(
@@ -323,15 +163,20 @@ def _train_single_learning_seed(
     samples_per_epoch: int,
     seed: int,
     beta: float,
+    eps: float,
+    algorithm: str,
     train_seeds_per_epoch: int,
     n_humans: int,
     reward_config: EpisodeRewardWeights | None,
     max_workers: int,
     learning_curve_eval_seeds_per_epoch: int | None = None,
+    epoch_training_seeds: Sequence[Sequence[int]] | None = None,
+    learning_curve_eval_seed_schedule: Sequence[Sequence[int]] | None = None,
 ) -> SingleSeedTrainingResult:
     resolved_reward_config = (
         DEFAULT_EPISODE_REWARD_WEIGHTS if reward_config is None else reward_config
     )
+    resolved_algorithm = _normalize_algorithm(algorithm)
     master_seed = int(seed)
     # Generate three independent SeedSequences for theta sampling, training, and learning curve evaluation
     theta_seed_sequence, train_seed_sequence, curve_seed_sequence = np.random.SeedSequence(
@@ -340,20 +185,39 @@ def _train_single_learning_seed(
     theta_rng = np.random.default_rng(theta_seed_sequence)
     train_seed_rng = np.random.default_rng(train_seed_sequence)
     learning_curve_eval_seed_rng = np.random.default_rng(curve_seed_sequence)
-    epoch_training_seeds = _build_epoch_training_seed_schedule(
-        train_seed_rng,
-        epochs=epochs,
-        seeds_per_epoch=int(train_seeds_per_epoch),
+    resolved_epoch_training_seeds = (
+        _build_epoch_training_seed_schedule(
+            train_seed_rng,
+            epochs=epochs,
+            seeds_per_epoch=int(train_seeds_per_epoch),
+            excluded_seeds=FIXED_EVALUATION_SEEDS,
+        )
+        if epoch_training_seeds is None
+        else copy_seed_schedule(epoch_training_seeds)
     )
-    learning_curve_eval_seed_schedule: list[list[int]] = []
+    _validate_training_seed_schedule(
+        resolved_epoch_training_seeds,
+        epochs=int(epochs),
+        train_seeds_per_epoch=int(train_seeds_per_epoch),
+    )
+    resolved_learning_curve_eval_seed_schedule: list[list[int]] = []
     if learning_curve_eval_seeds_per_epoch is not None:
         if int(learning_curve_eval_seeds_per_epoch) <= 0:
             raise ValueError("learning_curve_eval_seeds_per_epoch must be positive")
-        learning_curve_eval_seed_schedule = _build_seed_schedule(
-            learning_curve_eval_seed_rng,
-            count=int(epochs) + 1,
-            seeds_per_item=int(learning_curve_eval_seeds_per_epoch),
-            excluded_seeds=FIXED_EVALUATION_SEEDS,
+        resolved_learning_curve_eval_seed_schedule = (
+            _build_seed_schedule(
+                learning_curve_eval_seed_rng,
+                count=int(epochs) + 1,
+                seeds_per_item=int(learning_curve_eval_seeds_per_epoch),
+                excluded_seeds=FIXED_EVALUATION_SEEDS,
+            )
+            if learning_curve_eval_seed_schedule is None
+            else copy_seed_schedule(learning_curve_eval_seed_schedule)
+        )
+        _validate_learning_curve_seed_schedule(
+            resolved_learning_curve_eval_seed_schedule,
+            epochs=int(epochs),
+            n_eval_seeds=int(learning_curve_eval_seeds_per_epoch),
         )
     mu = INITIAL_MU.copy()
     std = INITIAL_STD.copy()
@@ -390,6 +254,7 @@ def _train_single_learning_seed(
         )
         learning_curve_rows.append(
             _build_learning_curve_row(
+                policy=resolved_algorithm,
                 learning_seed=int(master_seed),
                 epoch=int(epoch),
                 evaluation=evaluation,
@@ -401,11 +266,11 @@ def _train_single_learning_seed(
         executor: ProcessPoolExecutor | None,
     ) -> None:
         nonlocal best_epoch, best_evaluation, best_return_seen, best_sample_index, best_theta_seen, mu, std
-        if learning_curve_eval_seed_schedule:
+        if resolved_learning_curve_eval_seed_schedule:
             _record_learning_curve_epoch(
                 epoch=0,
                 theta=initial_theta,
-                eval_seeds=learning_curve_eval_seed_schedule[0],
+                eval_seeds=resolved_learning_curve_eval_seed_schedule[0],
                 executor=executor,
             )
         for epoch_idx in range(epochs):
@@ -415,7 +280,7 @@ def _train_single_learning_seed(
                 scale=sampling_std,
                 size=(samples_per_epoch, len(mu)),
             )
-            epoch_training_seed_batch = epoch_training_seeds[epoch_idx]
+            epoch_training_seed_batch = resolved_epoch_training_seeds[epoch_idx]
             episode_tasks = [
                 (theta, int(train_seed), int(n_humans), print_explanations, resolved_reward_config)
                 for theta in theta_batch
@@ -438,16 +303,18 @@ def _train_single_learning_seed(
                 best_epoch = int(epoch_idx + 1)
                 best_sample_index = int(best_idx + 1)
 
-            mu, std = update_distribution(
+            mu, std = update_distribution_by_algorithm(
+                algorithm=resolved_algorithm,
                 theta_batch=theta_batch,
                 returns=returns,
                 beta=float(beta),
+                eps=float(eps),
             )
-            if learning_curve_eval_seed_schedule:
+            if resolved_learning_curve_eval_seed_schedule:
                 _record_learning_curve_epoch(
                     epoch=int(epoch_idx + 1),
                     theta=mu,
-                    eval_seeds=learning_curve_eval_seed_schedule[int(epoch_idx + 1)],
+                    eval_seeds=resolved_learning_curve_eval_seed_schedule[int(epoch_idx + 1)],
                     executor=executor,
                 )
 
@@ -504,8 +371,11 @@ def _train_single_learning_seed(
         best_sample_index=int(best_sample_index),
         final_mu=np.array(mu, dtype=np.float64, copy=True),
         final_std=np.array(std, dtype=np.float64, copy=True),
+        epoch_training_seeds=copy_seed_schedule(resolved_epoch_training_seeds),
         learning_curve_rows=learning_curve_rows,
-        learning_curve_eval_seed_schedule=learning_curve_eval_seed_schedule,
+        learning_curve_eval_seed_schedule=copy_seed_schedule(
+            resolved_learning_curve_eval_seed_schedule
+        ),
     )
 
 
@@ -516,17 +386,22 @@ def train(
     seed: int,
     output_dir: Path,
     beta: float = DEFAULT_BETA,
+    eps: float = DEFAULT_EPS,
+    algorithm: str = "rwr",
     train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     n_humans: int = DEFAULT_N_HUMANS,
     reward_config: EpisodeRewardWeights | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> list[dict[str, float | int]]:
+    resolved_algorithm = _normalize_algorithm(algorithm)
     output_dir.mkdir(parents=True, exist_ok=True)
     result = _train_single_learning_seed(
         epochs=int(epochs),
         samples_per_epoch=int(samples_per_epoch),
         seed=int(seed),
         beta=float(beta),
+        eps=float(eps),
+        algorithm=resolved_algorithm,
         train_seeds_per_epoch=int(train_seeds_per_epoch),
         n_humans=int(n_humans),
         reward_config=reward_config,
@@ -540,6 +415,9 @@ def train(
     best_params_path = output_dir / DEFAULT_BEST_PARAMS_NAME
 
     best_params_payload = {
+        "algorithm": resolved_algorithm,
+        "beta": float(beta),
+        "eps": float(eps),
         "best_theta_seen": [float(value) for value in result.best_theta_seen],
         "best_policy_params": _policy_params_dict(result.best_theta_seen),
         "final_theta": [float(value) for value in result.final_mu],
@@ -565,7 +443,7 @@ def train(
     print(f"Saved best params JSON to {best_params_path}")
     final_policy_params = best_params_payload["final_policy_params"]
     print(
-        "Final policy params: "
+        f"Final {resolved_algorithm.upper()} policy params: "
         f"slow_down_distance_m={float(final_policy_params['slow_down_distance_m']):.3f}, "
         f"callback_distance_m={float(final_policy_params['callback_distance_m']):.3f}, "
         f"callback_wait_seconds={float(final_policy_params['callback_wait_seconds']):.3f}, "
@@ -588,13 +466,17 @@ def train_across_learning_seeds(
     seed: int,
     output_dir: Path,
     beta: float = DEFAULT_BETA,
+    eps: float = DEFAULT_EPS,
+    algorithm: str = "rwr",
     train_seeds_per_epoch: int = DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     n_humans: int = DEFAULT_N_HUMANS,
     reward_config: EpisodeRewardWeights | None = None,
     n_learning_seeds: int = DEFAULT_N_LEARNING_SEEDS,
     n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    seed_plan: SeedPlan | None = None,
 ) -> list[dict[str, float | int | str]]:
+    resolved_algorithm = _normalize_algorithm(algorithm)
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_n_learning_seeds = int(n_learning_seeds)
     resolved_n_eval_seeds = int(n_eval_seeds)
@@ -603,32 +485,55 @@ def train_across_learning_seeds(
     if resolved_n_eval_seeds <= 0:
         raise ValueError("n_eval_seeds must be positive")
 
-    # Generate a list of learning seeds from the provided seed using a SeedSequence.
-    learning_seed_sequences = np.random.SeedSequence(int(seed)).spawn(resolved_n_learning_seeds)
-    learning_seeds = [
-        int(seed_sequence.generate_state(1, dtype=np.uint32)[0])
-        for seed_sequence in learning_seed_sequences
-    ]
+    resolved_seed_plan = (
+        build_seed_plan(
+            master_seed=int(seed),
+            epochs=int(epochs),
+            train_seeds_per_epoch=int(train_seeds_per_epoch),
+            n_learning_seeds=resolved_n_learning_seeds,
+            n_eval_seeds=resolved_n_eval_seeds,
+        )
+        if seed_plan is None
+        else seed_plan
+    )
+    validate_seed_plan(
+        resolved_seed_plan,
+        epochs=int(epochs),
+        train_seeds_per_epoch=int(train_seeds_per_epoch),
+        n_learning_seeds=resolved_n_learning_seeds,
+        n_eval_seeds=resolved_n_eval_seeds,
+    )
+    resolved_seed_plan_hash = seed_plan_hash(resolved_seed_plan)
+    learning_seed_plans = list(resolved_seed_plan.learning_seed_plans)
+    learning_seeds = [int(item.learning_seed) for item in learning_seed_plans]
 
     raw_csv_path = output_dir / DEFAULT_LEARNING_CURVE_RAW_CSV_NAME
     matrix_csv_path = output_dir / DEFAULT_LEARNING_CURVE_MATRIX_CSV_NAME
     plot_path = output_dir / DEFAULT_LEARNING_CURVE_PLOT_NAME
     summary_path = output_dir / DEFAULT_LEARNING_CURVE_SUMMARY_NAME
+    seed_plan_path = output_dir / DEFAULT_SEED_PLAN_NAME
+    write_seed_plan(resolved_seed_plan, seed_plan_path)
+    print(f"Saved seed plan to {seed_plan_path} (sha256={resolved_seed_plan_hash})")
 
     learning_curve_rows: list[dict[str, float | int | str]] = []
     learning_seed_results: dict[int, SingleSeedTrainingResult] = {}
     eval_seed_schedule_by_learning_seed: dict[int, list[list[int]]] = {}
-    for learning_seed in learning_seeds:
+    for learning_seed_plan in learning_seed_plans:
+        learning_seed = int(learning_seed_plan.learning_seed)
         seed_result = _train_single_learning_seed(
             epochs=int(epochs),
             samples_per_epoch=int(samples_per_epoch),
-            seed=int(learning_seed),
+            seed=learning_seed,
             beta=float(beta),
+            eps=float(eps),
+            algorithm=resolved_algorithm,
             train_seeds_per_epoch=int(train_seeds_per_epoch),
             n_humans=int(n_humans),
             reward_config=reward_config,
             max_workers=int(max_workers),
             learning_curve_eval_seeds_per_epoch=resolved_n_eval_seeds,
+            epoch_training_seeds=learning_seed_plan.train_seeds_by_epoch,
+            learning_curve_eval_seed_schedule=learning_seed_plan.eval_seeds_by_epoch,
         )
         result_learning_seed = (
             int(seed_result.learning_curve_rows[0]["learning_seed"])
@@ -676,9 +581,9 @@ def train_across_learning_seeds(
         value_key="mean_return",
     )
     if baseline_epochs != ordered_epochs:
-        raise ValueError("Baseline epochs do not match RWR learning curve epochs.")
+        raise ValueError("Baseline epochs do not match learned-policy learning curve epochs.")
     if ordered_baseline_learning_seeds != ordered_learning_seeds:
-        raise ValueError("Baseline learning seeds do not match RWR learning curve seeds.")
+        raise ValueError("Baseline learning seeds do not match learned-policy learning seeds.")
 
     band = compute_mean_confidence_band(return_matrix)
     baseline_band = compute_mean_confidence_band(baseline_return_matrix)
@@ -688,8 +593,15 @@ def train_across_learning_seeds(
         return_matrix=return_matrix,
         baseline_return_matrix=baseline_return_matrix,
         output_path=plot_path,
+        learned_policy_label=_algorithm_plot_label(resolved_algorithm),
     )
     summary_payload = {
+        "algorithm": resolved_algorithm,
+        "master_seed": int(resolved_seed_plan.master_seed),
+        "seed_plan_hash": resolved_seed_plan_hash,
+        "seed_plan_json": str(seed_plan_path),
+        "beta": float(beta),
+        "eps": float(eps),
         "learning_seeds": [int(value) for value in ordered_learning_seeds],
         "learning_curve_eval_seeds_by_learning_seed": [
             {

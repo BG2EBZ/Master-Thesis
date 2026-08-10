@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 
 
 def build_arg_parser():
-    return build_training_arg_parser(algorithm="rwr")
+    return build_training_arg_parser(algorithm="reps")
 
 
 def _default_output_dir_for_algorithm(algorithm: str):
@@ -25,7 +25,7 @@ def _default_output_dir_for_algorithm(algorithm: str):
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return main_for_algorithm(algorithm="rwr", argv=argv)
+    return main_for_algorithm(algorithm="reps", argv=argv)
 
 
 if __name__ == "__main__":

@@ -104,8 +104,9 @@ if terminated or truncated:
 - Demo: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode demo [--seed 2]`
 - Fast train loop: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode train [--seed 2]`
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder [--seed 2]`
-- Minimal RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
-- Evaluate a learned RWR policy: `/home/tianci/Polimi/workspace/venv/bin/python scripts/eval_baseline.py --learned-params-json artifacts/runs/rwr_20260721_155908/best_params.json`
+- RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
+- REPS training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py --eps 0.1`
+- Evaluate a learned policy: `/home/tianci/Polimi/workspace/venv/bin/python scripts/eval_baseline.py --learned-params-json artifacts/runs/rwr_20260721_155908/best_params.json`
 
 If running the evaluator from inside `scripts/`, use the parent-relative path:
 
@@ -117,14 +118,33 @@ Reproducibility example:
 
 `--seed` is optional and is passed only to the initial `env.reset(...)` for that invocation.
 
-The minimal RWR trainer writes:
+Policy-search training uses separate CLI entrypoints:
 
-- default output directory: `artifacts/runs/rwr_YYYYMMDD_HHMMSS`
+- RWR: `scripts/train_rwr.py --beta 0.1`
+- REPS: `scripts/train_reps.py --eps 0.1`
+
+Both scripts share the same rollout, reward, seed-plan, plotting, and artifact machinery. The trainers write:
+
+- default RWR output directory: `artifacts/runs/rwr_YYYYMMDD_HHMMSS`
+- default REPS output directory: `artifacts/runs/reps_YYYYMMDD_HHMMSS`
 - `training_metrics.csv`
 - `training_metrics.png`
-- `best_params.json`: best sampled theta plus final distribution-center policy params
+- `best_params.json`: best sampled theta, final distribution-center policy params, `algorithm`, `beta`, `eps`, `final_mu`, and `final_std`
 
-For a learning-seed by epoch dataset, run the RWR trainer with multiple learning seeds:
+Minimal REPS smoke test:
+
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py \
+  --eps 0.1 \
+  --epochs 1 \
+  --samples-per-epoch 2 \
+  --train-seeds-per-epoch 1 \
+  --n-learning-seeds 1 \
+  --n-humans 3 \
+  --max-workers 1
+```
+
+For a learning-seed by epoch dataset, run the policy-search trainer with multiple learning seeds:
 
 ```bash
 /home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py \
@@ -142,12 +162,53 @@ the available CPU count.
 
 The multi-seed path writes:
 
-- `learning_curve_raw.csv`: long-form rows for RWR plus baseline, evaluated on fresh per-epoch seeds
-- `learning_curve_matrix.csv`: RWR-only matrix with `learning_seed,epoch_0,epoch_1,...`
-- `learning_curve_summary.json`: aggregate returns, per-learning-seed final policy params, and per-epoch eval seeds
+- `learning_curve_raw.csv`: long-form rows for learned policy plus baseline, evaluated on fresh per-epoch seeds; `policy` can be `rwr`, `reps`, or `baseline`
+- `learning_curve_matrix.csv`: learned-policy matrix with `learning_seed,epoch_0,epoch_1,...`
+- `seed_plan.json`: shared learning seeds, training rollout seeds, and evaluation seeds for reproducible comparisons
+- `learning_curve_summary.json`: aggregate returns, per-learning-seed final policy params, per-epoch eval seeds, and `seed_plan_hash`
 - `learning_curve_plot.png`
 
-For each learning seed and epoch, RWR and baseline are evaluated on the same fresh `--n-eval-seeds` episodes.
+For each learning seed and epoch, the learned policy and baseline are evaluated on the same fresh `--n-eval-seeds` episodes.
+
+To guarantee RWR and REPS use the same seeds, train RWR first and reuse its seed plan for REPS:
+
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py \
+  --eps 0.1 \
+  --epochs 30 \
+  --samples-per-epoch 30 \
+  --max-workers 8 \
+  --n-learning-seeds 10 \
+  --n-eval-seeds 20 \
+  --seed-plan artifacts/runs/rwr_dataset_10x31/seed_plan.json \
+  --output-dir artifacts/runs/reps_dataset_10x31
+```
+
+Then create a MushroomRL-style comparison plot with baseline, RWR, and REPS in one figure:
+
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/compare_policy_search_runs.py \
+  --run rwr=artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv \
+  --run reps=artifacts/runs/reps_dataset_10x31/learning_curve_raw.csv \
+  --output-dir artifacts/runs/policy_search_compare_10x31
+```
+
+This writes:
+
+- `policy_search_comparison_raw.csv`
+- `policy_search_comparison_summary.json`
+- `policy_search_comparison_plot.png`
+
+The comparison script verifies that input runs share the same `seed_plan_hash` before plotting.
+
+For a quick REPS `eps` sweep, run the same command with:
+
+```bash
+scripts/train_reps.py --eps 0.05
+scripts/train_reps.py --eps 0.1
+scripts/train_reps.py --eps 0.5
+scripts/train_reps.py --eps 1.0
+```
 
 To replot the saved learning curves without retraining:
 

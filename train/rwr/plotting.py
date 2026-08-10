@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -160,6 +160,7 @@ def plot_learning_curve_metrics(
     return_matrix: np.ndarray,
     baseline_return_matrix: np.ndarray | None = None,
     output_path: Path,
+    learned_policy_label: str = "RWR",
     x_label: str = "# Epochs",
     max_x_ticks: int = 8,
 ) -> None:
@@ -177,7 +178,7 @@ def plot_learning_curve_metrics(
         x_values,
         np.asarray(return_matrix, dtype=np.float64),
         color="#f28e2b",
-        label="RWR",
+        label=str(learned_policy_label),
         alpha=0.24,
         linewidth=2.2,
     )
@@ -216,6 +217,80 @@ def plot_learning_curve_metrics(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
+
+def plot_multi_policy_learning_curve_metrics(
+    *,
+    epochs: Sequence[int],
+    policy_return_matrices: Mapping[str, np.ndarray],
+    output_path: Path,
+    x_label: str = "# Epochs",
+    max_x_ticks: int = 8,
+) -> None:
+    if not policy_return_matrices:
+        raise ValueError("policy_return_matrices must not be empty")
+
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = {
+        "baseline": "#4e79a7",
+        "rwr": "#f28e2b",
+        "reps": "#59a14f",
+    }
+    fallback_colors = (
+        "#e15759",
+        "#b07aa1",
+        "#76b7b2",
+        "#edc948",
+        "#9c755f",
+        "#bab0ab",
+    )
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(1, 1, figsize=(8.4, 5.8), constrained_layout=False)
+    x_values = np.asarray(epochs, dtype=np.float64)
+    for policy_idx, (policy, return_matrix) in enumerate(policy_return_matrices.items()):
+        resolved_policy = str(policy).lower()
+        color = colors.get(
+            resolved_policy,
+            fallback_colors[policy_idx % len(fallback_colors)],
+        )
+        plot_mean_confidence_interval(
+            ax,
+            x_values,
+            np.asarray(return_matrix, dtype=np.float64),
+            color=color,
+            label=str(policy).upper() if resolved_policy != "baseline" else "Baseline",
+            alpha=0.20,
+            linewidth=2.2,
+        )
+
+    ax.set_xlabel(x_label, fontsize=16, fontweight="semibold")
+    ax.set_ylabel("J", fontsize=16, fontweight="semibold")
+    ax.set_xlim(float(x_values[0]), float(x_values[-1]))
+    ax.set_xticks(_build_sparse_epoch_ticks(epochs, max_x_ticks=max_x_ticks))
+    ax.tick_params(axis="both", labelsize=12)
+    ax.grid(True, color="#d6d6d6", linewidth=1.0, alpha=0.9)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#b0b0b0")
+    ax.spines["bottom"].set_color("#b0b0b0")
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        frameon=False,
+        ncol=max(1, len(policy_return_matrices)),
+        fontsize=13,
+        handlelength=2.0,
+    )
+    fig.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.26)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
 # Plot learning curve metrics for multiple training runs, with multiple panels
 def plot_learning_curve_metric_panels(
     *,
@@ -224,6 +299,7 @@ def plot_learning_curve_metric_panels(
         tuple[str, str, np.ndarray, np.ndarray | None]
     ],
     output_path: Path,
+    learned_policy_label: str = "RWR",
     x_label: str = "# Epochs",
     max_x_ticks: int = 8,
 ) -> None:
@@ -261,7 +337,7 @@ def plot_learning_curve_metric_panels(
             x_values,
             np.asarray(rwr_matrix, dtype=np.float64),
             color="#f28e2b",
-            label="RWR",
+            label=str(learned_policy_label),
             alpha=0.24,
             linewidth=2.0,
         )

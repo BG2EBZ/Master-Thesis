@@ -1,8 +1,16 @@
-from .algorithm import ThetaEvaluation, aggregate_episode_results, diagonal_gaussian_entropy, update_distribution
+from .algorithm import (
+    ThetaEvaluation,
+    aggregate_episode_results,
+    diagonal_gaussian_entropy,
+    update_distribution,
+    update_distribution_by_algorithm,
+    update_distribution_reps,
+)
 from .defaults import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_BETA,
     DEFAULT_CSV_NAME,
+    DEFAULT_EPS,
     DEFAULT_EPOCH_TRAIN_SEED_COUNT,
     DEFAULT_EPOCHS,
     DEFAULT_EXPLORATION_PLOT_NAME,
@@ -18,6 +26,7 @@ from .defaults import (
     DEFAULT_PLOT_NAME,
     DEFAULT_SAMPLES_PER_EPOCH,
     DEFAULT_SEED,
+    DEFAULT_SEED_PLAN_NAME,
     INITIAL_MU,
     INITIAL_STD,
     LEARNING_CURVE_RAW_FIELDNAMES,
@@ -26,6 +35,7 @@ from .defaults import (
 from .plotting import (
     plot_exploration_metrics,
     plot_learning_curve_metrics,
+    plot_multi_policy_learning_curve_metrics,
     plot_training_metrics,
 )
 from .policy_codec import guide_config_to_theta, summarize_theta, theta_to_guide_config
@@ -35,12 +45,28 @@ from .rewarding import (
     RWRRewardWrapper,
     compute_episode_reward,
 )
-from .training import SingleSeedTrainingResult, _train_single_learning_seed, train, train_across_learning_seeds
+from .seed_plan import (
+    LearningSeedPlan,
+    SeedPlan,
+    build_seed_plan,
+    load_seed_plan,
+    seed_plan_hash,
+    seed_plan_to_dict,
+    write_seed_plan,
+)
+from .training import (
+    SUPPORTED_POLICY_SEARCH_ALGORITHMS,
+    SingleSeedTrainingResult,
+    _train_single_learning_seed,
+    train,
+    train_across_learning_seeds,
+)
 
 __all__ = [
     "DEFAULT_BEST_PARAMS_NAME",
     "DEFAULT_BETA",
     "DEFAULT_CSV_NAME",
+    "DEFAULT_EPS",
     "DEFAULT_EPOCHS",
     "DEFAULT_EPOCH_TRAIN_SEED_COUNT",
     "DEFAULT_EPISODE_REWARD_WEIGHTS",
@@ -57,25 +83,37 @@ __all__ = [
     "DEFAULT_PLOT_NAME",
     "DEFAULT_SAMPLES_PER_EPOCH",
     "DEFAULT_SEED",
+    "DEFAULT_SEED_PLAN_NAME",
     "EpisodeRewardWeights",
     "RWRRewardWrapper",
     "INITIAL_MU",
     "INITIAL_STD",
     "LEARNING_CURVE_RAW_FIELDNAMES",
+    "LearningSeedPlan",
     "METRIC_FIELDNAMES",
+    "SeedPlan",
+    "SUPPORTED_POLICY_SEARCH_ALGORITHMS",
     "SingleSeedTrainingResult",
     "ThetaEvaluation",
     "_train_single_learning_seed",
     "aggregate_episode_results",
+    "build_seed_plan",
     "compute_episode_reward",
     "diagonal_gaussian_entropy",
     "guide_config_to_theta",
+    "load_seed_plan",
     "plot_exploration_metrics",
     "plot_learning_curve_metrics",
+    "plot_multi_policy_learning_curve_metrics",
     "plot_training_metrics",
+    "seed_plan_hash",
+    "seed_plan_to_dict",
     "summarize_theta",
     "theta_to_guide_config",
     "train",
     "train_across_learning_seeds",
     "update_distribution",
+    "update_distribution_by_algorithm",
+    "update_distribution_reps",
+    "write_seed_plan",
 ]

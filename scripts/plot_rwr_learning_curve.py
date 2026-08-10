@@ -56,6 +56,7 @@ DEFAULT_PLOT_NAMES = {
 
 @dataclass(frozen=True)
 class LearningCurvePlotData:
+    policy: str
     epochs: list[int]
     learning_seeds: list[int]
     evaluation_seeds: list[int]
@@ -123,6 +124,7 @@ def load_learning_curve_plot_data(
     input_csv: Path,
     *,
     metric_names: Sequence[str] = (RETURN_METRIC,),
+    learned_policy: str | None = None,
 ) -> LearningCurvePlotData:
     resolved_metric_names = tuple(metric_names)
     unknown_metric_names = [
@@ -132,12 +134,24 @@ def load_learning_curve_plot_data(
         raise ValueError(f"Unknown metric columns: {unknown_metric_names}")
 
     rows = _read_learning_curve_rows(input_csv, resolved_metric_names)
-    rwr_rows = [row for row in rows if row["policy"] == "rwr"]
-    if not rwr_rows:
-        raise ValueError(f"No RWR rows found in {input_csv}")
+    learned_policies = sorted(
+        {str(row["policy"]) for row in rows if str(row["policy"]) != "baseline"}
+    )
+    if learned_policy is None:
+        if len(learned_policies) != 1:
+            raise ValueError(
+                "Expected exactly one learned policy in the CSV; "
+                f"found {learned_policies}."
+            )
+        resolved_policy = learned_policies[0]
+    else:
+        resolved_policy = str(learned_policy).lower()
+    learned_rows = [row for row in rows if row["policy"] == resolved_policy]
+    if not learned_rows:
+        raise ValueError(f"No {resolved_policy} rows found in {input_csv}")
 
     metric_matrices, learning_seeds, epochs = _build_metric_matrix_bundle(
-        rwr_rows,
+        learned_rows,
         row_key="learning_seed",
         metric_names=resolved_metric_names,
     )
@@ -156,14 +170,17 @@ def load_learning_curve_plot_data(
             metric_names=resolved_metric_names,
         )
         if baseline_epochs != epochs:
-            raise ValueError("Baseline epochs do not match RWR epochs.")
+            raise ValueError("Baseline epochs do not match learned-policy epochs.")
         if baseline_row_key == "learning_seed":
             if baseline_rows_order != learning_seeds:
-                raise ValueError("Baseline learning seeds do not match RWR learning seeds.")
+                raise ValueError(
+                    "Baseline learning seeds do not match learned-policy learning seeds."
+                )
         else:
             evaluation_seeds = baseline_rows_order
 
     return LearningCurvePlotData(
+        policy=resolved_policy,
         epochs=epochs,
         learning_seeds=learning_seeds,
         evaluation_seeds=evaluation_seeds,
@@ -193,6 +210,7 @@ def replot_learning_curve(
             baseline_return_matrix=plot_data.baseline_return_matrix,
             output_path=output_path,
             max_x_ticks=int(max_x_ticks),
+            learned_policy_label=plot_data.policy.upper(),
         )
     else:
         metric_panels = [
@@ -209,19 +227,20 @@ def replot_learning_curve(
             metric_panels=metric_panels,
             output_path=output_path,
             max_x_ticks=int(max_x_ticks),
+            learned_policy_label=plot_data.policy.upper(),
         )
     return plot_data
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Replot a saved RWR learning curve from learning_curve_raw.csv."
+        description="Replot a saved policy-search learning curve from learning_curve_raw.csv."
     )
     parser.add_argument(
         "--input-csv",
         type=Path,
         required=True,
-        help="Saved learning_curve_raw.csv containing RWR and optional baseline rows.",
+        help="Saved learning_curve_raw.csv containing one learned policy and optional baseline rows.",
     )
     parser.add_argument(
         "--output-path",
