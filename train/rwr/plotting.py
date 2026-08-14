@@ -291,6 +291,107 @@ def plot_multi_policy_learning_curve_metrics(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
+
+def plot_multi_policy_learning_curve_metric_panels(
+    *,
+    epochs: Sequence[int],
+    metric_panels: Sequence[
+        tuple[str, str, Mapping[str, np.ndarray]]
+    ],
+    output_path: Path,
+    x_label: str = "# Epochs",
+    max_x_ticks: int = 8,
+) -> None:
+    if not metric_panels:
+        raise ValueError("metric_panels must not be empty")
+
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = {
+        "baseline": "#4e79a7",
+        "rwr": "#f28e2b",
+        "reps": "#59a14f",
+    }
+    fallback_colors = (
+        "#e15759",
+        "#b07aa1",
+        "#76b7b2",
+        "#edc948",
+        "#9c755f",
+        "#bab0ab",
+    )
+
+    panel_count = len(metric_panels)
+    if panel_count == 4:
+        nrows, ncols = 2, 2
+        figsize = (12.5, 8.2)
+    elif panel_count == 3:
+        nrows, ncols = 1, 3
+        figsize = (14.5, 4.8)
+    else:
+        nrows, ncols = 1, panel_count
+        figsize = (5.0 * panel_count, 4.8)
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, constrained_layout=False)
+    axes_array = np.atleast_1d(axes).flat
+    x_values = np.asarray(epochs, dtype=np.float64)
+    x_ticks = _build_sparse_epoch_ticks(epochs, max_x_ticks=max_x_ticks)
+    legend_handles = None
+    legend_labels = None
+
+    for ax, (title, y_label, policy_matrices) in zip(axes_array, metric_panels):
+        for policy_idx, (policy, matrix) in enumerate(policy_matrices.items()):
+            resolved_policy = str(policy).lower()
+            color = colors.get(
+                resolved_policy,
+                fallback_colors[policy_idx % len(fallback_colors)],
+            )
+            plot_mean_confidence_interval(
+                ax,
+                x_values,
+                np.asarray(matrix, dtype=np.float64),
+                color=color,
+                label=str(policy).upper() if resolved_policy != "baseline" else "Baseline",
+                alpha=0.20,
+                linewidth=2.0,
+            )
+        ax.set_title(title, fontsize=14, fontweight="semibold")
+        ax.set_xlabel(x_label, fontsize=12, fontweight="semibold")
+        ax.set_ylabel(y_label, fontsize=12, fontweight="semibold")
+        ax.set_xlim(float(x_values[0]), float(x_values[-1]))
+        ax.set_xticks(x_ticks)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(True, color="#d6d6d6", linewidth=1.0, alpha=0.9)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#b0b0b0")
+        ax.spines["bottom"].set_color("#b0b0b0")
+        if legend_handles is None or legend_labels is None:
+            legend_handles, legend_labels = ax.get_legend_handles_labels()
+
+    for ax in list(axes_array)[panel_count:]:
+        ax.set_visible(False)
+
+    if legend_handles and legend_labels:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="lower center",
+            frameon=False,
+            ncol=len(legend_labels),
+            fontsize=12,
+            handlelength=2.0,
+        )
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.93, bottom=0.16, hspace=0.34, wspace=0.24)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
 # Plot learning curve metrics for multiple training runs, with multiple panels
 def plot_learning_curve_metric_panels(
     *,

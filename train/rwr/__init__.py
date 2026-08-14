@@ -35,6 +35,7 @@ from .defaults import (
 from .plotting import (
     plot_exploration_metrics,
     plot_learning_curve_metrics,
+    plot_multi_policy_learning_curve_metric_panels,
     plot_multi_policy_learning_curve_metrics,
     plot_training_metrics,
 )
@@ -104,6 +105,7 @@ __all__ = [
     "load_seed_plan",
     "plot_exploration_metrics",
     "plot_learning_curve_metrics",
+    "plot_multi_policy_learning_curve_metric_panels",
     "plot_multi_policy_learning_curve_metrics",
     "plot_training_metrics",
     "seed_plan_hash",

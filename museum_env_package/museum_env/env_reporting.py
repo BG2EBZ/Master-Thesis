@@ -41,7 +41,7 @@ def build_label_scene_option():
     opt = mujoco.MjvOption()
     opt.label = HUMAN_LABEL_MODE
     opt.sitegroup[:] = 0
-    opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 1
+    opt.sitegroup[HUMAN_LABEL_SITE_GROUP] = 0
     opt.sitegroup[ROBOT_EXPLANATION_LABEL_GROUP] = 0
     opt.sitegroup[ROBOT_FOLLOWME_LABEL_GROUP] = 0
     opt.sitegroup[ROBOT_ANSWER_LABEL_GROUP] = 0

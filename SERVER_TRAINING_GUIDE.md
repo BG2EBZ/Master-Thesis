@@ -2,7 +2,7 @@
 
 Author: Tianci Wang
 
-Last updated: 2026-08-04
+Last updated: 2026-08-10
 
 ---
 
@@ -85,7 +85,7 @@ docker ps
 Create a new tmux session:
 
 ```bash
-tmux new -s rwr
+tmux new -s policy_search
 ```
 
 List all sessions:
@@ -97,7 +97,7 @@ tmux ls
 Reconnect to an existing session:
 
 ```bash
-tmux attach -t rwr
+tmux attach -t policy_search
 ```
 
 Detach without stopping the training:
@@ -110,7 +110,7 @@ d
 Delete a finished session:
 
 ```bash
-tmux kill-session -t rwr
+tmux kill-session -t policy_search
 ```
 
 > **Recommendation**
@@ -151,14 +151,14 @@ Choose the CPU range assigned to you in the booking sheet.
 Example:
 
 - GPU: 0
-- CPU: 0-23
-- max RWR workers: 24
+- CPU: 0-31
+- max policy-search workers: 32
 
 Start Docker:
 
 ```bash
-CPU_RANGE="0-23"
-MAX_WORKERS="24"
+CPU_RANGE="0-31"
+MAX_WORKERS="32"
 
 docker run --rm -it \
     --cpuset-cpus="${CPU_RANGE}" \
@@ -189,12 +189,12 @@ taskset -pc $$
 Expected output:
 
 ```text
-pid 1's current affinity list: 0-23
+pid 1's current affinity list: 0-31
 ```
 
-Use the same CPU booking to choose `--max-workers` for `scripts/train_rwr.py`.
-For example, CPU range `0-23` means 24 assigned CPU cores, so use
-`--max-workers 24` or a smaller number if you want to leave spare capacity.
+Use the same CPU booking to choose `--max-workers` for policy-search training.
+For example, CPU range `0-31` means 32 assigned CPU cores, so use
+`--max-workers 32` or a smaller number if you want to leave spare capacity.
 The trainer also caps the actual worker count by the number of rollout tasks
 and the CPU count visible inside Docker.
 
@@ -223,7 +223,7 @@ PY
 
 # 9. Smoke test
 
-Before large experiments:
+Before large experiments, run a tiny RWR smoke test:
 
 ```bash
 python scripts/train_rwr.py \
@@ -237,6 +237,21 @@ python scripts/train_rwr.py \
     --output-dir runs/smoke_test
 ```
 
+Then run a tiny REPS smoke test:
+
+```bash
+python scripts/train_reps.py \
+    --eps 0.1 \
+    --epochs 1 \
+    --samples-per-epoch 2 \
+    --max-workers "${MAX_WORKERS}" \
+    --train-seeds-per-epoch 1 \
+    --n-learning-seeds 1 \
+    --n-eval-seeds 1 \
+    --n-humans 3 \
+    --output-dir runs/smoke_test_reps
+```
+
 Check that
 
 - environment runs
@@ -245,7 +260,7 @@ Check that
 
 ---
 
-# 10. Run the real experiment
+# 10. Run the real RWR experiment
 
 Before starting a long experiment, make sure you are inside a tmux session.
 
@@ -255,29 +270,102 @@ Example:
 python -u scripts/train_rwr.py \
     --epochs 100 \
     --samples-per-epoch 30 \
-    --max-workers 32 \
+    --max-workers "${MAX_WORKERS}" \
     --seed 42 \
     --beta 0.1 \
     --train-seeds-per-epoch 1 \
     --n-learning-seeds 10 \
     --n-eval-seeds 20 \
-
+    --n-humans 15 \
+    --output-dir artifacts/runs/rwr_server_10x101
 ```
 
-Adjust parameters as needed.
+This writes `artifacts/runs/rwr_server_10x101/seed_plan.json`. Keep this file,
+because REPS should reuse it for a fair comparison.
+
+---
+
+# 10.5 Run the matching REPS experiment
+
+Use the same training budget and reuse the RWR seed plan:
+
+```bash
+python -u scripts/train_reps.py \
+    --epochs 100 \
+    --samples-per-epoch 30 \
+    --max-workers "${MAX_WORKERS}" \
+    --eps 0.1 \
+    --train-seeds-per-epoch 1 \
+    --n-learning-seeds 10 \
+    --n-eval-seeds 20 \
+    --n-humans 15 \
+    --seed-plan artifacts/runs/rwr_server_10x101/seed_plan.json \
+    --output-dir artifacts/runs/reps_server_10x101_eps01
+```
+
+For an `eps` sweep, repeat the REPS command with:
+
+```bash
+--eps 0.05 --output-dir artifacts/runs/reps_server_10x101_eps005
+--eps 0.1  --output-dir artifacts/runs/reps_server_10x101_eps01
+--eps 0.5  --output-dir artifacts/runs/reps_server_10x101_eps05
+--eps 1.0  --output-dir artifacts/runs/reps_server_10x101_eps10
+```
+
+All REPS runs in the sweep should use the same RWR `seed_plan.json`.
+
+---
+
+# 10.6 Compare baseline, RWR, and REPS
+
+After RWR and REPS finish, create a MushroomRL-style mean/CI comparison plot:
+
+```bash
+python scripts/compare_policy_search_runs.py \
+    --run rwr=artifacts/runs/rwr_server_10x101/learning_curve_raw.csv \
+    --run reps=artifacts/runs/reps_server_10x101_eps01/learning_curve_raw.csv \
+    --output-dir artifacts/runs/policy_search_compare_server_10x101
+```
+
+The comparison script checks that RWR and REPS share the same `seed_plan_hash`.
+If the hashes differ, the script refuses to plot because the comparison is not fair.
+
+The comparison output includes:
+
+- `policy_search_comparison_raw.csv`
+- `policy_search_comparison_summary.json`
+- `policy_search_comparison_plot.png`
+
+The plot contains three curves:
+
+- baseline
+- RWR
+- REPS
+
+Adjust parameters as needed, but keep RWR and REPS budgets matched.
 
 Important training parameters:
 
-- `--epochs`: number of RWR update epochs. Default: `100`.
+- `--epochs`: number of policy-search update epochs. Default: `100`.
 - `--samples-per-epoch`: sampled policy count per epoch. Default: `30`.
-- `--max-workers`: maximum parallel worker processes for rollout evaluation. Default: `24`.
+- `--max-workers`: maximum parallel worker processes for rollout evaluation. Pass this explicitly from the CPU booking.
 - `--seed`: master seed for policy sampling and rollout seed generation. Default: `42`.
-- `--beta`: RWR reward-weight temperature. Default: `0.1`.
+- `--beta`: RWR reward-weight temperature. Used only by `scripts/train_rwr.py`. Default: `0.1`.
+- `--eps`: REPS KL-divergence update bound. Used only by `scripts/train_reps.py`. Default: `0.1`.
 - `--train-seeds-per-epoch`: rollout seeds used to evaluate each sampled theta during training. Default: `1`.
-- `--n-learning-seeds`: independent learning runs. Use `1` for a normal single run, or more than `1` to generate learning-curve data. Default: `1`.
+- `--n-learning-seeds`: independent learning runs. Use more than `1` to generate learning-curve data. Default: `10`.
 - `--n-eval-seeds`: fresh evaluation episodes per epoch in multi-learning-seed mode. Default: `20`.
 - `--n-humans`: number of humans in the simulated museum crowd. Default: `15`.
-- `--output-dir`: result directory. If omitted, the default is `artifacts/runs/rwr_YYYYMMDD_HHMMSS`.
+- `--seed-plan`: saved seed plan to reuse for another algorithm. Use this to make RWR and REPS share exactly the same seeds.
+- `--output-dir`: result directory. If omitted, defaults are `artifacts/runs/rwr_YYYYMMDD_HHMMSS` for RWR and `artifacts/runs/reps_YYYYMMDD_HHMMSS` for REPS.
+
+Important artifacts:
+
+- `seed_plan.json`: learning seeds, training rollout seeds, and evaluation seeds.
+- `learning_curve_raw.csv`: learned policy plus baseline rows.
+- `learning_curve_summary.json`: aggregate results and `seed_plan_hash`.
+- `learning_curve_plot.png`: one learned policy versus baseline.
+- `policy_search_comparison_plot.png`: baseline, RWR, and REPS in one figure.
 
 ---
 
@@ -323,7 +411,7 @@ d
 Or delete the tmux session:
 
 ```bash
-tmux kill-session -t rwr
+tmux kill-session -t policy_search
 ```
 
 # 13. Download results
