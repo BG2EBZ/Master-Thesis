@@ -10,6 +10,7 @@ import numpy as np
 from museum_env.guide_config import GuideBehaviorConfig
 from train.common.artifacts import build_dense_metric_matrix, write_csv_rows, write_json
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.common.parallel import build_process_pool
 from train.common.plot_utils import compute_mean_confidence_band
 from train.common.rollout import run_episode_batch
 from train.policy_search.algorithm import (
@@ -370,7 +371,7 @@ def _train_single_learning_seed(
 
             close_cached_env()
     else:
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        with build_process_pool(max_workers=worker_count) as executor:
             _run_training_loop(executor=executor)
 
     if best_theta_seen is None or best_evaluation is None:

@@ -5,7 +5,6 @@ import csv
 import json
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -21,6 +20,7 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
 
 from museum_env.guide_config import GuideBehaviorConfig
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
+from train.common.parallel import build_process_pool
 from train.common.rollout import EpisodeResult
 from train.policy_search.policy_codec import guide_config_to_theta, summarize_theta
 from train.policy_search.rewarding import EpisodeRewardWeights
@@ -346,7 +346,7 @@ def evaluate_baseline(
     if worker_count <= 1:
         episode_results = [_evaluate_episode_task(task) for task in episode_tasks]
     else:
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        with build_process_pool(max_workers=worker_count) as executor:
             episode_results = list(executor.map(_evaluate_episode_task, episode_tasks))
 
     baseline_results = episode_results[:num_runs]

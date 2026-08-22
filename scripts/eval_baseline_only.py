@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -26,6 +25,7 @@ import numpy as np
 
 from museum_env.guide_config import GuideBehaviorConfig
 from train.common.artifacts import write_csv_rows, write_json
+from train.common.parallel import build_process_pool
 from train.common.plot_utils import compute_mean_confidence_band
 from train.policy_search.defaults import DEFAULT_MAX_WORKERS, DEFAULT_N_HUMANS, DEFAULT_SEED
 from train.policy_search.policy_codec import guide_config_to_theta, summarize_theta
@@ -311,7 +311,7 @@ def evaluate_baseline_only(
 
             close_cached_env()
     else:
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        with build_process_pool(max_workers=worker_count) as executor:
             episode_results = list(executor.map(_evaluate_episode_task, episode_tasks))
 
     filled_episode_rows = _fill_episode_rows(episode_rows, episode_results)

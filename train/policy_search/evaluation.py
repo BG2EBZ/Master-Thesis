@@ -6,6 +6,7 @@ from typing import Sequence
 import numpy as np
 
 from museum_env.guide_config import GuideBehaviorConfig
+from train.common.parallel import build_process_pool
 from train.common.rollout import (
     EpisodeResult,
     close_cached_env,
@@ -187,7 +188,7 @@ def evaluate_baseline_learning_curve_rows(
         finally:
             close_cached_env()
     else:
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        with build_process_pool(max_workers=worker_count) as executor:
             rows = _evaluate_baseline_learning_seeds(executor=executor)
 
     return rows

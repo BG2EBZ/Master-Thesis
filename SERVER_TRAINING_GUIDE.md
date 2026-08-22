@@ -43,7 +43,6 @@ rsync -avh --progress \
     --exclude='.git' \
     --exclude='__pycache__' \
     --exclude='.pytest_cache' \
-    --exclude='runs' \
     --exclude='outputs' \
     ./Master-Thesis/ \
     wang@10.79.7.244:/megaverse/datasets/wang/Master-Thesis/
@@ -140,11 +139,8 @@ docker build --no-cache \
     -t wang/master-thesis:py311 .
 ```
 
-Otherwise skip this step.
-
-The current policy-search package depends on `torch` for ePPO. If the server
-image was built before that dependency was added to `museum_env_package/setup.py`,
-rebuild the image before running `scripts/train_eppo.py`.
+Otherwise skip this step. ePPO uses the same NumPy/SciPy stack as the other
+policy-search trainers and does not require Torch.
 
 ---
 
@@ -214,13 +210,11 @@ import scipy.linalg
 import mujoco
 import gymnasium
 import skfuzzy
-import torch
 import museum_env
 
 print("NumPy:", numpy.__version__)
 print("SciPy:", scipy.__version__)
 print("MuJoCo:", mujoco.__version__)
-print("Torch:", torch.__version__)
 print("Everything OK")
 PY
 ```
@@ -282,6 +276,12 @@ Check that
 - environment runs
 - artifacts are generated
 - no exceptions
+
+If a smoke test exits with only `Segmentation fault (core dumped)`, first rerun it with
+`--max-workers 1`. If that works, the failure is in parallel worker startup or a native
+library loaded by workers. The policy-search trainers explicitly use Python's `spawn`
+start method for worker processes so MuJoCo and other native libraries initialize cleanly
+inside each server worker.
 
 ---
 

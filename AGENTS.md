@@ -81,6 +81,7 @@ cd /home/tianci/Polimi/workspace/Master-Thesis
 - Keep RWR, REPS, and ePPO CLI entrypoints separate: `scripts/train_rwr.py` is RWR-only, `scripts/train_reps.py` is REPS-only, and `scripts/train_eppo.py` is ePPO-only.
 - For fair RWR/REPS/ePPO comparisons, reuse the same `seed_plan.json` and let `scripts/compare_policy_search_runs.py` verify the shared `seed_plan_hash`.
 - Keep shared policy-search implementation under `train/policy_search`; do not add imports from the old RWR-only package path.
+- Policy-search rollout workers use Python's `spawn` multiprocessing context so MuJoCo and Torch initialize inside each worker on server runs.
 - When changing policy-search training interfaces, update `README.md`, `AGENTS.md`, and the CLI/algorithm tests in the same task.
 - The worktree may already contain unrelated user changes. Do not reset, rewrite, or “clean up” files outside the task.
 - When a bug appears in orchestration, inspect runtime state labels in `env_state.py` before changing transition logic blindly.

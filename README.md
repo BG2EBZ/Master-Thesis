@@ -167,7 +167,8 @@ For a learning-seed by epoch dataset, run the policy-search trainer with multipl
 
 Use `--max-workers` to cap the number of parallel worker processes used for rollout
 evaluation. The actual worker count is also limited by the number of rollout tasks and
-the available CPU count.
+the available CPU count. Parallel rollout workers use Python's `spawn` start method so
+MuJoCo and other native libraries initialize inside each worker process on server runs.
 
 The multi-seed path writes:
 
