@@ -142,6 +142,10 @@ docker build --no-cache \
 
 Otherwise skip this step.
 
+The current policy-search package depends on `torch` for ePPO. If the server
+image was built before that dependency was added to `museum_env_package/setup.py`,
+rebuild the image before running `scripts/train_eppo.py`.
+
 ---
 
 # 7. Start Docker
@@ -210,11 +214,13 @@ import scipy.linalg
 import mujoco
 import gymnasium
 import skfuzzy
+import torch
 import museum_env
 
 print("NumPy:", numpy.__version__)
 print("SciPy:", scipy.__version__)
 print("MuJoCo:", mujoco.__version__)
+print("Torch:", torch.__version__)
 print("Everything OK")
 PY
 ```
@@ -252,6 +258,25 @@ python scripts/train_reps.py \
     --output-dir runs/smoke_test_reps
 ```
 
+Then run a tiny ePPO smoke test:
+
+```bash
+python scripts/train_eppo.py \
+    --epochs 1 \
+    --samples-per-epoch 2 \
+    --max-workers "${MAX_WORKERS}" \
+    --train-seeds-per-epoch 1 \
+    --n-learning-seeds 1 \
+    --n-eval-seeds 1 \
+    --n-humans 3 \
+    --eppo-lr 0.001 \
+    --eppo-epochs 5 \
+    --eppo-batch-size 2 \
+    --eps-ppo 0.2 \
+    --ent-coeff 0.001 \
+    --output-dir runs/smoke_test_eppo
+```
+
 Check that
 
 - environment runs
@@ -281,7 +306,7 @@ python -u scripts/train_rwr.py \
 ```
 
 This writes `artifacts/runs/rwr_server_10x101/seed_plan.json`. Keep this file,
-because REPS should reuse it for a fair comparison.
+because REPS and ePPO should reuse it for a fair comparison.
 
 ---
 
@@ -316,18 +341,54 @@ All REPS runs in the sweep should use the same RWR `seed_plan.json`.
 
 ---
 
-# 10.6 Compare baseline, RWR, and REPS
+# 10.6 Run the matching ePPO experiment
 
-After RWR and REPS finish, create a MushroomRL-style mean/CI comparison plot:
+Use the same training budget and reuse the RWR seed plan:
+
+```bash
+python -u scripts/train_eppo.py \
+    --epochs 100 \
+    --samples-per-epoch 30 \
+    --max-workers "${MAX_WORKERS}" \
+    --train-seeds-per-epoch 1 \
+    --n-learning-seeds 10 \
+    --n-eval-seeds 20 \
+    --n-humans 15 \
+    --seed-plan artifacts/runs/rwr_server_10x101/seed_plan.json \
+    --eppo-lr 0.001 \
+    --eppo-epochs 5 \
+    --eppo-batch-size 10 \
+    --eps-ppo 0.2 \
+    --ent-coeff 0.001 \
+    --output-dir artifacts/runs/eppo_server_10x101_lr001_clip02_ent001
+```
+
+For a quick ePPO stability sweep, repeat the ePPO command and replace the
+ePPO hyperparameter/output arguments with:
+
+```bash
+--eppo-lr 0.0005 --eppo-epochs 5  --eps-ppo 0.1 --ent-coeff 0.001 --output-dir artifacts/runs/eppo_server_10x101_lr0005_clip01_ent001
+--eppo-lr 0.001  --eppo-epochs 5  --eps-ppo 0.2 --ent-coeff 0.001 --output-dir artifacts/runs/eppo_server_10x101_lr001_clip02_ent001
+--eppo-lr 0.003  --eppo-epochs 10 --eps-ppo 0.2 --ent-coeff 0.001 --output-dir artifacts/runs/eppo_server_10x101_lr003_clip02_ent001
+```
+
+The recommended first run is `--eppo-lr 0.001 --eppo-epochs 5 --eppo-batch-size 10 --eps-ppo 0.2 --ent-coeff 0.001`.
+
+---
+
+# 10.7 Compare baseline, RWR, REPS, and ePPO
+
+After RWR, REPS, and ePPO finish, create a MushroomRL-style mean/CI comparison plot:
 
 ```bash
 python scripts/compare_policy_search_runs.py \
     --run rwr=artifacts/runs/rwr_server_10x101/learning_curve_raw.csv \
     --run reps=artifacts/runs/reps_server_10x101_eps01/learning_curve_raw.csv \
+    --run eppo=artifacts/runs/eppo_server_10x101_lr001_clip02_ent001/learning_curve_raw.csv \
     --output-dir artifacts/runs/policy_search_compare_server_10x101
 ```
 
-The comparison script checks that RWR and REPS share the same `seed_plan_hash`.
+The comparison script checks that RWR, REPS, and ePPO share the same `seed_plan_hash`.
 If the hashes differ, the script refuses to plot because the comparison is not fair.
 
 The comparison output includes:
@@ -336,13 +397,14 @@ The comparison output includes:
 - `policy_search_comparison_summary.json`
 - `policy_search_comparison_plot.png`
 
-The plot contains three curves:
+The plot contains four curves:
 
 - baseline
 - RWR
 - REPS
+- ePPO
 
-Adjust parameters as needed, but keep RWR and REPS budgets matched.
+Adjust parameters as needed, but keep RWR, REPS, and ePPO budgets matched.
 
 Important training parameters:
 
@@ -352,12 +414,17 @@ Important training parameters:
 - `--seed`: master seed for policy sampling and rollout seed generation. Default: `42`.
 - `--beta`: RWR reward-weight temperature. Used only by `scripts/train_rwr.py`. Default: `0.1`.
 - `--eps`: REPS KL-divergence update bound. Used only by `scripts/train_reps.py`. Default: `0.1`.
+- `--eppo-lr`: ePPO Adam learning rate. Recommended first value: `0.001`.
+- `--eppo-epochs`: ePPO optimizer passes over each sampled theta batch. Recommended first value: `5`.
+- `--eppo-batch-size`: ePPO minibatch size. Recommended first value: `10`.
+- `--eps-ppo`: ePPO likelihood-ratio clipping range. Recommended first value: `0.2`.
+- `--ent-coeff`: ePPO entropy bonus coefficient. Recommended first value: `0.001`.
 - `--train-seeds-per-epoch`: rollout seeds used to evaluate each sampled theta during training. Default: `1`.
 - `--n-learning-seeds`: independent learning runs. Use more than `1` to generate learning-curve data. Default: `10`.
 - `--n-eval-seeds`: fresh evaluation episodes per epoch in multi-learning-seed mode. Default: `20`.
 - `--n-humans`: number of humans in the simulated museum crowd. Default: `15`.
-- `--seed-plan`: saved seed plan to reuse for another algorithm. Use this to make RWR and REPS share exactly the same seeds.
-- `--output-dir`: result directory. If omitted, defaults are `artifacts/runs/rwr_YYYYMMDD_HHMMSS` for RWR and `artifacts/runs/reps_YYYYMMDD_HHMMSS` for REPS.
+- `--seed-plan`: saved seed plan to reuse for another algorithm. Use this to make RWR, REPS, and ePPO share exactly the same seeds.
+- `--output-dir`: result directory. If omitted, defaults are `artifacts/runs/rwr_YYYYMMDD_HHMMSS` for RWR, `artifacts/runs/reps_YYYYMMDD_HHMMSS` for REPS, and `artifacts/runs/eppo_YYYYMMDD_HHMMSS` for ePPO.
 
 Important artifacts:
 
@@ -365,7 +432,7 @@ Important artifacts:
 - `learning_curve_raw.csv`: learned policy plus baseline rows.
 - `learning_curve_summary.json`: aggregate results and `seed_plan_hash`.
 - `learning_curve_plot.png`: one learned policy versus baseline.
-- `policy_search_comparison_plot.png`: baseline, RWR, and REPS in one figure.
+- `policy_search_comparison_plot.png`: baseline, RWR, REPS, and ePPO in one figure.
 
 ---
 
