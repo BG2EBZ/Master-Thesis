@@ -1,0 +1,66 @@
+{
+  "algorithm": "eppo",
+  "beta": 0.1,
+  "eps": 0.1,
+  "eppo_config": {
+    "learning_rate": 0.001,
+    "n_epochs_policy": 5,
+    "batch_size": 2,
+    "eps_ppo": 0.2,
+    "ent_coeff": 0.001,
+    "min_std": 0.0001
+  },
+  "best_theta_seen": [
+    2.667331986129751,
+    3.8633457042580797,
+    2.023030287940113,
+    0.5915754000778097,
+    1.073211048828686
+  ],
+  "best_policy_params": {
+    "slow_down_distance_m": 2.667331986129751,
+    "callback_distance_m": 3.8633457042580797,
+    "callback_wait_seconds": 2.023030287940113,
+    "slowdown_speed_scale": 0.5915754000778097,
+    "explanation_time_scale": 1.0,
+    "explanation_wait_seconds": 60.0,
+    "callback_same_person_cooldown_seconds": 20.0
+  },
+  "final_theta": [
+    2.5050213425066215,
+    3.505004792007691,
+    2.005005691435189,
+    0.6949888552823957,
+    1.0050145158451973
+  ],
+  "final_policy_params": {
+    "slow_down_distance_m": 2.5050213425066215,
+    "callback_distance_m": 3.505004792007691,
+    "callback_wait_seconds": 2.005005691435189,
+    "slowdown_speed_scale": 0.6949888552823957,
+    "explanation_time_scale": 1.0,
+    "explanation_wait_seconds": 60.0,
+    "callback_same_person_cooldown_seconds": 20.0
+  },
+  "best_return": -23.150000000000002,
+  "best_mean_duration_seconds": 191.5,
+  "best_mean_overwhelmed_triggers": 0.0,
+  "best_mean_impatient_triggers": 1.0,
+  "best_mean_distracted_triggers": 0.0,
+  "best_epoch": 1,
+  "best_sample_index_within_epoch": 1,
+  "final_mu": [
+    2.5050213425066215,
+    3.505004792007691,
+    2.005005691435189,
+    0.6949888552823957,
+    1.0050145158451973
+  ],
+  "final_std": [
+    0.40120763850357016,
+    0.5970021906230603,
+    0.798182437292145,
+    0.10049981673123676,
+    0.05025039492793844
+  ]
+}

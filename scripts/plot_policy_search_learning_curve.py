@@ -17,10 +17,10 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
         sys.path.insert(0, str(path))
 
 from train.common.artifacts import build_dense_metric_matrix
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     DEFAULT_LEARNING_CURVE_PLOT_NAME,
 )
-from train.rwr.plotting import (
+from train.policy_search.plotting import (
     plot_learning_curve_metric_panels,
     plot_learning_curve_metrics,
 )

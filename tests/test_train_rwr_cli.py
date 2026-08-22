@@ -10,8 +10,8 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from scripts import train_reps, train_rwr
-from train.rwr.defaults import DEFAULT_BETA, DEFAULT_EPS, DEFAULT_OUTPUT_DIR
+from scripts import train_eppo, train_reps, train_rwr
+from train.policy_search.defaults import DEFAULT_BETA, DEFAULT_EPS, DEFAULT_OUTPUT_DIR
 
 
 class TrainRwrCliTest(unittest.TestCase):
@@ -31,6 +31,33 @@ class TrainRwrCliTest(unittest.TestCase):
         self.assertFalse(hasattr(args, "beta"))
         self.assertEqual(float(args.eps), 0.5)
         self.assertTrue(output_dir.name.startswith("reps_"))
+        self.assertEqual(output_dir.parent.name, "runs")
+
+    def test_eppo_script_parses_eppo_config(self):
+        args = train_eppo.build_arg_parser().parse_args(
+            [
+                "--eps-ppo",
+                "0.3",
+                "--eppo-lr",
+                "0.01",
+                "--eppo-epochs",
+                "5",
+                "--eppo-batch-size",
+                "3",
+                "--ent-coeff",
+                "0.05",
+            ]
+        )
+        output_dir = train_eppo._default_output_dir_for_algorithm("eppo")
+
+        self.assertFalse(hasattr(args, "beta"))
+        self.assertFalse(hasattr(args, "eps"))
+        self.assertEqual(float(args.eps_ppo), 0.3)
+        self.assertEqual(float(args.eppo_lr), 0.01)
+        self.assertEqual(int(args.eppo_epochs), 5)
+        self.assertEqual(int(args.eppo_batch_size), 3)
+        self.assertEqual(float(args.ent_coeff), 0.05)
+        self.assertTrue(output_dir.name.startswith("eppo_"))
         self.assertEqual(output_dir.parent.name, "runs")
 
     def test_rwr_script_rejects_algorithm_flag(self):

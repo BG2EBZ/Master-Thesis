@@ -27,10 +27,10 @@ import numpy as np
 from museum_env.guide_config import GuideBehaviorConfig
 from train.common.artifacts import write_csv_rows, write_json
 from train.common.plot_utils import compute_mean_confidence_band
-from train.rwr.defaults import DEFAULT_MAX_WORKERS, DEFAULT_N_HUMANS, DEFAULT_SEED
-from train.rwr.policy_codec import guide_config_to_theta, summarize_theta
-from train.rwr.rewarding import DEFAULT_EPISODE_REWARD_WEIGHTS, EpisodeRewardWeights
-from train.rwr.evaluation import _evaluate_episode_task
+from train.policy_search.defaults import DEFAULT_MAX_WORKERS, DEFAULT_N_HUMANS, DEFAULT_SEED
+from train.policy_search.policy_codec import guide_config_to_theta, summarize_theta
+from train.policy_search.rewarding import DEFAULT_EPISODE_REWARD_WEIGHTS, EpisodeRewardWeights
+from train.policy_search.evaluation import _evaluate_episode_task
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_N_SEEDS = 10

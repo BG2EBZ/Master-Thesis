@@ -1,9 +1,11 @@
 from .algorithm import (
+    EPPOConfig,
     ThetaEvaluation,
     aggregate_episode_results,
     diagonal_gaussian_entropy,
     update_distribution,
     update_distribution_by_algorithm,
+    update_distribution_eppo,
     update_distribution_reps,
 )
 from .defaults import (
@@ -85,6 +87,7 @@ __all__ = [
     "DEFAULT_SAMPLES_PER_EPOCH",
     "DEFAULT_SEED",
     "DEFAULT_SEED_PLAN_NAME",
+    "EPPOConfig",
     "EpisodeRewardWeights",
     "RWRRewardWrapper",
     "INITIAL_MU",
@@ -116,6 +119,7 @@ __all__ = [
     "train_across_learning_seeds",
     "update_distribution",
     "update_distribution_by_algorithm",
+    "update_distribution_eppo",
     "update_distribution_reps",
     "write_seed_plan",
 ]

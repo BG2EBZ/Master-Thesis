@@ -106,6 +106,7 @@ if terminated or truncated:
 - Record video: `/home/tianci/Polimi/workspace/venv/bin/python scripts/run_env.py --mode record --use-timestamp-subfolder [--seed 2]`
 - RWR training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_rwr.py`
 - REPS training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py --eps 0.1`
+- ePPO training: `/home/tianci/Polimi/workspace/venv/bin/python scripts/train_eppo.py --eppo-lr 0.001 --eppo-epochs 5 --eps-ppo 0.2 --ent-coeff 0.001`
 - Evaluate a learned policy: `/home/tianci/Polimi/workspace/venv/bin/python scripts/eval_baseline.py --learned-params-json artifacts/runs/rwr_20260721_155908/best_params.json`
 
 If running the evaluator from inside `scripts/`, use the parent-relative path:
@@ -122,26 +123,34 @@ Policy-search training uses separate CLI entrypoints:
 
 - RWR: `scripts/train_rwr.py --beta 0.1`
 - REPS: `scripts/train_reps.py --eps 0.1`
+- ePPO: `scripts/train_eppo.py --eppo-lr 0.001 --eppo-epochs 5 --eppo-batch-size 10 --eps-ppo 0.2 --ent-coeff 0.001`
 
-Both scripts share the same rollout, reward, seed-plan, plotting, and artifact machinery. The trainers write:
+All policy-search scripts share the same rollout, reward, seed-plan, plotting, and artifact machinery under `train/policy_search/`. The trainers write:
 
 - default RWR output directory: `artifacts/runs/rwr_YYYYMMDD_HHMMSS`
 - default REPS output directory: `artifacts/runs/reps_YYYYMMDD_HHMMSS`
+- default ePPO output directory: `artifacts/runs/eppo_YYYYMMDD_HHMMSS`
 - `training_metrics.csv`
 - `training_metrics.png`
-- `best_params.json`: best sampled theta, final distribution-center policy params, `algorithm`, `beta`, `eps`, `final_mu`, and `final_std`
+- `best_params.json`: best sampled theta, final distribution-center policy params, `algorithm`, `beta`, `eps`, `eppo_config`, `final_mu`, and `final_std`
 
-Minimal REPS smoke test:
+Minimal ePPO smoke test:
 
 ```bash
-/home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py \
-  --eps 0.1 \
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_eppo.py \
   --epochs 1 \
   --samples-per-epoch 2 \
   --train-seeds-per-epoch 1 \
   --n-learning-seeds 1 \
+  --n-eval-seeds 1 \
   --n-humans 3 \
-  --max-workers 1
+  --max-workers 1 \
+  --eppo-lr 0.001 \
+  --eppo-epochs 5 \
+  --eppo-batch-size 2 \
+  --eps-ppo 0.2 \
+  --ent-coeff 0.001 \
+  --output-dir runs/smoke_test_eppo
 ```
 
 For a learning-seed by epoch dataset, run the policy-search trainer with multiple learning seeds:
@@ -162,7 +171,7 @@ the available CPU count.
 
 The multi-seed path writes:
 
-- `learning_curve_raw.csv`: long-form rows for learned policy plus baseline, evaluated on fresh per-epoch seeds; `policy` can be `rwr`, `reps`, or `baseline`
+- `learning_curve_raw.csv`: long-form rows for learned policy plus baseline, evaluated on fresh per-epoch seeds; `policy` can be `rwr`, `reps`, `eppo`, or `baseline`
 - `learning_curve_matrix.csv`: learned-policy matrix with `learning_seed,epoch_0,epoch_1,...`
 - `seed_plan.json`: shared learning seeds, training rollout seeds, and evaluation seeds for reproducible comparisons
 - `learning_curve_summary.json`: aggregate returns, per-learning-seed final policy params, per-epoch eval seeds, and `seed_plan_hash`
@@ -170,7 +179,7 @@ The multi-seed path writes:
 
 For each learning seed and epoch, the learned policy and baseline are evaluated on the same fresh `--n-eval-seeds` episodes.
 
-To guarantee RWR and REPS use the same seeds, train RWR first and reuse its seed plan for REPS:
+To guarantee RWR, REPS, and ePPO use the same seeds, train RWR first and reuse its seed plan for the other algorithms:
 
 ```bash
 /home/tianci/Polimi/workspace/venv/bin/python scripts/train_reps.py \
@@ -184,12 +193,29 @@ To guarantee RWR and REPS use the same seeds, train RWR first and reuse its seed
   --output-dir artifacts/runs/reps_dataset_10x31
 ```
 
-Then create a MushroomRL-style comparison plot with baseline, RWR, and REPS in one figure:
+```bash
+/home/tianci/Polimi/workspace/venv/bin/python scripts/train_eppo.py \
+  --epochs 30 \
+  --samples-per-epoch 30 \
+  --max-workers 8 \
+  --n-learning-seeds 10 \
+  --n-eval-seeds 20 \
+  --seed-plan artifacts/runs/rwr_dataset_10x31/seed_plan.json \
+  --eppo-lr 0.001 \
+  --eppo-epochs 5 \
+  --eppo-batch-size 10 \
+  --eps-ppo 0.2 \
+  --ent-coeff 0.001 \
+  --output-dir artifacts/runs/eppo_dataset_10x31
+```
+
+Then create a MushroomRL-style comparison plot with baseline, RWR, REPS, and ePPO in one figure:
 
 ```bash
 /home/tianci/Polimi/workspace/venv/bin/python scripts/compare_policy_search_runs.py \
   --run rwr=artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv \
   --run reps=artifacts/runs/reps_dataset_10x31/learning_curve_raw.csv \
+  --run eppo=artifacts/runs/eppo_dataset_10x31/learning_curve_raw.csv \
   --output-dir artifacts/runs/policy_search_compare_10x31
 ```
 
@@ -210,10 +236,18 @@ scripts/train_reps.py --eps 0.5
 scripts/train_reps.py --eps 1.0
 ```
 
+For a quick ePPO stability sweep, keep the same seed plan and try:
+
+```bash
+scripts/train_eppo.py --eppo-lr 0.0005 --eppo-epochs 5 --eps-ppo 0.1 --ent-coeff 0.001
+scripts/train_eppo.py --eppo-lr 0.001  --eppo-epochs 5 --eps-ppo 0.2 --ent-coeff 0.001
+scripts/train_eppo.py --eppo-lr 0.003  --eppo-epochs 10 --eps-ppo 0.2 --ent-coeff 0.001
+```
+
 To replot the saved learning curves without retraining:
 
 ```bash
-/home/tianci/Polimi/workspace/venv/bin/python scripts/plot_rwr_learning_curve.py \
+/home/tianci/Polimi/workspace/venv/bin/python scripts/plot_policy_search_learning_curve.py \
   --input-csv artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv
 ```
 
@@ -222,7 +256,7 @@ This writes both `learning_curve_plot.png` and `learning_curve_other_metrics.png
 To write both plots to another directory:
 
 ```bash
-/home/tianci/Polimi/workspace/venv/bin/python scripts/plot_rwr_learning_curve.py \
+/home/tianci/Polimi/workspace/venv/bin/python scripts/plot_policy_search_learning_curve.py \
   --input-csv artifacts/runs/rwr_dataset_10x31/learning_curve_raw.csv \
   --output-path artifacts/runs/rwr_dataset_10x31/replots
 ```

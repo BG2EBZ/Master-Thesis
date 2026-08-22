@@ -1,0 +1,2 @@
+epoch,mean_return,best_return,std_0,std_1,std_2,std_3,std_4,distribution_entropy,mean_duration_seconds,mean_overwhelmed_triggers,mean_impatient_triggers,mean_distracted_triggers
+1,-23.195,-23.150000000000002,0.4,0.6,0.8,0.1,0.05,0.14611539252097172,191.95,0.0,1.0,0.0

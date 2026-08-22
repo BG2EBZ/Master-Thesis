@@ -19,11 +19,12 @@
 - `museum_env_package/museum_env/register_env.py`: Gymnasium registration for `MuseumEnv-v0`.
 - `scripts/train_rwr.py`: RWR training entrypoint.
 - `scripts/train_reps.py`: REPS training entrypoint.
-- `scripts/compare_policy_search_runs.py`: combines RWR, REPS, and baseline learning curves into one MushroomRL-style mean/CI plot.
-- `train/rwr/algorithm.py`: RWR and REPS distribution update logic for sampled guide-policy parameters.
-- `train/rwr/evaluation.py`: rollout task construction, theta evaluation, and baseline learning-curve evaluation helpers.
-- `train/rwr/seed_plan.py`: reproducible learning-seed, rollout-seed, and evaluation-seed plan generation and hashing.
-- `train/rwr/schedules.py`: seed schedule and worker-count helpers used by policy-search training.
+- `scripts/train_eppo.py`: ePPO training entrypoint.
+- `scripts/compare_policy_search_runs.py`: combines RWR, REPS, ePPO, and baseline learning curves into one MushroomRL-style mean/CI plot.
+- `train/policy_search/algorithm.py`: RWR, REPS, and ePPO distribution update logic for sampled guide-policy parameters.
+- `train/policy_search/evaluation.py`: rollout task construction, theta evaluation, and baseline learning-curve evaluation helpers.
+- `train/policy_search/seed_plan.py`: reproducible learning-seed, rollout-seed, and evaluation-seed plan generation and hashing.
+- `train/policy_search/schedules.py`: seed schedule and worker-count helpers used by policy-search training.
 
 ## Behavior Model
 
@@ -77,9 +78,9 @@ cd /home/tianci/Polimi/workspace/Master-Thesis
 - Preserve the compact `info` schema by default. If you add or remove fields, update repo docs and affected tests in the same change.
 - Start behavior validation with the short train smoke command before running longer demo or record flows.
 - Treat the unittest command as a regression probe. Report observed outcomes instead of assuming the full suite is green on the current branch.
-- Keep RWR and REPS CLI entrypoints separate: `scripts/train_rwr.py` is RWR-only and `scripts/train_reps.py` is REPS-only.
-- For fair RWR/REPS comparisons, reuse the same `seed_plan.json` and let `scripts/compare_policy_search_runs.py` verify the shared `seed_plan_hash`.
-- Keep the existing `train/rwr` package name for now, even though it also contains REPS support. Consider a later `train/policy_search` migration only after the policy-search experiments stabilize.
+- Keep RWR, REPS, and ePPO CLI entrypoints separate: `scripts/train_rwr.py` is RWR-only, `scripts/train_reps.py` is REPS-only, and `scripts/train_eppo.py` is ePPO-only.
+- For fair RWR/REPS/ePPO comparisons, reuse the same `seed_plan.json` and let `scripts/compare_policy_search_runs.py` verify the shared `seed_plan_hash`.
+- Keep shared policy-search implementation under `train/policy_search`; do not add imports from the old RWR-only package path.
 - When changing policy-search training interfaces, update `README.md`, `AGENTS.md`, and the CLI/algorithm tests in the same task.
 - The worktree may already contain unrelated user changes. Do not reset, rewrite, or “clean up” files outside the task.
 - When a bug appears in orchestration, inspect runtime state labels in `env_state.py` before changing transition logic blindly.

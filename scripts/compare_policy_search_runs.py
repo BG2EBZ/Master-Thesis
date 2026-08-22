@@ -20,16 +20,16 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
 
 from train.common.artifacts import build_dense_metric_matrix, write_csv_rows, write_json
 from train.common.plot_utils import compute_mean_confidence_band
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     ARTIFACTS_ROOT,
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     LEARNING_CURVE_RAW_FIELDNAMES,
 )
-from train.rwr.plotting import (
+from train.policy_search.plotting import (
     plot_multi_policy_learning_curve_metric_panels,
     plot_multi_policy_learning_curve_metrics,
 )
-from train.rwr.seed_plan import load_seed_plan, seed_plan_hash
+from train.policy_search.seed_plan import load_seed_plan, seed_plan_hash
 
 DEFAULT_OUTPUT_DIR = ARTIFACTS_ROOT / "runs" / (
     f"policy_search_compare_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

@@ -9,7 +9,7 @@ for path in (REPO_ROOT, PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from train.rwr.seed_plan import (
+from train.policy_search.seed_plan import (
     build_seed_plan,
     load_seed_plan,
     seed_plan_hash,

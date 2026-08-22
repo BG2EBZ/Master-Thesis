@@ -15,5 +15,6 @@ setup(
         "numpy",
         "scipy",
         "scikit-fuzzy",
+        "torch",
     ],
 )

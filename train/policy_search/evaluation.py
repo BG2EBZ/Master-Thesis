@@ -13,14 +13,14 @@ from train.common.rollout import (
     run_episode,
     run_episode_batch,
 )
-from train.rwr.algorithm import ThetaEvaluation, aggregate_episode_results
-from train.rwr.policy_codec import guide_config_to_theta, theta_to_guide_config
-from train.rwr.rewarding import (
+from train.policy_search.algorithm import ThetaEvaluation, aggregate_episode_results
+from train.policy_search.policy_codec import guide_config_to_theta, theta_to_guide_config
+from train.policy_search.rewarding import (
     DEFAULT_EPISODE_REWARD_WEIGHTS,
     EpisodeRewardWeights,
     RWRRewardWrapper,
 )
-from train.rwr.schedules import resolve_worker_count
+from train.policy_search.schedules import resolve_worker_count
 
 
 def _wrap_env(env, reward_config: EpisodeRewardWeights) -> RWRRewardWrapper:

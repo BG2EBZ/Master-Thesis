@@ -17,11 +17,11 @@ from scripts.compare_policy_search_runs import (
     compare_policy_search_runs,
     parse_run_spec,
 )
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     DEFAULT_LEARNING_CURVE_SUMMARY_NAME,
     LEARNING_CURVE_RAW_FIELDNAMES,
 )
-from train.rwr.seed_plan import (
+from train.policy_search.seed_plan import (
     LearningSeedPlan,
     SeedPlan,
     build_seed_plan,

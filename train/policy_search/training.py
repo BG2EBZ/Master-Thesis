@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
@@ -12,13 +12,14 @@ from train.common.artifacts import build_dense_metric_matrix, write_csv_rows, wr
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
 from train.common.plot_utils import compute_mean_confidence_band
 from train.common.rollout import run_episode_batch
-from train.rwr.algorithm import (
+from train.policy_search.algorithm import (
+    EPPOConfig,
     ThetaEvaluation,
     aggregate_episode_results,
     diagonal_gaussian_entropy,
     update_distribution_by_algorithm,
 )
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_BETA,
     DEFAULT_CSV_NAME,
@@ -40,26 +41,26 @@ from train.rwr.defaults import (
     LEARNING_CURVE_RAW_FIELDNAMES,
     METRIC_FIELDNAMES,
 )
-from train.rwr.evaluation import (
+from train.policy_search.evaluation import (
     _evaluate_episode_task,
     build_learning_curve_row as _build_learning_curve_row,
     evaluate_baseline_learning_curve_rows as _evaluate_baseline_learning_curve_rows,
     evaluate_theta_on_seeds as _evaluate_theta_on_seeds,
 )
-from train.rwr.plotting import (
+from train.policy_search.plotting import (
     plot_exploration_metrics,
     plot_learning_curve_metrics,
     plot_training_metrics,
 )
-from train.rwr.policy_codec import (
+from train.policy_search.policy_codec import (
     guide_config_to_theta,
     summarize_theta,
 )
-from train.rwr.rewarding import (
+from train.policy_search.rewarding import (
     DEFAULT_EPISODE_REWARD_WEIGHTS,
     EpisodeRewardWeights,
 )
-from train.rwr.seed_plan import (
+from train.policy_search.seed_plan import (
     SeedPlan,
     build_seed_plan,
     copy_seed_schedule,
@@ -67,13 +68,13 @@ from train.rwr.seed_plan import (
     validate_seed_plan,
     write_seed_plan,
 )
-from train.rwr.schedules import (
+from train.policy_search.schedules import (
     build_epoch_training_seed_schedule as _build_epoch_training_seed_schedule,
     build_seed_schedule as _build_seed_schedule,
     resolve_worker_count as _resolve_worker_count,
 )
 
-SUPPORTED_POLICY_SEARCH_ALGORITHMS = ("rwr", "reps")
+SUPPORTED_POLICY_SEARCH_ALGORITHMS = ("rwr", "reps", "eppo")
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,13 @@ def _normalize_algorithm(algorithm: str) -> str:
 
 def _algorithm_plot_label(algorithm: str) -> str:
     return _normalize_algorithm(algorithm).upper()
+
+
+def _eppo_config_payload(config: EPPOConfig) -> dict[str, float | int]:
+    return {
+        key: int(value) if key in ("n_epochs_policy", "batch_size") else float(value)
+        for key, value in asdict(config).items()
+    }
 
 
 def _build_learning_curve_matrix_rows(
@@ -169,6 +177,7 @@ def _train_single_learning_seed(
     n_humans: int,
     reward_config: EpisodeRewardWeights | None,
     max_workers: int,
+    eppo_config: EPPOConfig | None = None,
     learning_curve_eval_seeds_per_epoch: int | None = None,
     epoch_training_seeds: Sequence[Sequence[int]] | None = None,
     learning_curve_eval_seed_schedule: Sequence[Sequence[int]] | None = None,
@@ -177,6 +186,7 @@ def _train_single_learning_seed(
         DEFAULT_EPISODE_REWARD_WEIGHTS if reward_config is None else reward_config
     )
     resolved_algorithm = _normalize_algorithm(algorithm)
+    resolved_eppo_config = EPPOConfig() if eppo_config is None else eppo_config
     master_seed = int(seed)
     # Generate three independent SeedSequences for theta sampling, training, and learning curve evaluation
     theta_seed_sequence, train_seed_sequence, curve_seed_sequence = np.random.SeedSequence(
@@ -309,6 +319,9 @@ def _train_single_learning_seed(
                 returns=returns,
                 beta=float(beta),
                 eps=float(eps),
+                current_mu=mu,
+                current_std=std,
+                eppo_config=resolved_eppo_config,
             )
             if resolved_learning_curve_eval_seed_schedule:
                 _record_learning_curve_epoch(
@@ -392,8 +405,10 @@ def train(
     n_humans: int = DEFAULT_N_HUMANS,
     reward_config: EpisodeRewardWeights | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    eppo_config: EPPOConfig | None = None,
 ) -> list[dict[str, float | int]]:
     resolved_algorithm = _normalize_algorithm(algorithm)
+    resolved_eppo_config = EPPOConfig() if eppo_config is None else eppo_config
     output_dir.mkdir(parents=True, exist_ok=True)
     result = _train_single_learning_seed(
         epochs=int(epochs),
@@ -406,6 +421,7 @@ def train(
         n_humans=int(n_humans),
         reward_config=reward_config,
         max_workers=int(max_workers),
+        eppo_config=resolved_eppo_config,
         learning_curve_eval_seeds_per_epoch=None,
     )
 
@@ -418,6 +434,7 @@ def train(
         "algorithm": resolved_algorithm,
         "beta": float(beta),
         "eps": float(eps),
+        "eppo_config": _eppo_config_payload(resolved_eppo_config),
         "best_theta_seen": [float(value) for value in result.best_theta_seen],
         "best_policy_params": _policy_params_dict(result.best_theta_seen),
         "final_theta": [float(value) for value in result.final_mu],
@@ -475,8 +492,10 @@ def train_across_learning_seeds(
     n_eval_seeds: int = DEFAULT_N_EVAL_SEEDS,
     max_workers: int = DEFAULT_MAX_WORKERS,
     seed_plan: SeedPlan | None = None,
+    eppo_config: EPPOConfig | None = None,
 ) -> list[dict[str, float | int | str]]:
     resolved_algorithm = _normalize_algorithm(algorithm)
+    resolved_eppo_config = EPPOConfig() if eppo_config is None else eppo_config
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_n_learning_seeds = int(n_learning_seeds)
     resolved_n_eval_seeds = int(n_eval_seeds)
@@ -531,6 +550,7 @@ def train_across_learning_seeds(
             n_humans=int(n_humans),
             reward_config=reward_config,
             max_workers=int(max_workers),
+            eppo_config=resolved_eppo_config,
             learning_curve_eval_seeds_per_epoch=resolved_n_eval_seeds,
             epoch_training_seeds=learning_seed_plan.train_seeds_by_epoch,
             learning_curve_eval_seed_schedule=learning_seed_plan.eval_seeds_by_epoch,
@@ -602,6 +622,7 @@ def train_across_learning_seeds(
         "seed_plan_json": str(seed_plan_path),
         "beta": float(beta),
         "eps": float(eps),
+        "eppo_config": _eppo_config_payload(resolved_eppo_config),
         "learning_seeds": [int(value) for value in ordered_learning_seeds],
         "learning_curve_eval_seeds_by_learning_seed": [
             {

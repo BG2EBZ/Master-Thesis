@@ -8,7 +8,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 
-DEFAULT_EPOCHS = 100
+DEFAULT_EPOCHS = 60
 DEFAULT_SAMPLES_PER_EPOCH = 30
 DEFAULT_SEED = 42
 DEFAULT_BETA = 0.1

@@ -9,7 +9,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from train.common.evaluation_seeds import FIXED_EVALUATION_SEEDS
-from train.rwr.schedules import (
+from train.policy_search.schedules import (
     build_epoch_training_seed_schedule,
     build_seed_schedule,
 )

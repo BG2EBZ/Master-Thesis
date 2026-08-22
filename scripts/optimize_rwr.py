@@ -30,14 +30,14 @@ from scripts.eval_baseline import (
     DEFAULT_SUMMARY_NAME as DEFAULT_EVAL_SUMMARY_NAME,
     evaluate_baseline,
 )
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     DEFAULT_BEST_PARAMS_NAME,
     DEFAULT_N_HUMANS,
     DEFAULT_SEED,
 )
-from train.rwr.policy_codec import guide_config_to_theta
-from train.rwr.rewarding import EpisodeRewardWeights
-from train.rwr.training import train
+from train.policy_search.policy_codec import guide_config_to_theta
+from train.policy_search.rewarding import EpisodeRewardWeights
+from train.policy_search.training import train
 
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 DEFAULT_OUTPUT_DIR = ARTIFACTS_ROOT / "runs" / f"rwr_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

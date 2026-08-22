@@ -21,7 +21,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-from train.rwr.defaults import (
+from train.policy_search.defaults import (
     ARTIFACTS_ROOT,
     DEFAULT_BETA,
     DEFAULT_EPS,
@@ -35,11 +35,12 @@ from train.rwr.defaults import (
     DEFAULT_SAMPLES_PER_EPOCH,
     DEFAULT_SEED,
 )
-from train.rwr.rewarding import DEFAULT_EPISODE_REWARD_WEIGHTS, EpisodeRewardWeights
-from train.rwr.seed_plan import load_seed_plan
-from train.rwr.training import train, train_across_learning_seeds
+from train.policy_search.algorithm import EPPOConfig
+from train.policy_search.rewarding import DEFAULT_EPISODE_REWARD_WEIGHTS, EpisodeRewardWeights
+from train.policy_search.seed_plan import load_seed_plan
+from train.policy_search.training import train, train_across_learning_seeds
 
-PolicySearchAlgorithm = Literal["rwr", "reps"]
+PolicySearchAlgorithm = Literal["rwr", "reps", "eppo"]
 
 
 def positive_int(value: str) -> int:
@@ -69,8 +70,8 @@ def build_training_arg_parser(
     algorithm: PolicySearchAlgorithm,
 ) -> argparse.ArgumentParser:
     resolved_algorithm = str(algorithm).lower()
-    if resolved_algorithm not in ("rwr", "reps"):
-        raise ValueError("algorithm must be 'rwr' or 'reps'")
+    if resolved_algorithm not in ("rwr", "reps", "eppo"):
+        raise ValueError("algorithm must be 'rwr', 'reps', or 'eppo'")
     parser = argparse.ArgumentParser(
         description=f"Train the guide policy-search loop with {resolved_algorithm.upper()}."
     )
@@ -99,12 +100,44 @@ def build_training_arg_parser(
             default=DEFAULT_BETA,
             help="RWR reward-weight temperature.",
         )
-    else:
+    elif resolved_algorithm == "reps":
         parser.add_argument(
             "--eps",
             type=positive_float,
             default=DEFAULT_EPS,
             help="REPS KL-divergence update bound.",
+        )
+    else:
+        default_eppo_config = EPPOConfig()
+        parser.add_argument(
+            "--eppo-lr",
+            type=positive_float,
+            default=default_eppo_config.learning_rate,
+            help="ePPO Adam learning rate for the policy distribution update.",
+        )
+        parser.add_argument(
+            "--eppo-epochs",
+            type=positive_int,
+            default=default_eppo_config.n_epochs_policy,
+            help="Number of ePPO optimizer passes over each theta batch.",
+        )
+        parser.add_argument(
+            "--eppo-batch-size",
+            type=positive_int,
+            default=default_eppo_config.batch_size,
+            help="Minibatch size used by each ePPO optimizer pass.",
+        )
+        parser.add_argument(
+            "--eps-ppo",
+            type=positive_float,
+            default=default_eppo_config.eps_ppo,
+            help="ePPO likelihood-ratio clipping range.",
+        )
+        parser.add_argument(
+            "--ent-coeff",
+            type=float,
+            default=default_eppo_config.ent_coeff,
+            help="ePPO entropy bonus coefficient.",
         )
     parser.add_argument(
         "--train-seeds-per-epoch",
@@ -201,6 +234,16 @@ def run_training_from_args(
     seed_plan = load_seed_plan(args.seed_plan) if args.seed_plan is not None else None
     beta = float(getattr(args, "beta", DEFAULT_BETA))
     eps = float(getattr(args, "eps", DEFAULT_EPS))
+    default_eppo_config = EPPOConfig()
+    eppo_config = EPPOConfig(
+        learning_rate=float(getattr(args, "eppo_lr", default_eppo_config.learning_rate)),
+        n_epochs_policy=int(
+            getattr(args, "eppo_epochs", default_eppo_config.n_epochs_policy)
+        ),
+        batch_size=int(getattr(args, "eppo_batch_size", default_eppo_config.batch_size)),
+        eps_ppo=float(getattr(args, "eps_ppo", default_eppo_config.eps_ppo)),
+        ent_coeff=float(getattr(args, "ent_coeff", default_eppo_config.ent_coeff)),
+    )
 
     if int(args.n_learning_seeds) == 1 and seed_plan is None:
         train(
@@ -215,6 +258,7 @@ def run_training_from_args(
             n_humans=int(args.n_humans),
             reward_config=reward_config,
             max_workers=int(args.max_workers),
+            eppo_config=eppo_config,
         )
     else:
         train_across_learning_seeds(
@@ -232,6 +276,7 @@ def run_training_from_args(
             n_eval_seeds=int(args.n_eval_seeds),
             max_workers=int(args.max_workers),
             seed_plan=seed_plan,
+            eppo_config=eppo_config,
         )
 
 
