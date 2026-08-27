@@ -217,19 +217,19 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "long": _trap(50, 60, 120, 120),
             },
             "pre_duration_time": {
-                "short": _trap(0, 0, 50, 60),
-                "medium": _trap(50, 60, 90, 100),
-                "long": _trap(90, 100, 120, 120),
+                "short":  _trap(0, 0, 40, 50),
+                "medium": _trap(40, 50, 90, 100),
+                "long":   _trap(90, 100, 200, 200),
             },
             "total_duration_time": {
-                "short": _trap(0, 0, 80, 90),
-                "medium": _trap(80, 90, 150, 160),
-                "long": _trap(150, 160, 300, 300),
+                "short":  _trap(0, 0, 75, 85),
+                "medium": _trap(75, 85, 140, 150),
+                "long":   _trap(140, 150, 300, 300),
             },
             "hhd": {
-                "close": _trap(0, 0, 0.8, 1.0),
-                "medium": _trap(0.8, 1.0, 1.2, 1.4),
-                "far": _trap(1.2, 1.4, 4.0, 4.0),
+                "close":  _trap(0, 0, 1.0, 1.2),
+                "medium": _trap(1.0, 1.2, 1.6, 1.8),
+                "far":    _trap(1.6, 1.8, 4.0, 4.0),
             },
             "hrd": {
                 "close": _trap(0, 0, 0.8, 1.0),
@@ -238,11 +238,11 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
             },
             "density": {
                 "low": _trap(0, 0, 2, 2),
-                "medium": _trap(3, 3, 4, 4),
-                "crowded": _trap(5, 5, 12, 12),
+                "medium": _trap(3, 3, 5, 5),
+                "crowded": _trap(6, 6, 12, 12),
             },
             "angle": {
-                "ahead": _trap(-45, -35, 35, 45),
+                "ahead": _trap(-35, -30, 30, 35),
             },
         }
 

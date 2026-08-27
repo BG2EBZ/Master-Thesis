@@ -1,0 +1,139 @@
+[System]
+Name='normal'
+Type='mamdani'
+Version=2.0
+NumInputs=8
+NumOutputs=5
+NumRules=23
+AndMethod='min'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='max'
+DefuzzMethod='centroid'
+
+[Input1]
+Name='following_time'
+Range=[0 240]
+NumMFs=3
+MF1='short':'trapmf',[0 0 20 30]
+MF2='medium':'trapmf',[20 30 40 50]
+MF3='long':'trapmf',[40 50 120 120]
+
+[Input2]
+Name='listening_time'
+Range=[0 240]
+NumMFs=3
+MF1='short':'trapmf',[0 0 20 30]
+MF2='medium':'trapmf',[20 30 50 60]
+MF3='long':'trapmf',[50 60 120 120]
+
+[Input3]
+Name='pre_duration_time'
+Range=[0 240]
+NumMFs=3
+MF1='short':'trapmf',[0 0 50 60]
+MF2='medium':'trapmf',[50 60 105 115]
+MF3='long':'trapmf',[105 115 200 200]
+
+[Input4]
+Name='total_duration_time'
+Range=[0 240]
+NumMFs=3
+MF1='short':'trapmf',[0 0 90 100]
+MF2='medium':'trapmf',[90 100 165 175]
+MF3='long':'trapmf',[165 175 300 300]
+
+[Input5]
+Name='hhd'
+Range=[0 4]
+NumMFs=3
+MF1='close':'trapmf',[0 0 0.6 0.8]
+MF2='medium':'trapmf',[0.6 0.8 1.2 1.4]
+MF3='far':'trapmf',[1.2 1.4 4 4]
+
+[Input6]
+Name='hrd'
+Range=[0 5]
+NumMFs=3
+MF1='close':'trapmf',[0 0 0.8 1]
+MF2='medium':'trapmf',[0.8 1 2 2.2]
+MF3='far':'trapmf',[2 2.2 5 5]
+
+[Input7]
+Name='density'
+Range=[0 12]
+NumMFs=3
+MF1='low':'trapmf',[0 0 3 3]
+MF2='medium':'trapmf',[4 4 6 6]
+MF3='crowded':'trapmf',[7 7 12 12]
+
+[Input8]
+Name='angle'
+Range=[-180 180]
+NumMFs=1
+MF1='ahead':'trapmf',[-35 -30 30 35]
+
+[Output1]
+Name='overwhelmed'
+Range=[0 1]
+NumMFs=3
+MF1='low':'trapmf',[0 0 0.2 0.5]
+MF2='medium':'trimf',[0.2 0.5 0.8]
+MF3='high':'trapmf',[0.5 0.8 1 1]
+
+[Output2]
+Name='distracted'
+Range=[0 1]
+NumMFs=3
+MF1='low':'trapmf',[0 0 0.2 0.5]
+MF2='medium':'trimf',[0.2 0.5 0.8]
+MF3='high':'trapmf',[0.5 0.8 1 1]
+
+[Output3]
+Name='impatient'
+Range=[0 1]
+NumMFs=3
+MF1='low':'trapmf',[0 0 0.2 0.5]
+MF2='medium':'trimf',[0.2 0.5 0.8]
+MF3='high':'trapmf',[0.5 0.8 1 1]
+
+[Output4]
+Name='engaged'
+Range=[0 1]
+NumMFs=3
+MF1='low':'trapmf',[0 0 0.2 0.5]
+MF2='medium':'trimf',[0.2 0.5 0.8]
+MF3='high':'trapmf',[0.5 0.8 1 1]
+
+[Output5]
+Name='curiosity'
+Range=[0 1]
+NumMFs=3
+MF1='low':'trapmf',[0 0 0.2 0.5]
+MF2='medium':'trimf',[0.2 0.5 0.8]
+MF3='high':'trapmf',[0.5 0.8 1 1]
+
+[Rules]
+0 3 0 0 1 1 3 0, 3 0 0 0 0 (1) : 1
+0 3 0 0 2 1 3 0, 3 0 0 0 0 (1) : 1
+0 3 0 0 1 2 3 0, 3 0 0 0 0 (1) : 1
+0 2 0 0 1 1 3 0, 3 0 0 0 0 (1) : 1
+0 2 0 0 1 2 3 0, 2 0 0 0 0 (1) : 1
+0 2 0 0 2 1 3 0, 2 0 0 0 0 (1) : 1
+0 3 0 0 3 3 1 0, 0 3 0 0 0 (1) : 1
+0 3 0 0 2 3 1 0, 0 3 0 0 0 (1) : 1
+0 3 0 0 3 2 1 0, 0 3 0 0 0 (1) : 1
+0 2 0 0 3 3 1 0, 0 3 0 0 0 (1) : 1
+0 2 0 0 3 2 1 0, 0 2 0 0 0 (1) : 1
+0 2 0 0 2 3 1 0, 0 2 0 0 0 (1) : 1
+3 0 0 0 3 3 1 0, 0 3 0 0 0 (1) : 1
+3 0 0 0 2 3 1 0, 0 3 0 0 0 (1) : 1
+3 0 0 0 3 2 1 0, 0 3 0 0 0 (1) : 1
+2 0 0 0 3 3 1 0, 0 3 0 0 0 (1) : 1
+2 0 0 0 3 2 1 0, 0 2 0 0 0 (1) : 1
+2 0 0 0 2 3 1 0, 0 2 0 0 0 (1) : 1
+0 0 3 0 2 2 1 0, 0 0 3 0 0 (1) : 1
+0 0 3 0 2 2 2 0, 0 0 3 0 0 (1) : 1
+0 0 0 3 2 2 1 0, 0 0 3 0 0 (1) : 1
+0 0 0 3 2 2 2 0, 0 0 3 0 0 (1) : 1
+0 0 0 0 0 1 0 1, 0 0 0 0 3 (1) : 1
