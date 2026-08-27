@@ -232,9 +232,9 @@ def _build_input_specs(context: str, profile: str) -> dict[str, dict[str, MFSpec
                 "far": _trap(1.2, 1.4, 4.0, 4.0),
             },
             "hrd": {
-                "close": _trap(0, 0, 1.0, 1.2),
-                "medium": _trap(1.0, 1.2, 1.6, 1.8),
-                "far": _trap(1.6, 1.8, 5.0, 5.0),
+                "close": _trap(0, 0, 0.8, 1.0),
+                "medium": _trap(0.8, 1.0, 2.0, 2.2),
+                "far": _trap(2.0, 2.2, 5.0, 5.0),
             },
             "density": {
                 "low": _trap(0, 0, 2, 2),

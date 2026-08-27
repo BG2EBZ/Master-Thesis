@@ -162,7 +162,10 @@ MAX_WORKERS="32"
 
 docker run --rm -it \
     --cpuset-cpus="${CPU_RANGE}" \
+    -m 32G \
     -u "$(id -u):$(id -g)" \
+    -e HOST_UID="$(id -u)" \
+    -e HOST_GID="$(id -g)" \
     -e HOME=/workspace/.docker-home \
     -e PYTHONNOUSERSITE=1 \
     -e MUJOCO_GL=osmesa \
@@ -354,7 +357,7 @@ python -u scripts/train_eppo.py \
     --n-learning-seeds 10 \
     --n-eval-seeds 20 \
     --n-humans 15 \
-    --seed-plan artifacts/runs/rwr_server_10x101/seed_plan.json \
+    --seed-plan artifacts/runs/reps_20260810_183734/seed_plan.json \
     --eppo-lr 0.001 \
     --eppo-epochs 5 \
     --eppo-batch-size 10 \
